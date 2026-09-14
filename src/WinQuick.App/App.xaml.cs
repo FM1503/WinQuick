@@ -72,6 +72,11 @@ public partial class App : Application
                 RunDetached(() => M0.ActionProbe.RunAsync(cli));
                 break;
 
+            case "--add-sector-probe":
+                // 需要消息循环与真实窗口：要真的显示覆盖层并走点击分派。
+                RunDetached(() => M0.AddSectorProbe.RunAsync(cli));
+                break;
+
             case "--overlay-probe":
                 // 需要消息循环（Show/Hide 之后要等实际合成），走投递路径。
                 RunDetached(() => M0.OverlayProbe.RunAsync(cli));

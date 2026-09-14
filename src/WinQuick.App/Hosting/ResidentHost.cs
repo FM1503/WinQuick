@@ -4,8 +4,10 @@ using WinQuick.App.Diagnostics;
 using WinQuick.App.Tray;
 using WinQuick.App.Actions;
 using WinQuick.App.Config;
+using WinQuick.App.Interop;
 using WinQuick.App.Settings;
 using WinQuick.Core.Config;
+using WinQuick.Core.Geometry;
 using WinQuick.Core.Hotkey;
 
 namespace WinQuick.App.Hosting;
@@ -60,6 +62,7 @@ public sealed class ResidentHost : IDisposable
 
         _hotkeys.Pressed += (_, _) => _overlay.Toggle();
         _overlay.ItemActivated += OnItemActivated;
+        _overlay.AddItemRequested += OnAddItemRequested;
         _overlay.ExitRequested += (_, _) => Application.Current.Shutdown(0);
         _overlay.SettingsChanged += (_, config) => OnSettingsChanged(config);
         _overlay.SetHotkeyProbe(spec => _hotkeys.ProbeTemporarily(spec));
@@ -181,6 +184,64 @@ public sealed class ResidentHost : IDisposable
     }
 
     /// <summary>
+    /// 用户点了环里的「＋」：弹文件浏览器，把选中的程序加进那一级。
+    ///
+    /// 关键是**加完不关闭覆盖层**。用户是在菜单里就地编辑，加完应当立刻看见新扇区长出来；
+    /// 关掉的话他要重新按热键、再找一遍位置，等于把"就地"这个好处丢掉了。
+    ///
+    /// 写盘会触发热重载 → 走既有的"内容变了才重建轮盘"那条路径，
+    /// 重建保留位置（见 RebuildForMenu），所以轮盘不会跳到光标处。
+    /// </summary>
+    private void OnAddItemRequested(object? sender, int parentIndex)
+    {
+        MenuItemSpec? parent = null;
+
+        if (parentIndex >= 0)
+        {
+            if (parentIndex >= _menu.Items.Count) return;
+            parent = _menu.Items[parentIndex];
+            // 子项也到上限就没什么可加的了。正常点不到 —— 满了就没有「＋」扇区。
+            if (parent.Children.Count >= RadialLayout.MaxSectors) return;
+        }
+        else if (_menu.Items.Count >= RadialLayout.MaxSectors)
+        {
+            return;
+        }
+
+        var path = _overlay.PickExecutableForMenu();
+        if (path is null) return;          // 用户取消
+
+        // 名称取程序的版本信息，与内置默认菜单同源：跟随系统语言，且不必用户自己想名字。
+        var item = new MenuItemSpec
+        {
+            Label = ShellNames.Get(path),
+            IconPath = path,
+            Action = MenuAction.Launch(path),
+        };
+
+        var items = _menu.Items.ToList();
+        if (parent is null)
+        {
+            items.Add(item);
+        }
+        else
+        {
+            var children = parent.Children.ToList();
+            children.Add(item);
+            items[parentIndex] = parent with { Children = children };
+        }
+
+        // 加进子环的项，重建之后要把子弧重新展开 —— 否则用户看不到刚加的东西，
+        // 会以为没加上。第一层不需要（它本来就全在屏幕上）。
+        _reopenChildArcAfterRebuild = parentIndex;
+
+        PersistMenu(_menu with { Items = items });
+    }
+
+    /// <summary>重建轮盘之后要重新展开的子弧父项；-1 表示不用。</summary>
+    private int _reopenChildArcAfterRebuild = -1;
+
+    /// <summary>
     /// 动作失败必须让用户看见。
     /// 静默失败会被当成"程序坏了"，而这恰恰是最容易发生的事（路径不存在、权限不足）。
     /// </summary>
@@ -227,6 +288,12 @@ public sealed class ResidentHost : IDisposable
             // 重建轮盘恰好让用户立刻看到新项 —— 关掉面板反而把预览打断。
             // 面板是独立窗口，重建轮盘不影响它。Show() 里也判了"面板开着就不夺焦点"。
             _overlay.RebuildForMenu(_menu);
+
+            if (_reopenChildArcAfterRebuild >= 0)
+            {
+                if (_overlay.IsVisible) _overlay.ReopenChildArc(_reopenChildArcAfterRebuild);
+                _reopenChildArcAfterRebuild = -1;
+            }
         }
 
         // 设置面板改的东西也要能在别处（比如手动改 config.json）生效。

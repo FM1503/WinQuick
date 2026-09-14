@@ -29,7 +29,20 @@ param(
     #
     # 用字符串而不是 [double[]]：通过 -File 调用脚本时，PowerShell 会把整个
     # "292.5,337.5" 当成一个值去转 double 而失败。字符串自己切分最稳。
-    [string]$IconAngleList = ""
+    [string]$IconAngleList = "",
+    # 「＋」扇区的中心角。给定后会额外核对那里画的是不是一个**十字**：
+    # 四臂都有内容、四个角是空的。只报"有内容"是不够的 ——
+    # 那只能说明画了东西，不能说明画的是加号（曾经有过"元素建好但没接进视觉树"的先例，
+    # 反过来的错误——接进去了但画成别的形状——同样需要被挡住）。
+    [double]$CrossAngle = -1,
+    # 十字核对的采样框半径（像素）。默认 16 是**按图标实际尺寸算出来的**，不是拍的：
+    # 图标 30 DIP（design/tokens.json），加号取 0.62 倍即 18.6px 见方（半长 9.3），
+    # 描边宽 3.2px 的圆头再向外各撑出 1.6px，所以加号的半长约为 10.9px。
+    # 四臂取样落在 ±4~±7px（一定在臂上），四角取样落在 ±13~±16px（一定在形状之外）。
+    # 第一版这里写的是 $IconRadius * 0.31 —— 在第一层环（半径 91）碰巧接近正确值，
+    # 到子弧（半径 250）就变成了 78px，于是把"没测到"报成了"形状不符"。
+    # 教训与之前一致：验证方法本身的错误会伪装成被测对象的缺陷。
+    [int]$IconBox = 16
 )
 
 $ErrorActionPreference = 'Stop'
@@ -217,6 +230,49 @@ if ($IconAngleList.Trim().Length -gt 0) {
         if ([double]::TryParse($token.Trim(), [ref]$value)) { $IconAngles += $value }
     }
 }
+# 十字核对：在图标框里分别数四条臂和四个角的"内容像素"。
+# 判据是**相对关系**（臂明显多于角）而不是绝对数，这样对描边粗细与抗锯齿都不敏感。
+function Test-Cross([double]$deg, [int]$radius, [int]$box) {
+    $rad = $deg * [math]::PI / 180.0
+    $cx = [int][math]::Round($CenterX + $radius * [math]::Sin($rad))
+    $cy = [int][math]::Round($CenterY - $radius * [math]::Cos($rad))
+
+    function Test-Content([int]$x, [int]$y) {
+        $p = Get-PixelAt $x $y
+        if ($null -eq $p -or $p.A -lt 32) { return $false }
+        $dr = [math]::Abs($p.R - 31); $dg = [math]::Abs($p.G - 31); $db = [math]::Abs($p.B - 31)
+        return ($dr -gt 24 -or $dg -gt 24 -or $db -gt 24)
+    }
+
+    $arm = 0
+    $armTotal = 0
+    # 四条臂：沿中心行/列各取 ±(0.25..0.45)box 的两个带
+    foreach ($t in @(-0.45, -0.35, -0.25, 0.25, 0.35, 0.45)) {
+        $off = [int][math]::Round($t * $box)
+        for ($k = -1; $k -le 1; $k++) {
+            $armTotal++
+            if (Test-Content ($cx + $off) ($cy + $k)) { $arm++ }
+            $armTotal++
+            if (Test-Content ($cx + $k) ($cy + $off)) { $arm++ }
+        }
+    }
+
+    $corner = 0
+    $cornerTotal = 0
+    foreach ($sx in @(-1, 1)) {
+        foreach ($sy in @(-1, 1)) {
+            for ($dx = 0; $dx -le 3; $dx++) {
+                for ($dy = 0; $dy -le 3; $dy++) {
+                    $cornerTotal++
+                    if (Test-Content ($cx + $sx * ($box - $dx)) ($cy + $sy * ($box - $dy))) { $corner++ }
+                }
+            }
+        }
+    }
+
+    return @{ Arm = $arm; ArmTotal = $armTotal; Corner = $corner; CornerTotal = $cornerTotal }
+}
+
 if ($IconAngles.Count -eq 0) {
     for ($i = 0; $i -lt $SectorCount; $i++) { $IconAngles += $i * (360.0 / $SectorCount) }
 }
@@ -252,6 +308,30 @@ Write-Output "      通常意味着图形对象建好了但没挂到视觉树（
 Write-Output "    · 「有内容但无彩色」不能判定为故障 —— 单色图标（例如 Windows Terminal）"
 Write-Output "      饱和度天然为 0。要判断是真图标还是首字占位，请对照应用内报告"
 Write-Output "      「成功取到图标的项 N/M」，两个数字应当一致。"
+
+# ---------------------------------------------------------------- 十字核对
+if ($CrossAngle -ge 0) {
+    Write-Output ""
+    Write-Output "=== 「＋」扇区核对（角度 $CrossAngle 度）==="
+    $box = $IconBox
+    $g = Test-Cross $CrossAngle $IconRadius $box
+    $armPct = if ($g.ArmTotal -gt 0) { [int](100 * $g.Arm / $g.ArmTotal) } else { 0 }
+    $cornerPct = if ($g.CornerTotal -gt 0) { [int](100 * $g.Corner / $g.CornerTotal) } else { 0 }
+
+    Write-Output ("  图标框 ±{0}px（圆心半径 {1}）" -f $box, $IconRadius)
+    Write-Output ("  四条臂上的内容像素  {0,3} / {1,3}  （{2}%）" -f $g.Arm, $g.ArmTotal, $armPct)
+    Write-Output ("  四个角上的内容像素  {0,3} / {1,3}  （{2}%）" -f $g.Corner, $g.CornerTotal, $cornerPct)
+    Write-Output ""
+
+    # 判据是相对关系：加号的臂基本画满、四角基本为空。
+    # 用比例而不是绝对像素，是为了对描边粗细、抗锯齿、缩放都不敏感。
+    if ($armPct -ge 60 -and $cornerPct -le 20) {
+        Write-Output "  >>> 形状与加号相符：四臂有内容、四角为空。"
+    } else {
+        Write-Output ("  >>> 形状与加号**不符**：臂 {0}%、角 {1}% —— 要么没画出来，要么画成了别的形状。" -f `
+            $armPct, $cornerPct)
+    }
+}
 
 # ---------------------------------------------------------------- 径向剖面
 Write-Output ""

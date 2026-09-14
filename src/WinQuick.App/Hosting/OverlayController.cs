@@ -135,6 +135,7 @@ public sealed class OverlayController : IDisposable
         var window = new RadialWindow(menu);
         window.DismissRequested += (_, _) => Hide();
         window.ItemActivated += (_, selection) => ItemActivated?.Invoke(this, selection);
+        window.AddItemRequested += (_, parentIndex) => AddItemRequested?.Invoke(this, parentIndex);
         window.FocusLost += (_, _) => OnRadialFocusLost();
         return window;
     }
@@ -174,6 +175,33 @@ public sealed class OverlayController : IDisposable
             Show(preserveRadialPosition: keepBounds);
         }
     }
+
+    /// <summary>
+    /// 弹「选一个程序加进菜单」的文件对话框；用户取消时返回 null。
+    ///
+    /// 对话框期间必须同时做两件事，缺任何一件都会出错：
+    /// 提高置顶重申频率（对话框不会自动变成 topmost，不重申就会被遮罩盖住一闪），
+    /// 以及屏蔽"失去焦点就关闭"（对话框夺走前台焦点，否则会顺手把覆盖层关掉）。
+    /// </summary>
+    public string? PickExecutableForMenu()
+    {
+        if (_disposed) return null;
+
+        _modalDialogDepth++;
+        SetTopmostInterval(FastTopmostReassertInterval);
+        try
+        {
+            return ProgramPicker.Pick(_radial);
+        }
+        finally
+        {
+            _modalDialogDepth--;
+            SetTopmostInterval(TopmostReassertInterval);
+        }
+    }
+
+    /// <summary>同时打开的系统对话框层数（正常只可能是 0 或 1）。</summary>
+    private int _modalDialogDepth;
 
     /// <summary>遮罩不透明度的用户覆盖值（0–1）。null 表示沿用设计基线。</summary>
     public double? DimOpacityOverride { get; private set; }
@@ -226,12 +254,35 @@ public sealed class OverlayController : IDisposable
     /// <summary>诊断用：跳过悬停延迟直接展开子弧。</summary>
     internal void ExpandChildArcForProbe(int parentIndex) => _radial.ExpandChildArc(parentIndex);
 
+    /// <summary>诊断用：根环「＋」的索引。</summary>
+    internal int AddSectorIndexForProbe => _radial.AddSectorIndex;
+
+    /// <summary>诊断用：子弧「＋」的索引。</summary>
+    internal int ChildAddSectorIndexForProbe => _radial.ChildAddSectorIndex;
+
+    /// <summary>诊断用：把窗口内坐标交给轮盘做命中测试（走的是点击同一套数学）。</summary>
+    internal WinQuick.Core.Geometry.HitResult HitTestForProbe(double x, double y) =>
+        _radial.HitTestForProbe(new System.Windows.Point(x, y));
+
+    /// <summary>诊断用：按真实命中结果走一遍点击分派，事件照常发出。</summary>
+    internal WinQuick.Core.Geometry.HitResult ClickForProbe(double x, double y) =>
+        _radial.ClickForProbe(new System.Windows.Point(x, y));
+
+    /// <summary>重建菜单后把某个父项的子弧重新展开，让用户看见刚加进去的项。</summary>
+    public void ReopenChildArc(int parentIndex) => _radial.ReopenChildArc(parentIndex);
+
     internal void CollapseChildArcForProbe() => _radial.CollapseChildArc();
 
     /// <summary>
     /// 某个叶子项被点击。<c>ChildIndex</c> 为 -1 表示第一层的项，否则是子弧里的子项。
     /// </summary>
     public event EventHandler<(int ParentIndex, int ChildIndex)>? ItemActivated;
+
+    /// <summary>
+    /// 用户点了环里的「＋」，要求往那一级加一项。
+    /// 参数是父项索引；-1 表示第一层。
+    /// </summary>
+    public event EventHandler<int>? AddItemRequested;
 
     /// <summary>设置面板正在显示。</summary>
     public bool IsSettingsOpen => _settingsPanel is { IsVisible: true };
@@ -392,6 +443,11 @@ public sealed class OverlayController : IDisposable
     private void OnRadialFocusLost()
     {
         if (!IsVisible) return;
+
+        // 系统对话框正在弹出/收起的这一段里，"前台窗口不是我们"是预期状态而不是用户离开。
+        // 少了这一条，用户点「＋」选程序的过程中轮盘就被自己关掉了 ——
+        // 选完文件回来发现覆盖层没了，而"再加一项"这件事还没做完。
+        if (_modalDialogDepth > 0) return;
 
         var foreground = PInvoke.GetForegroundWindow();
         if (IsOwnWindow(foreground)) return;

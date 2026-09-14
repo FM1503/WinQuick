@@ -38,6 +38,7 @@ public sealed partial class RadialRingView
     private SectorSpan[] _childSpans = [];
     private SectorSpan _childArcSpan;
     private int _childArcParent = -1;
+    private int _childAddSectorIndex = -1;
     private int _hoveredChild = -1;
     private double _childArcProgress;
     private ChildArcAnimator? _childAnimator;
@@ -69,9 +70,16 @@ public sealed partial class RadialRingView
         var band = radius.Ring2;
         var parentCenter = _spans[parentIndex].CenterDeg;
 
+        // 子环同样在末尾留一个「＋」，只不过它加到的是**这个父项的子项列表**。
+        // 弧跨度必须按含「＋」的个数算：ChildArc 有一条"每格至少 25°"的规则，
+        // 用 children.Count 算会让多出来的那格被挤窄。
+        _childAddSectorIndex =
+            children.Count < RadialLayout.MaxSectors ? children.Count : -1;
+        var slotCount = _childAddSectorIndex >= 0 ? children.Count + 1 : children.Count;
+
         _childArcSpan = RadialLayout.ChildArc(
-            parentCenter, children.Count, tokens.Interaction.ChildSpanDegrees);
-        _childSpans = RadialLayout.DistributeWithin(_childArcSpan, children.Count);
+            parentCenter, slotCount, tokens.Interaction.ChildSpanDegrees);
+        _childSpans = RadialLayout.DistributeWithin(_childArcSpan, slotCount);
 
         var colors = tokens.Color;
         var fill = TokenBrushes.Brush(colors.SectorFill, colors.SectorFillAlpha);
@@ -82,13 +90,12 @@ public sealed partial class RadialRingView
 
         // 每个子扇区自己的角度跨度差别很大（2 个子项各 45°、8 个子项各 25°），
         // 所以标签宽度必须按各自的跨度算，不能沿用第一层环的。
-        var childSweep = _childArcSpan.SweepDeg / children.Count;
+        var childSweep = _childArcSpan.SweepDeg / slotCount;
         var maxHalfWidth = RadiusTokens.LabelMaxHalfWidth(
             iconRadius, labelRadius, radius.IconSize, childSweep, radius.SectorGapDegrees);
 
-        for (var i = 0; i < children.Count; i++)
+        for (var i = 0; i < slotCount; i++)
         {
-            var child = children[i];
             var span = _childSpans[i];
 
             var sector = new ShapePath
@@ -104,6 +111,27 @@ public sealed partial class RadialRingView
             _childSectors.Add(sector);
             Root.Children.Add(sector);
 
+            if (i == _childAddSectorIndex)
+            {
+                sector.StrokeDashArray = new DoubleCollection { 3, 2.5 };
+
+                var cross = AddCrossIcon(Root, _center, iconRadius, span.CenterDeg,
+                    radius.IconSize, TokenBrushes.Brush(colors.Label));
+                cross.Opacity = _childArcProgress;
+                _childIcons.Add(cross);
+
+                _childLabels.Add(new SectorLabel(
+                    Root, _center, labelRadius, span.CenterDeg, AddSectorLabel,
+                    tokens.Typography.LabelFontSize,
+                    maxWidth: maxHalfWidth * 2,
+                    maxHeight: tokens.Typography.LabelFontSize * radius.LabelLineHeightFactor * radius.LabelMaxLines,
+                    lineHeightFactor: radius.LabelLineHeightFactor,
+                    foreground: TokenBrushes.Brush(colors.Label, 0.8)));
+                _childChildMarkers.Add(null);
+                continue;
+            }
+
+            var child = children[i];
             _childIcons.Add(AddChildIcon(child, iconRadius, span.CenterDeg, radius.IconSize));
             // 占位图与图标是互斥的：有图标就不画占位。两者都登记，清理时一并移除。
             _childLabels.Add(new SectorLabel(
@@ -148,6 +176,7 @@ public sealed partial class RadialRingView
         _childArcRemoving = false;
         _hoveredChild = -1;
         _childArcProgress = 0;
+        _childAddSectorIndex = -1;
     }
 
     /// <summary>立即把子弧设为展开或收起态，不播放动画。供离屏渲染使用。</summary>
@@ -164,6 +193,14 @@ public sealed partial class RadialRingView
             CollapseChildArcImmediate();
         }
     }
+
+    /// <summary>
+    /// 子弧里「＋」的索引；-1 表示没有（该父项已满 12 个子项，或者当前没展开子弧）。
+    /// </summary>
+    public int ChildAddSectorIndex => _childAddSectorIndex;
+
+    /// <summary>这个子弧索引是不是「＋」。</summary>
+    public bool IsChildAddSector(int index) => index >= 0 && index == _childAddSectorIndex;
 
     /// <summary>设置子项的悬停高亮。</summary>
     public void SetChildHover(int index)

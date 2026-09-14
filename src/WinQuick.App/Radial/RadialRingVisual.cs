@@ -92,8 +92,21 @@ public sealed partial class RadialRingView
     public int SectorCount => _sectors.Length;
     public int HoverIndex => _hover;
 
-    /// <summary>供离屏预览与探针核对「图标是否真的画出来了」，不信任视觉判断。</summary>
-    public int RenderedIconCount => _icons.Count(i => i.Source is not null);
+    /// <summary>
+    /// 供离屏预览与探针核对「图标是否真的画出来了」，不信任视觉判断。
+    /// 只数真实菜单项 —— 「＋」也是个 Image（画的是加号，不是 shell 图标），
+    /// 把它算进去会让这个计数在探针里永远是 itemCount+1，失去核对意义。
+    /// </summary>
+    public int RenderedIconCount
+    {
+        get
+        {
+            var n = 0;
+            for (var i = 0; i < _icons.Length; i++)
+                if (!IsAddSector(i) && _icons[i].Source is not null) n++;
+            return n;
+        }
+    }
 
     public int ChildMarkerCount => _childMarkers.Count(m => m is not null);
 
@@ -171,7 +184,15 @@ public sealed partial class RadialRingView
 
         // 所有角度都走 Core 的 RadialLayout：渲染与命中测试共用同一份数学，
         // 不会出现「看着在扇区 A、点下去选中 B」。
-        var count = menu.Items.Count;
+        // 末尾多留一个扇区画「＋」。到上限就不再显示它 —— 12 项时环已经满了，
+        // 再加一个只会让每个扇区细到点不中。
+        //
+        // 为什么是"排在末尾"而不是"固定在某个角度"：角度分配只有一套规则（均匀分布），
+        // 引入一个固定位置的特殊扇区就等于有了两套角度映射，用户更难预判。
+        var itemCount = menu.Items.Count;
+        var addIndex = itemCount < RadialLayout.MaxSectors ? itemCount : -1;
+        var count = addIndex >= 0 ? itemCount + 1 : itemCount;
+
         var spans = RadialLayout.Distribute(count);
 
         var sectors = new ShapePath[count];
@@ -187,7 +208,6 @@ public sealed partial class RadialRingView
         for (var i = 0; i < count; i++)
         {
             var span = spans[i];
-            var item = menu.Items[i];
 
             var geometry = SectorGeometry.RingSector(
                 center, radius.DeadZone, radius.Ring1Outer,
@@ -205,12 +225,33 @@ public sealed partial class RadialRingView
             baseGeometry[i] = geometry;
             root.Children.Add(sector);
 
+            // 标签宽度必须按**所有**扇区（含"添加"）算，因为它取的是最窄的那个 ——
+            // 用 itemCount 会算出偏宽的标签框，在 9/10 扇区时和图标的水平距离不够。
+            var labelMaxWidth = RadiusTokens.LabelMaxHalfWidth(radius, count) * 2;
+            var labelMaxHeight =
+                tokens.Typography.LabelFontSize * radius.LabelLineHeightFactor * radius.LabelMaxLines;
+
+            if (i == addIndex)
+            {
+                // 「＋」是一个操作而不是一个菜单项：虚线描边把它和真实项区分开。
+                sector.StrokeDashArray = new DoubleCollection { 3, 2.5 };
+                icons[i] = AddCrossIcon(root, center, radius.IconRadius, span.CenterDeg,
+                    radius.IconSize, TokenBrushes.Brush(colors.Label));
+                labels[i] = new SectorLabel(
+                    root, center, radius.LabelRadius, span.CenterDeg, AddSectorLabel,
+                    tokens.Typography.LabelFontSize,
+                    maxWidth: labelMaxWidth, maxHeight: labelMaxHeight,
+                    lineHeightFactor: radius.LabelLineHeightFactor,
+                    foreground: TokenBrushes.Brush(colors.Label, 0.8));
+                continue;
+            }
+
+            var item = menu.Items[i];
             icons[i] = AddIcon(root, center, radius.IconRadius, span.CenterDeg, item, radius.IconSize);
             labels[i] = new SectorLabel(
                 root, center, radius.LabelRadius, span.CenterDeg, item.Label,
                 tokens.Typography.LabelFontSize,
-                maxWidth: RadiusTokens.LabelMaxHalfWidth(radius, count) * 2,
-                maxHeight: tokens.Typography.LabelFontSize * radius.LabelLineHeightFactor * radius.LabelMaxLines,
+                maxWidth: labelMaxWidth, maxHeight: labelMaxHeight,
                 lineHeightFactor: radius.LabelLineHeightFactor,
                 foreground: TokenBrushes.Brush(colors.Label));
 
@@ -231,7 +272,10 @@ public sealed partial class RadialRingView
             tokens.Motion.HoverBulgePx, tokens.Motion.EntranceEasing, tokens.Motion.HoverBulgeMs);
 
         return new RadialRingView(
-            root, tokens, center, spans, sectors, labels, icons, childMarkers, bulge, menu);
+            root, tokens, center, spans, sectors, labels, icons, childMarkers, bulge, menu)
+        {
+            AddSectorIndex = addIndex,
+        };
     }
 
     /// <summary>
@@ -258,6 +302,18 @@ public sealed partial class RadialRingView
     /// 「每次收起都留下几个元素」这类泄漏在性能劣化前完全不可见。
     /// </summary>
     public int VisualChildCount => Root.Children.Count;
+
+    /// <summary>
+    /// 「＋」扇区的索引；-1 表示没有（菜单已满 12 项）。
+    /// 它排在所有真实项之后，因此 <c>index &lt; AddSectorIndex</c> 的索引可以直接当菜单项索引用。
+    /// </summary>
+    public int AddSectorIndex { get; private init; } = -1;
+
+    /// <summary>这个索引是不是「＋」扇区。</summary>
+    public bool IsAddSector(int index) => index >= 0 && index == AddSectorIndex;
+
+    /// <summary>「＋」扇区的文字。命中它时按这个报给上层。</summary>
+    public const string AddSectorLabel = "添加";
 
     /// <summary>第一层某项是否有子菜单。状态机需要它来决定"悬停是否应展开"。</summary>
     public bool RootItemHasChildren(int index) =>
@@ -320,6 +376,52 @@ public sealed partial class RadialRingView
         Canvas.SetLeft(image, center.X + offset.X - iconSize / 2);
         Canvas.SetTop(image, center.Y + offset.Y - iconSize / 2);
         root.Children.Add(image);
+        return image;
+    }
+
+    /// <summary>
+    /// 画一个加号。用 DrawingImage 而不是画两条线：这样它和其它图标一样是个
+    /// <see cref="Image"/>，悬停时的透明度变化、子弧里的渐显都不必为它写特例。
+    ///
+    /// 十字刻意**不跟随扇区角度旋转** —— 加号转成斜的就认不出来了。
+    /// </summary>
+    private static Image AddCrossIcon(
+        Canvas root, Point center, double radius, double angleDeg, double iconSize, Brush brush)
+    {
+        var image = new Image
+        {
+            Width = iconSize,
+            Height = iconSize,
+            Source = BuildCrossImage(iconSize * 0.62, brush),
+        };
+        RenderOptions.SetBitmapScalingMode(image, BitmapScalingMode.HighQuality);
+
+        var offset = Vec2.FromPolar(radius, angleDeg);
+        Canvas.SetLeft(image, center.X + offset.X - iconSize / 2);
+        Canvas.SetTop(image, center.Y + offset.Y - iconSize / 2);
+        root.Children.Add(image);
+        return image;
+    }
+
+    private static DrawingImage BuildCrossImage(double size, Brush brush)
+    {
+        var half = size / 2;
+        var pen = new Pen(brush, Math.Max(1.8, size * 0.17))
+        {
+            StartLineCap = PenLineCap.Round,
+            EndLineCap = PenLineCap.Round,
+        };
+        pen.Freeze();
+
+        var group = new DrawingGroup();
+        group.Children.Add(new GeometryDrawing(
+            null, pen, new LineGeometry(new Point(-half, 0), new Point(half, 0))));
+        group.Children.Add(new GeometryDrawing(
+            null, pen, new LineGeometry(new Point(0, -half), new Point(0, half))));
+        group.Freeze();
+
+        var image = new DrawingImage(group);
+        image.Freeze();
         return image;
     }
 

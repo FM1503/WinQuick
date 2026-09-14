@@ -97,6 +97,15 @@ public sealed class RadialWindow : Window
     /// </summary>
     public event EventHandler<(int ParentIndex, int ChildIndex)>? ItemActivated;
 
+    /// <summary>
+    /// 点在环里的「＋」上，要求往那一级加一项。
+    /// <paramref name="parentIndex"/> 为 -1 表示加进第一层，否则加进该父项的子项列表。
+    ///
+    /// 由上层弹文件对话框并写盘 —— 窗口只负责"用户点了哪个位置的加号"这件事，
+    /// 不知道菜单存在哪、也不碰配置文件。
+    /// </summary>
+    public event EventHandler<int>? AddItemRequested;
+
     public int HoverIndex => _view.HoverIndex;
     public int RenderedIconCount => _view.RenderedIconCount;
 
@@ -211,8 +220,40 @@ public sealed class RadialWindow : Window
 
     internal int VisualChildCount => _view.VisualChildCount;
 
+    /// <summary>
+    /// 立刻重新展开某个父项的子弧（无动画），并把状态机同步过去。
+    ///
+    /// 用在"往子环里加了一项、菜单重建之后"：不这么做的话用户加完一项，
+    /// 子环是收起的，他会以为"加进去的东西不见了"，得重新悬停一次才能确认。
+    /// </summary>
+    public void ReopenChildArc(int parentIndex)
+    {
+        if (!_view.RootItemHasChildren(parentIndex)) return;
+
+        _hoverMachine.OpenImmediately(parentIndex);
+        _view.ExpandChildArc(parentIndex, immediate: true);
+        _view.SetHover(parentIndex);
+    }
+
     /// <summary>诊断用：跳过悬停延迟直接展开子弧。</summary>
     internal void ExpandChildArc(int parentIndex) => _view.ExpandChildArc(parentIndex);
+
+    /// <summary>诊断用：根环「＋」的索引。</summary>
+    internal int AddSectorIndex => _view.AddSectorIndex;
+
+    /// <summary>诊断用：子弧「＋」的索引。</summary>
+    internal int ChildAddSectorIndex => _view.ChildAddSectorIndex;
+
+    /// <summary>诊断用：把窗口内坐标交给视图做命中测试。</summary>
+    internal HitResult HitTestForProbe(Point localPoint) => _view.HitTest(localPoint);
+
+    /// <summary>诊断用：按真实命中结果走一遍点击分派（事件照常发出）。</summary>
+    internal HitResult ClickForProbe(Point localPoint)
+    {
+        var hit = _view.HitTest(localPoint);
+        HandleClick(hit);
+        return hit;
+    }
 
     internal void CollapseChildArc() => _view.CollapseChildArc();
 
@@ -439,21 +480,38 @@ public sealed class RadialWindow : Window
 
     private void OnMouseDown(object sender, MouseButtonEventArgs e)
     {
-        var local = e.GetPosition(_view.Root);
-        var hit = _view.HitTest(local);
-
         e.Handled = true;
+        HandleClick(_view.HitTest(e.GetPosition(_view.Root)));
+    }
 
+    /// <summary>
+    /// 点击落点的分派。
+    ///
+    /// 抽成独立方法是为了让探针能走**同一条**分派逻辑。探针合成不了真实的鼠标按键
+    /// （那需要 SendInput 加前台焦点，而且会弹出文件对话框把探针卡住），
+    /// 但它可以把命中结果喂进来。不抽的话，「点「＋」会请求加项」这件事就只能靠
+    /// 读代码确认，而不是验证。
+    /// </summary>
+    private void HandleClick(HitResult hit)
+    {
         switch (hit.Zone)
         {
             case HitZone.ChildSector:
-                // 子项是叶子：执行它。父索引与子索引一起报上去，由上层解析成具体动作。
-                if (_view.ChildArcParent >= 0)
+                if (_view.ChildArcParent < 0) break;
+
+                if (_view.IsChildAddSector(hit.Index))
+                    AddItemRequested?.Invoke(this, _view.ChildArcParent);
+                else
+                    // 子项是叶子：执行它。父索引与子索引一起报上去，由上层解析成具体动作。
                     ItemActivated?.Invoke(this, (_view.ChildArcParent, hit.Index));
                 break;
 
             case HitZone.Sector:
-                if (_view.RootItemHasChildren(hit.Index))
+                if (_view.IsAddSector(hit.Index))
+                {
+                    AddItemRequested?.Invoke(this, -1);
+                }
+                else if (_view.RootItemHasChildren(hit.Index))
                 {
                     // 点击有子项的扇区 = 跳过悬停延迟立即展开。
                     _hoverMachine.OpenImmediately(hit.Index);

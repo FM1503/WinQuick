@@ -28,6 +28,7 @@ public sealed class CliOptions
           --action-probe            核对动作执行：Process.Start 是否成功、参数是否传对
           --overlay-probe           核对覆盖层：窗口真实可见性、位置钳制、前台焦点还原、点击扇区
               --hold=N              显示出轮盘并保持 N 秒供肉眼查看（Esc 可关闭）
+          --add-sector-probe        核对环里的「＋」扇区：命中、点击分派、12 项上限、加项后位置
           --render-preview          离屏渲染出 PNG，做几何与配色的数值自检
               --out=路径            输出 PNG，默认 artifacts/m0/preview.png
               --state=名字          渲染状态，默认 default

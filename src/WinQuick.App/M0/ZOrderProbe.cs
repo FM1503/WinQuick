@@ -95,13 +95,19 @@ public static class ZOrderProbe
             ProbeOutput.Kv("改前轮盘矩形", beforeBounds is { } b
                 ? $"({b.X},{b.Y}) {b.Width}x{b.Height}" : "(取不到)");
 
-            var panelForMenu = overlay.SettingsPanelForProbe;
-            if (panelForMenu is not null)
+            // 菜单变更走的就是"往菜单里加一项"这条路 —— 面板开着时用户在轮盘上点「＋」
+            // 选完程序后触发的那一次重建。这里直接调重建，跳过的只是文件对话框。
+            var menuWithExtra = Hosting.DefaultMenu.Build() with
             {
-                panelForMenu.AddProgramForTest(Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.Windows), "System32", "charmap.exe"));
-                await Task.Delay(700);
-            }
+                Items = Hosting.DefaultMenu.Build().Items.Append(new Core.Config.MenuItemSpec
+                {
+                    Label = "探针新增项",
+                    Action = Core.Config.MenuAction.Launch("cmd.exe"),
+                }).ToList(),
+            };
+
+            overlay.RebuildForMenu(menuWithExtra);
+            await Task.Delay(700);
 
             var afterBounds = overlay.RadialPhysicalBounds;
             ProbeOutput.Kv("改后轮盘矩形", afterBounds is { } a
@@ -171,12 +177,10 @@ public static class ZOrderProbe
     {
         ProbeOutput.Section("系统文件对话框");
 
-        var panel = overlay.SettingsPanelForProbe;
-        if (panel is null)
-        {
-            ProbeOutput.Line("  面板未打开，跳过。");
-            return;
-        }
+        // 从这里弹出的对话框，与用户在轮盘上点「＋」时弹出的**是同一个**：
+        // 都走 OverlayController.PickExecutableForMenu（所有者是轮盘窗口）。
+        // 面板自己的那个入口已经移除，所以这个核对也应当跟着换到新路径上 ——
+        // 否则核对的是一个不再存在的调用方。
 
         var dialogHwnd = nint.Zero;
         var topmostWhenChecked = false;
@@ -220,8 +224,8 @@ public static class ZOrderProbe
         probe.Start();
 
         // 模态调用会阻塞这一行，但上面那个计时器会在模态消息循环里继续跑。
-        // 走面板的测试入口，弹的是真正的系统文件对话框。
-        panel.OpenAddProgramDialogForTest();
+        // 弹的是真正的系统文件对话框，所有者是轮盘窗口。
+        overlay.PickExecutableForMenu();
 
         await Task.Delay(200);
 

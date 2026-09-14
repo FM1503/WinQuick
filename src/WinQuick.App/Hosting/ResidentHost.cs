@@ -63,12 +63,11 @@ public sealed class ResidentHost : IDisposable
         _hotkeys.Pressed += (_, _) => _overlay.Toggle();
         _overlay.ItemActivated += OnItemActivated;
         _overlay.AddItemRequested += OnAddItemRequested;
+        _overlay.SectorEditRequested += OnSectorEditRequested;
         _overlay.ExitRequested += (_, _) => Application.Current.Shutdown(0);
         _overlay.SettingsChanged += (_, config) => OnSettingsChanged(config);
         _overlay.SetHotkeyProbe(spec => _hotkeys.ProbeTemporarily(spec));
         _overlay.SetSettingsSource(_config.Config);
-        _overlay.SetMenuSource(_menu);
-        _overlay.MenuChanged += (_, menu) => PersistMenu(menu);
         ActionExecutor.Completed += OnActionCompleted;
 
         _session.SessionLocked += (_, _) => _overlay.Hide();
@@ -194,20 +193,8 @@ public sealed class ResidentHost : IDisposable
     /// </summary>
     private void OnAddItemRequested(object? sender, int parentIndex)
     {
-        MenuItemSpec? parent = null;
-
-        if (parentIndex >= 0)
-        {
-            if (parentIndex >= _menu.Items.Count) return;
-            parent = _menu.Items[parentIndex];
-            // 子项也到上限就没什么可加的了。正常点不到 —— 满了就没有「＋」扇区。
-            if (parent.Children.Count >= RadialLayout.MaxSectors) return;
-        }
-        else if (_menu.Items.Count >= RadialLayout.MaxSectors)
-        {
-            return;
-        }
-
+        // 上限与索引合法性都在 MenuEditor 里判（那里还有单测），这里不重复一遍 ——
+        // 校验写在两处，迟早会有一处忘了改。
         var path = _overlay.PickExecutableForMenu();
         if (path is null) return;          // 用户取消
 
@@ -219,23 +206,49 @@ public sealed class ResidentHost : IDisposable
             Action = MenuAction.Launch(path),
         };
 
-        var items = _menu.Items.ToList();
-        if (parent is null)
+        var (updated, error) = MenuEditor.Add(_menu, parentIndex, item);
+        if (error is not null)
         {
-            items.Add(item);
-        }
-        else
-        {
-            var children = parent.Children.ToList();
-            children.Add(item);
-            items[parentIndex] = parent with { Children = children };
+            _tray.ShowBalloon("WinQuick 无法添加", error);
+            return;
         }
 
         // 加进子环的项，重建之后要把子弧重新展开 —— 否则用户看不到刚加的东西，
         // 会以为没加上。第一层不需要（它本来就全在屏幕上）。
         _reopenChildArcAfterRebuild = parentIndex;
 
-        PersistMenu(_menu with { Items = items });
+        PersistMenu(updated);
+    }
+
+    /// <summary>
+    /// 扇区编辑面板上的改名 / 移除。
+    ///
+    /// 与「＋」一样：改完不关闭覆盖层，让用户当场看到结果 ——
+    /// 改完一项名称却发现整个菜单没了，是这类就地编辑最差的一种反馈。
+    /// </summary>
+    private void OnSectorEditRequested(
+        object? sender, (int RootIndex, int ChildIndex, Radial.SectorEditAction Action, string? Label) request)
+    {
+        var (updated, error) = request.Action switch
+        {
+            Radial.SectorEditAction.Remove =>
+                MenuEditor.Remove(_menu, request.RootIndex, request.ChildIndex),
+            Radial.SectorEditAction.Rename =>
+                MenuEditor.Rename(_menu, request.RootIndex, request.ChildIndex, request.Label),
+            _ => (_menu, "未知的编辑动作。"),
+        };
+
+        if (error is not null)
+        {
+            _tray.ShowBalloon("WinQuick 无法修改菜单", error);
+            return;
+        }
+
+        // 移除子项后重建：如果那一项变成没有子项的叶子，子弧本来也展不开了；
+        // 还有子项时把子弧重新展开，用户能看见"少了一个、剩下的还在"。
+        if (request.ChildIndex >= 0) _reopenChildArcAfterRebuild = request.RootIndex;
+
+        PersistMenu(updated);
     }
 
     /// <summary>重建轮盘之后要重新展开的子弧父项；-1 表示不用。</summary>
@@ -326,7 +339,6 @@ public sealed class ResidentHost : IDisposable
     public void OpenSettings()
     {
         _overlay.SetSettingsSource(_config.Config);
-        _overlay.SetMenuSource(_menu);
 
         // 面板开在覆盖层会话里，所以先把覆盖层唤出来。
         // 从托盘打开时用户可能不在轮盘界面，这一步让他看到完整上下文。
@@ -364,7 +376,6 @@ public sealed class ResidentHost : IDisposable
         }
 
         _menu = menu;
-        _overlay.SetMenuSource(menu);
     }
 
     private void PersistSettings()

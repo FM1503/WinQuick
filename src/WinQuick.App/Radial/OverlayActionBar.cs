@@ -134,7 +134,7 @@ public sealed class OverlayActionBar : Window
             BorderThickness = new Thickness(0),
             Cursor = Cursors.Hand,
             ToolTip = tooltip,
-            Template = BuildFlatTemplate(),
+            Template = OverlayButton.BuildFlatTemplate(),
         };
 
         // 刻意**不用 Button.Click**：它依赖"按下时捕获鼠标、抬起时判断落点"这套逻辑，
@@ -151,36 +151,6 @@ public sealed class OverlayActionBar : Window
         };
 
         return button;
-    }
-
-    /// <summary>无边框按钮模板：默认透明，悬停时给一层浅色底。</summary>
-    private static ControlTemplate BuildFlatTemplate()
-    {
-        var template = new ControlTemplate(typeof(Button));
-
-        var border = new FrameworkElementFactory(typeof(Border));
-        border.SetValue(Border.CornerRadiusProperty, new CornerRadius(4));
-        border.SetValue(Border.BackgroundProperty, new TemplateBindingExtension(BackgroundProperty));
-        border.SetValue(Border.PaddingProperty, new TemplateBindingExtension(PaddingProperty));
-
-        var presenter = new FrameworkElementFactory(typeof(ContentPresenter));
-        presenter.SetValue(HorizontalAlignmentProperty, HorizontalAlignment.Center);
-        presenter.SetValue(VerticalAlignmentProperty, VerticalAlignment.Center);
-        border.AppendChild(presenter);
-
-        template.VisualTree = border;
-
-        var hover = new Trigger { Property = IsMouseOverProperty, Value = true };
-        hover.Setters.Add(new Setter(BackgroundProperty,
-            new SolidColorBrush(Color.FromArgb(56, 255, 255, 255))));
-        template.Triggers.Add(hover);
-
-        var pressed = new Trigger { Property = Button.IsPressedProperty, Value = true };
-        pressed.Setters.Add(new Setter(BackgroundProperty,
-            new SolidColorBrush(Color.FromArgb(96, 255, 255, 255))));
-        template.Triggers.Add(pressed);
-
-        return template;
     }
 
     private void ApplyExtendedStyles()

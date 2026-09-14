@@ -72,12 +72,14 @@ public sealed class RadialWindow : Window
         };
         _pointerPoll.Tick += (_, _) => EvaluateHover();
 
+        _view.SectorEditRequested += (_, request) => SectorEditRequested?.Invoke(this, request);
+
         SourceInitialized += (_, _) => ApplyExtendedStyles();
 
         MouseMove += OnMouseMove;
         MouseLeave += OnMouseLeave;
-        MouseLeftButtonDown += OnMouseDown;
-        MouseRightButtonDown += OnMouseDown;
+        MouseLeftButtonDown += OnMouseLeftDown;
+        MouseRightButtonDown += OnMouseRightDown;
         KeyDown += OnKeyDown;
         // 失去焦点时不直接关闭，而是交给覆盖层判断：新前台窗口如果是我们自己的窗口
         // （比如左上角操作条），就不该关 —— 用户是在用覆盖层，不是在离开它。
@@ -105,6 +107,13 @@ public sealed class RadialWindow : Window
     /// 不知道菜单存在哪、也不碰配置文件。
     /// </summary>
     public event EventHandler<int>? AddItemRequested;
+
+    /// <summary>
+    /// 用户在扇区的编辑面板上选了动作（改名 / 移除）。
+    /// 参数是（第一层索引, 子项索引或 -1, 动作, 新名称）。
+    /// </summary>
+    public event EventHandler<(int RootIndex, int ChildIndex, SectorEditAction Action, string? Label)>?
+        SectorEditRequested;
 
     public int HoverIndex => _view.HoverIndex;
     public int RenderedIconCount => _view.RenderedIconCount;
@@ -244,6 +253,41 @@ public sealed class RadialWindow : Window
     /// <summary>诊断用：子弧「＋」的索引。</summary>
     internal int ChildAddSectorIndex => _view.ChildAddSectorIndex;
 
+    /// <summary>诊断用：编辑面板是否开着且真的在视觉树上。</summary>
+    internal bool IsEditPanelOpen => _view.EditPanelAttached;
+
+    /// <summary>诊断用：模拟一次右键落点，走与鼠标同一条分派。</summary>
+    internal HitResult RightClickForProbe(Point localPoint)
+    {
+        var hit = _view.HitTest(localPoint);
+        HandleRightClick(hit);
+        return hit;
+    }
+
+    /// <summary>诊断用：直接要求编辑某一项（跳过命中测试）。</summary>
+    internal void ShowSectorEditForProbe(int rootIndex, int childIndex) =>
+        _view.ShowSectorEdit(rootIndex, childIndex);
+
+    /// <summary>诊断用：确认编辑面板真的被加进了视觉树。</summary>
+    internal bool EditPanelAttached => _view.EditPanelAttached;
+
+    /// <summary>诊断用：面板当前编辑的是哪一项。</summary>
+    internal (int RootIndex, int ChildIndex) EditTargetForProbe => _view.EditTargetForProbe;
+
+    /// <summary>诊断用：走一遍 Esc 的处理路径。</summary>
+    internal void EscapeForProbe() => HandleEscape();
+
+    /// <summary>诊断用：按真实命中结果走一遍左键分派（含"面板开着时先收面板"）。</summary>
+    internal HitResult LeftClickForProbe(Point localPoint)
+    {
+        var hit = _view.HitTest(localPoint);
+        HandleLeftClick(hit);
+        return hit;
+    }
+
+    /// <summary>诊断用：收起编辑面板。</summary>
+    internal void DismissSectorEditForProbe() => _view.DismissSectorEdit();
+
     /// <summary>诊断用：把窗口内坐标交给视图做命中测试。</summary>
     internal HitResult HitTestForProbe(Point localPoint) => _view.HitTest(localPoint);
 
@@ -278,7 +322,11 @@ public sealed class RadialWindow : Window
     /// 隐藏时必须调用 —— 形变动画挂的是 CompositionTarget.Rendering 回调，
     /// 不摘掉的话窗口隐藏后它还会继续逐帧跑，变成看不见的 CPU 占用。
     /// </summary>
-    public void ResetInteraction() => _view.ResetInteraction();
+    public void ResetInteraction()
+    {
+        _view.DismissSectorEdit();
+        _view.ResetInteraction();
+    }
 
     /// <summary>把窗口重新插回 topmost band 最前（不改变位置与尺寸）。</summary>
     public void ReassertTopmost()
@@ -421,6 +469,15 @@ public sealed class RadialWindow : Window
     /// </summary>
     private void EvaluateHover()
     {
+        // 编辑面板开着时不推进悬停状态机。
+        // 面板通常压在某个扇区上，指针在那里会被判成"悬停在那个扇区"——
+        // 于是面板开着的时候子弧会自己展开、收起，用户正在改的这一项还会高亮闪动。
+        if (_view.IsEditPanelOpen)
+        {
+            ApplyHighlight(-1, -1);
+            return;
+        }
+
         if (_lastPointer is not { } local)
         {
             ApplyHighlight(-1, -1);
@@ -478,10 +535,64 @@ public sealed class RadialWindow : Window
         _view.SetChildHover(childIndex);
     }
 
-    private void OnMouseDown(object sender, MouseButtonEventArgs e)
+    private void OnMouseLeftDown(object sender, MouseButtonEventArgs e)
     {
         e.Handled = true;
-        HandleClick(_view.HitTest(e.GetPosition(_view.Root)));
+        HandleLeftClick(_view.HitTest(e.GetPosition(_view.Root)));
+    }
+
+    /// <summary>左键落点的分派。与右键同理：抽出来让探针走同一条路径。</summary>
+    private void HandleLeftClick(HitResult hit)
+    {
+        // 编辑面板开着时，左键的第一下只用来收起面板 —— 不让它顺手把下面的项执行掉。
+        // 这与"点空白处关闭弹层"的一般直觉一致，也避免误触。
+        if (_view.IsEditPanelOpen)
+        {
+            _view.DismissSectorEdit();
+            return;
+        }
+
+        HandleClick(hit);
+    }
+
+    /// <summary>
+    /// 右键 = 编辑鼠标下的那一项。
+    ///
+    /// 挑右键而不是长按或双击：右键在桌面程序里就是"对这一个东西做点什么"的既定语义，
+    /// 不需要教学；而长按与双击在"指针移过去就已经有悬停行为"的轮盘上会互相干扰。
+    /// </summary>
+    private void OnMouseRightDown(object sender, MouseButtonEventArgs e)
+    {
+        e.Handled = true;
+
+        if (_view.IsEditPanelOpen)
+        {
+            _view.DismissSectorEdit();
+            return;
+        }
+
+        HandleRightClick(_view.HitTest(e.GetPosition(_view.Root)));
+    }
+
+    /// <summary>右键落点的分派。与左键理由相同：抽出来让探针能走同一条路径。</summary>
+    private void HandleRightClick(HitResult hit)
+    {
+        switch (hit.Zone)
+        {
+            case HitZone.Sector when !_view.IsAddSector(hit.Index):
+                _view.ShowSectorEdit(hit.Index, -1);
+                break;
+
+            case HitZone.ChildSector when !_view.IsChildAddSector(hit.Index):
+                if (_view.ChildArcParent >= 0) _view.ShowSectorEdit(_view.ChildArcParent, hit.Index);
+                break;
+
+            // 右键在「＋」上、死区上、环外：都当作"取消"。
+            // 与左键一致总比"右键在某些地方没反应"好 —— 后者会让人以为程序卡住了。
+            default:
+                DismissRequested?.Invoke(this, EventArgs.Empty);
+                break;
+        }
     }
 
     /// <summary>
@@ -555,8 +666,24 @@ public sealed class RadialWindow : Window
     {
         if (e.Key != Key.Escape) return;
         e.Handled = true;
+        HandleEscape();
+    }
 
-        // Esc 先「返回上一层」，没有子弧时才关闭整棵菜单。
+    /// <summary>
+    /// Esc 的处理。抽成方法是为了让探针能走同一条路径 ——
+    /// 密钥事件没法从探针里可靠地合成（要靠 SendInput，还得保证前台窗口是对的），
+    /// 但"先收面板、再返回上一层、最后才关闭"这个优先级顺序恰恰是最容易写反的地方。
+    /// </summary>
+    private void HandleEscape()
+    {
+        // 从最内层开始逐层退出，是用户对 Esc 的一贯预期。
+        if (_view.IsEditPanelOpen)
+        {
+            _view.DismissSectorEdit();
+            return;
+        }
+
+        // 没有子弧时才关闭整棵菜单。
         if (_view.IsChildArcVisible)
         {
             _hoverMachine.Reset();

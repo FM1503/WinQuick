@@ -215,32 +215,20 @@
             <CheckBox x:Name="HideOnFocusLossBox" Style="{StaticResource Check}"
                       Content="失去焦点时关闭覆盖层" Click="OnHideOnFocusLossChanged" />
 
-            <!-- ============ 菜单项 ============ -->
-            <TextBlock Text="菜单项" Style="{StaticResource Section}" />
-            <TextBlock x:Name="MenuSummary" Style="{StaticResource Hint}" Margin="0,0,0,4" />
-            <Border Background="{DynamicResource Wq.Color.FieldBackground}"
-                    BorderBrush="{DynamicResource Wq.Color.Stroke}"
-                    BorderThickness="1"
-                    CornerRadius="{DynamicResource Wq.Size.ControlCornerRadius}"
-                    Padding="4,4,4,4">
-                <ScrollViewer MaxHeight="170" VerticalScrollBarVisibility="Auto"
-                              HorizontalScrollBarVisibility="Disabled">
-                    <StackPanel x:Name="MenuItemList" />
-                </ScrollViewer>
-            </Border>
-            <Grid Margin="0,8,0,0">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
-                <Button Grid.Column="0" Style="{StaticResource FlatButton}"
-                        Content="＋ 添加程序…" Click="OnAddProgramClick" />
-                <Button Grid.Column="2" Style="{StaticResource FlatButton}"
-                        Content="打开 menus.json" Click="OnOpenMenuFileClick" />
-            </Grid>
+            <!-- ============ 菜单 ============ -->
+            <!--
+                这里刻意**不再列出菜单项**：加一项在轮盘上点末尾的「＋」就行，
+                改名与移除在扇区上点右键。列表放在这里意味着每次增删都要在
+                "另一个窗口"和"轮盘"之间来回看，而改动的效果恰恰在轮盘上。
+                只留下直接改文件这个入口，给需要批量编辑的场合。
+            -->
+            <TextBlock Text="菜单" Style="{StaticResource Section}" />
             <TextBlock Style="{StaticResource Hint}"
-                       Text="从文件浏览器选中程序即可加入。名称自动取自程序的版本信息，可以直接改。修改立刻生效。" />
+                       Text="加一项：把鼠标移到轮盘上，点外圈末尾那个「＋」。删除或改名：在扇区上点右键。改动立刻生效。" />
+            <Button Style="{StaticResource FlatButton}" HorizontalAlignment="Left" Margin="0,8,0,0"
+                    Content="打开 menus.json" Click="OnOpenMenuFileClick" />
+            <TextBlock Style="{StaticResource Hint}"
+                       Text="手动编辑配置文件。适合一次改很多项；改坏了不会影响已经生效的那一份。" />
 
             <!-- ============ 启动 ============ -->
             <TextBlock Text="启动" Style="{StaticResource Section}" />

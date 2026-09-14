@@ -200,6 +200,33 @@ public static class AddSectorProbe
                 await Task.Delay(400);
             }
 
+            // ---- 右键扇区：编辑面板 ------------------------------------------
+            ProbeOutput.Section("右键扇区（改名 / 移除）");
+
+            // 面板必须真的在视觉树上 —— 只报"开了"是内部状态自证，
+            // 之前有过"对象建好但没接进视觉树"的先例。
+            var sectorPoint = ToLocal(Vec2.FromPolar(midRadius, spans[2].CenterDeg),
+                tokens.Radius.WindowSize);
+            var rHit = overlay.RightClickForProbe(sectorPoint.X, sectorPoint.Y);
+            ProbeOutput.Kv("右键扇区 #2 的命中", $"{rHit.Zone}/{rHit.Index}");
+            ProbeOutput.Kv("  面板已打开且已挂到视觉树", overlay.IsEditPanelOpen ? "是" : "否");
+            ProbeOutput.Kv("  面板指向的项", overlay.EditTargetForProbe.ToString());
+
+            results.Add(("右键扇区会弹出编辑面板",
+                overlay.IsEditPanelOpen && overlay.EditTargetForProbe == (2, -1),
+                $"open={overlay.IsEditPanelOpen}，target={overlay.EditTargetForProbe}"));
+
+            // 面板开着时，左键的第一下只收面板，不能顺手执行下面的项 ——
+            // 面板通常正好压在某个扇区上，误执行就是"想改名却启动了程序"。
+            ResetRecorders();
+            overlay.LeftClickForProbe(sectorPoint.X, sectorPoint.Y);
+            ProbeOutput.Kv("面板开着时左键点扇区", activated is null && addRequested is null
+                ? "只收起了面板（正确）" : $"触发了动作 {activated}{addRequested}");
+            ProbeOutput.Kv("  面板已收起", overlay.IsEditPanelOpen ? "否（异常）" : "是");
+            results.Add(("面板开着时左键只收面板、不执行下面的项",
+                !overlay.IsEditPanelOpen && activated is null && addRequested is null,
+                $"open={overlay.IsEditPanelOpen}，activated={activated?.ToString() ?? "无"}"));
+
             // ---- 加一项之后：位置不跳、落点仍然正确 --------------------------
             ProbeOutput.Section("加一项之后（模拟写盘后重建）");
             var beforeBounds = overlay.RadialPhysicalBounds;
@@ -270,6 +297,42 @@ public static class AddSectorProbe
             results.Add(("菜单满 12 项时不再显示「＋」",
                 overlay.AddSectorIndexForProbe == -1,
                 $"索引 {overlay.AddSectorIndexForProbe}"));
+
+            // ---- Esc / 右键「＋」：优先级与取消语义 ---------------------------
+            // 这两条都会（在 Esc 那条里是"不该"）让覆盖层关闭，所以放在最后 ——
+            // 前面所有核对都需要它可见。
+            ProbeOutput.Section("Esc 的优先级");
+
+            overlay.ShowSectorEditForProbe(1, -1);
+            overlay.EscapeForProbe();
+            await Task.Delay(400);
+            ProbeOutput.Kv("Esc（面板开着）", overlay.IsEditPanelOpen ? "面板仍在（异常）" : "收起了面板");
+            ProbeOutput.Kv("  覆盖层是否被顺手关掉", overlay.IsVisible ? "否（正确）" : "是（异常）");
+            results.Add(("Esc 先收编辑面板、不关闭覆盖层",
+                !overlay.IsEditPanelOpen && overlay.IsVisible,
+                $"panel={overlay.IsEditPanelOpen}，visible={overlay.IsVisible}"));
+
+            // 右键「＋」：那里没有可编辑的项，应当当作取消。
+            //
+            // 注意必须先恢复成 8 项菜单 —— 上面那节把菜单换成了 12 项，
+            // 那种菜单里**没有「＋」**，这个坐标落到的是一个真实项。
+            // 第一版就踩了这个坑：探针报"右键「＋」弹了面板"，看代码怎么看都该拦住，
+            // 实际是探针自己在测一个不存在的「＋」。
+            overlay.RebuildForMenu(menu);
+            await Task.Delay(700);
+            ProbeOutput.Kv("恢复 8 项菜单后的「＋」索引", overlay.AddSectorIndexForProbe.ToString());
+            results.Add(("恢复菜单后「＋」重新出现",
+                overlay.AddSectorIndexForProbe == menu.Items.Count,
+                $"索引 {overlay.AddSectorIndexForProbe}"));
+
+            overlay.RightClickForProbe(addPoint.X, addPoint.Y);
+            ProbeOutput.Kv("右键「＋」扇区是否弹面板", overlay.IsEditPanelOpen ? "弹了（异常）" : "没弹（正确）");
+
+            await Task.Delay(500);
+            ProbeOutput.Kv("  覆盖层是否被关掉", overlay.IsVisible ? "否（异常）" : "是（当作取消）");
+            results.Add(("右键「＋」不弹面板、按取消处理",
+                !overlay.IsEditPanelOpen && !overlay.IsVisible,
+                $"panel={overlay.IsEditPanelOpen}，visible={overlay.IsVisible}"));
 
             overlay.Hide();
         }

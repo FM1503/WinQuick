@@ -136,6 +136,7 @@ public sealed class OverlayController : IDisposable
         window.DismissRequested += (_, _) => Hide();
         window.ItemActivated += (_, selection) => ItemActivated?.Invoke(this, selection);
         window.AddItemRequested += (_, parentIndex) => AddItemRequested?.Invoke(this, parentIndex);
+        window.SectorEditRequested += (_, request) => SectorEditRequested?.Invoke(this, request);
         window.FocusLost += (_, _) => OnRadialFocusLost();
         return window;
     }
@@ -260,6 +261,30 @@ public sealed class OverlayController : IDisposable
     /// <summary>诊断用：子弧「＋」的索引。</summary>
     internal int ChildAddSectorIndexForProbe => _radial.ChildAddSectorIndex;
 
+    /// <summary>诊断用：按真实命中结果走一遍右键分派。</summary>
+    internal WinQuick.Core.Geometry.HitResult RightClickForProbe(double x, double y) =>
+        _radial.RightClickForProbe(new System.Windows.Point(x, y));
+
+    /// <summary>诊断用：编辑面板是否开着且真的在视觉树上。</summary>
+    internal bool IsEditPanelOpen => _radial.IsEditPanelOpen;
+
+    /// <summary>诊断用：直接要求编辑某一项，跳过命中测试。</summary>
+    internal void ShowSectorEditForProbe(int rootIndex, int childIndex) =>
+        _radial.ShowSectorEditForProbe(rootIndex, childIndex);
+
+    /// <summary>诊断用：收起编辑面板。</summary>
+    internal void DismissSectorEditForProbe() => _radial.DismissSectorEditForProbe();
+
+    /// <summary>诊断用：面板当前编辑的是哪一项。</summary>
+    internal (int RootIndex, int ChildIndex) EditTargetForProbe => _radial.EditTargetForProbe;
+
+    /// <summary>诊断用：走一遍 Esc 的处理路径（收面板 → 收子弧 → 关覆盖层）。</summary>
+    internal void EscapeForProbe() => _radial.EscapeForProbe();
+
+    /// <summary>诊断用：按真实命中结果走一遍左键分派（含"面板开着时先收面板"）。</summary>
+    internal WinQuick.Core.Geometry.HitResult LeftClickForProbe(double x, double y) =>
+        _radial.LeftClickForProbe(new System.Windows.Point(x, y));
+
     /// <summary>诊断用：把窗口内坐标交给轮盘做命中测试（走的是点击同一套数学）。</summary>
     internal WinQuick.Core.Geometry.HitResult HitTestForProbe(double x, double y) =>
         _radial.HitTestForProbe(new System.Windows.Point(x, y));
@@ -284,6 +309,10 @@ public sealed class OverlayController : IDisposable
     /// </summary>
     public event EventHandler<int>? AddItemRequested;
 
+    /// <summary>用户在扇区的编辑面板上选了改名或移除。</summary>
+    public event EventHandler<(int RootIndex, int ChildIndex, Radial.SectorEditAction Action, string? Label)>?
+        SectorEditRequested;
+
     /// <summary>设置面板正在显示。</summary>
     public bool IsSettingsOpen => _settingsPanel is { IsVisible: true };
 
@@ -294,7 +323,6 @@ public sealed class OverlayController : IDisposable
     public event EventHandler? SettingsClosed;
 
     /// <summary>设置面板里改了菜单（增删项、改名称）。需要写回 menus.json 并重建轮盘。</summary>
-    public event EventHandler<MenuSpec>? MenuChanged;
 
     /// <summary>用户在覆盖层左上角点了「退出」。</summary>
     public event EventHandler? ExitRequested;
@@ -506,17 +534,10 @@ public sealed class OverlayController : IDisposable
     {
         var panel = new SettingsPanel(
             _settings,
-            _menu,
             probeHotkey: spec => _settingsPanelProbe(spec),
-            applyConfig: config => SettingsChanged?.Invoke(this, config),
-            applyMenu: menu => MenuChanged?.Invoke(this, menu));
+            applyConfig: config => SettingsChanged?.Invoke(this, config));
 
         panel.CloseRequested += (_, _) => CloseSettings();
-
-        // 弹出系统对话框期间把置顶重申的频率调高：
-        // 对话框补上 topmost 只能靠重申，800ms 的默认周期会让它先被遮罩盖住一闪。
-        panel.ModalDialogOpening += (_, _) => SetTopmostInterval(FastTopmostReassertInterval);
-        panel.ModalDialogClosed += (_, _) => SetTopmostInterval(TopmostReassertInterval);
 
         return panel;
     }
@@ -529,11 +550,6 @@ public sealed class OverlayController : IDisposable
 
     /// <summary>告诉覆盖层"面板打开时应当以哪份配置为基准"。</summary>
     public void SetSettingsSource(AppConfig config) => _settings = config;
-
-    private MenuSpec _menu = MenuSpec.BuiltInDefault;
-
-    /// <summary>告诉覆盖层当前用的是哪份菜单（面板需要它来编辑菜单项）。</summary>
-    public void SetMenuSource(MenuSpec menu) => _menu = menu;
 
     /// <summary>注入热键探测函数。</summary>
     public void SetHotkeyProbe(Func<Core.Hotkey.HotkeySpec, (bool Available, int ErrorCode)> probe) =>

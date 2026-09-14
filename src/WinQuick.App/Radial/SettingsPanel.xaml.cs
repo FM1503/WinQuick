@@ -42,8 +42,6 @@ public partial class SettingsPanel : Window
     private readonly AppConfig _original;
     private readonly Func<HotkeySpec, (bool Available, int ErrorCode)> _probeHotkey;
     private readonly Action<AppConfig> _apply;
-    private readonly Action<MenuSpec> _applyMenu;
-    private MenuSpec _menu;
 
     private HotkeySpec? _pendingHotkey;
     private bool _capturing;
@@ -56,35 +54,20 @@ public partial class SettingsPanel : Window
 
     public SettingsPanel(
         AppConfig current,
-        MenuSpec menu,
         Func<HotkeySpec, (bool Available, int ErrorCode)> probeHotkey,
-        Action<AppConfig> applyConfig,
-        Action<MenuSpec> applyMenu)
+        Action<AppConfig> applyConfig)
     {
         InitializeComponent();
 
         _original = current;
-        _menu = menu;
         _probeHotkey = probeHotkey;
         _apply = applyConfig;
-        _applyMenu = applyMenu;
 
         LoadFrom(current, notify: false);
-        RebuildMenuList();
     }
 
     /// <summary>用户要求关闭设置（点 ✕ 或按 Esc）。</summary>
     public event EventHandler? CloseRequested;
-
-    /// <summary>
-    /// 即将弹出一个模态系统对话框 / 对话框已关闭。
-    ///
-    /// 为什么要通知外面：对话框创建时并不知道我们的窗口是置顶的，
-    /// 需要外部把 z 序重申的频率临时调高，否则它会先被遮罩盖住最多一个重申周期
-    /// （默认 800ms）—— 用户看到的就是"对话框闪一下才出来"。
-    /// </summary>
-    public event EventHandler? ModalDialogOpening;
-    public event EventHandler? ModalDialogClosed;
 
     internal nint HandleValue => new WindowInteropHelper(this).Handle;
 
@@ -341,189 +324,6 @@ public partial class SettingsPanel : Window
         }
     }
 
-    // ---------------------------------------------------------------- 菜单项编辑
-
-    /// <summary>与 Core 的 RadialLayout.MaxSectors 一致。</summary>
-    private const int MaxMenuItems = 12;
-
-    /// <summary>
-    /// 重建菜单项列表。
-    ///
-    /// 用代码搭行而不是 XAML 数据模板：每行需要一个可编辑的文本框、一段带省略号的路径、
-    /// 一个删除按钮，行数还随菜单变化 —— 代码搭起来比模板加命令绑定短得多，
-    /// 也更容易看清实际结构。
-    /// </summary>
-    private void RebuildMenuList()
-    {
-        MenuItemList.Children.Clear();
-        MenuSummary.Text = $"当前 {_menu.Items.Count} 项，最多 {MaxMenuItems} 项。";
-
-        for (var i = 0; i < _menu.Items.Count; i++)
-            MenuItemList.Children.Add(BuildMenuRow(i, _menu.Items[i]));
-    }
-
-    private UIElement BuildMenuRow(int index, MenuItemSpec item)
-    {
-        var row = new Grid { Margin = new Thickness(0, 2, 0, 2) };
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(104) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-        // 名称可直接改：自动取的名字有时很长（「Windows 命令处理程序」），
-        // 强制用户回 JSON 里改会很难用。
-        var label = new TextBox
-        {
-            Text = item.Label,
-            Style = (Style)FindResource("Field"),
-            Margin = new Thickness(0, 0, 6, 0),
-        };
-        label.LostFocus += (_, _) => OnLabelEdited(index, label.Text);
-        label.KeyDown += (_, e) =>
-        {
-            if (e.Key != Key.Enter) return;
-            Keyboard.ClearFocus();
-            e.Handled = true;
-        };
-        Grid.SetColumn(label, 0);
-        row.Children.Add(label);
-
-        // 目标只读显示，过长用省略号截断，完整值放 tooltip。
-        var target = new TextBlock
-        {
-            Text = DescribeTarget(item),
-            Foreground = TokenResources.Brush("Color.TextMuted"),
-            FontFamily = TokenResources.Get<System.Windows.Media.FontFamily>("Font.Family"),
-            FontSize = TokenResources.Get<double>("Font.SmallSize"),
-            VerticalAlignment = VerticalAlignment.Center,
-            TextTrimming = TextTrimming.CharacterEllipsis,
-            ToolTip = item.Action?.Target ?? "(无动作，点开是子菜单)",
-        };
-        Grid.SetColumn(target, 1);
-        row.Children.Add(target);
-
-        var remove = new Button
-        {
-            Content = "✕",
-            Style = (Style)FindResource("FlatButton"),
-            Padding = new Thickness(7, 1, 7, 1),
-            Margin = new Thickness(6, 0, 0, 0),
-            ToolTip = "从菜单中移除",
-        };
-        remove.Click += (_, _) => OnRemoveItemClick(index);
-        Grid.SetColumn(remove, 2);
-        row.Children.Add(remove);
-
-        return row;
-    }
-
-    private static string DescribeTarget(MenuItemSpec item) =>
-        item.HasChildren ? $"子菜单（{item.Children.Count} 项）" : item.Action?.Target ?? "(无动作)";
-
-    private void OnLabelEdited(int index, string newLabel)
-    {
-        if (index < 0 || index >= _menu.Items.Count) return;
-
-        var trimmed = newLabel.Trim();
-        if (trimmed.Length == 0)
-        {
-            // 空名称会让菜单里出现一个认不出的项 —— 拒绝并还原成原值。
-            SetFooter("名称不能为空。", isError: true);
-            RebuildMenuList();
-            return;
-        }
-
-        if (trimmed == _menu.Items[index].Label) return;
-
-        var items = _menu.Items.ToList();
-        items[index] = items[index] with { Label = trimmed };
-        _menu = _menu with { Items = items };
-
-        _applyMenu(_menu);
-        SetFooter("名称已改。", isError: false);
-    }
-
-    private void OnRemoveItemClick(int index)
-    {
-        if (index < 0 || index >= _menu.Items.Count) return;
-
-        if (_menu.Items.Count <= 1)
-        {
-            SetFooter("至少要保留一项，否则轮盘会是空的。", isError: true);
-            return;
-        }
-
-        var items = _menu.Items.ToList();
-        items.RemoveAt(index);
-        _menu = _menu with { Items = items };
-
-        _applyMenu(_menu);
-        RebuildMenuList();
-        SetFooter("已移除。", isError: false);
-    }
-
-    /// <summary>
-    /// 用文件浏览器选一个程序加进菜单。
-    ///
-    /// 名称从程序的**版本信息**取（<see cref="ShellNames"/>），与内置默认菜单同源 ——
-    /// 这样用户加进来的项和预置项长得一致、自动跟随系统语言，也不必自己想名字。
-    /// 之后可以直接在列表里改。
-    /// </summary>
-    private void OnAddProgramClick(object sender, RoutedEventArgs e)
-    {
-        if (_menu.Items.Count >= MaxMenuItems)
-        {
-            SetFooter($"菜单最多 {MaxMenuItems} 项（再多扇区会细到点不中）。"
-                      + "可以先移除几项，或把新项放进子菜单。", isError: true);
-            return;
-        }
-
-        var dialog = new Microsoft.Win32.OpenFileDialog
-        {
-            Title = "选择要加入菜单的程序",
-            Filter = "程序与快捷方式 (*.exe;*.lnk;*.bat;*.cmd)|*.exe;*.lnk;*.bat;*.cmd|所有文件 (*.*)|*.*",
-            CheckFileExists = true,
-            Multiselect = false,
-        };
-
-        // 以面板为所有者：面板是置顶的，有所有者的对话框会跟着置顶，不会被遮罩挡住。
-        //
-        // 但"跟着置顶"不会自动发生 —— 官方语义是「一个窗口**变成** topmost 时
-        // 其被拥有窗口才连带」，而面板早就是 topmost 了。所以对话框仍是非置顶的，
-        // 需要外部的 z 序重申把它补上去。这里通知外部临时提高重申频率。
-        ModalDialogOpening?.Invoke(this, EventArgs.Empty);
-        bool? accepted;
-        try
-        {
-            accepted = dialog.ShowDialog(this);
-        }
-        finally
-        {
-            ModalDialogClosed?.Invoke(this, EventArgs.Empty);
-        }
-
-        if (accepted != true) return;
-
-        AddProgram(dialog.FileName);
-    }
-
-    private void AddProgram(string path)
-    {
-        var label = ShellNames.Get(path);
-
-        var items = _menu.Items.ToList();
-        items.Add(new MenuItemSpec
-        {
-            Label = label,
-            IconPath = path,
-            Action = MenuAction.Launch(path),
-        });
-        _menu = _menu with { Items = items };
-
-        _applyMenu(_menu);
-        RebuildMenuList();
-        SetFooter($"已加入「{label}」。", isError: false);
-    }
-
     private void OnOpenMenuFileClick(object sender, RoutedEventArgs e)
     {
         try
@@ -684,16 +484,4 @@ public partial class SettingsPanel : Window
 
     internal AppConfig? BuildConfigForTest() => BuildConfig();
 
-    internal int MenuItemCountForTest => _menu.Items.Count;
-
-    internal IReadOnlyList<MenuItemSpec> MenuItemsForTest => _menu.Items;
-
-    /// <summary>模拟"用文件浏览器选了一个程序"的结果（不弹对话框）。</summary>
-    internal void AddProgramForTest(string path) => AddProgram(path);
-
-    internal void RemoveItemForTest(int index) => OnRemoveItemClick(index);
-
-    /// <summary>打开"添加程序"的文件对话框。探针用它验证对话框的层级。</summary>
-    internal void OpenAddProgramDialogForTest() =>
-        OnAddProgramClick(this, new RoutedEventArgs());
 }

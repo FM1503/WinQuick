@@ -104,6 +104,22 @@ internal sealed class SectorLabel
     /// <summary>文字实际占的宽度，供验证。</summary>
     public double TextWidth => _text.DesiredSize.Width;
 
+    /// <summary>原始完整文字（未截断）。</summary>
+    public string Text => _text.Text;
+
+    /// <summary>整体透明度。子弧展开时图标与文字要跟着扇区厚度一起淡入。</summary>
+    public void SetOpacity(double opacity) => _clipHost.Opacity = opacity;
+
+    /// <summary>从视觉树上摘掉自己。子弧收起时必须调用，否则不可见的标签会参与渲染遍历。</summary>
+    public void Detach()
+    {
+        StopScroll();
+        _clipHost.Children.Clear();
+
+        if (_clipHost.Parent is System.Windows.Controls.Panel panel)
+            panel.Children.Remove(_clipHost);
+    }
+
     private bool FitsWithinBox() =>
         _text.DesiredSize.Width <= _availableWidth + 0.5 &&
         _text.DesiredSize.Height <= _availableHeight + 0.5;

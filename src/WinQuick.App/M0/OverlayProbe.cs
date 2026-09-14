@@ -102,6 +102,8 @@ public static class OverlayProbe
             // 要区分清楚是「点击没被检测到」还是「检测到了但没有动作可执行」。
             await VerifySectorClickAsync(overlay);
 
+            await VerifyChildArcAsync(overlay);
+
             ProbeOutput.Section("点遮罩空白处是否关闭");
             if (overlay.IsVisible && overlay.DimHandles.Count > 0)
             {
@@ -356,7 +358,7 @@ public static class OverlayProbe
         var tokens = TokenStore.Current;
         var monitor = MonitorLayout.AtCursor();
         var hitIndex = -1;
-        overlay.SectorActivated += (_, i) => hitIndex = i;
+        overlay.ItemActivated += (_, selection) => hitIndex = selection.ChildIndex >= 0 ? selection.ChildIndex : selection.ParentIndex;
 
         PInvoke.GetCursorPos(out var savedCursor);
         var radial = (HWND)overlay.RadialHandle;
@@ -384,7 +386,7 @@ public static class OverlayProbe
         PInvoke.PostMessage(radial, PInvoke.WM_LBUTTONDOWN, new WPARAM(1), lParam);
         await Task.Delay(250);
 
-        ProbeOutput.Kv("SectorActivated 触发", hitIndex >= 0 ? $"是，索引 {hitIndex}" : "否");
+        ProbeOutput.Kv("ItemActivated 触发", hitIndex >= 0 ? $"是，索引 {hitIndex}" : "否");
         ProbeOutput.Line();
         ProbeOutput.Line(hitIndex == 0
             ? "  >>> 点击扇区被正确检测，命中索引与几何计算一致。"
@@ -394,6 +396,58 @@ public static class OverlayProbe
                   + "若你手动点击能生效则说明是探针的限制而不是程序缺陷。");
 
         PInvoke.SetCursorPos(savedCursor.X, savedCursor.Y);
+    }
+
+    /// <summary>
+    /// 验证子弧（第二层环）能否展开，以及展开后的几何是否落在预期环带上。
+    /// 子弧在窗口内的位置完全由令牌决定，可以用窗口矩形把它换算回屏幕坐标核对。
+    /// </summary>
+    private static async Task VerifyChildArcAsync(OverlayController overlay)
+    {
+        ProbeOutput.Section("子弧展开核对");
+        if (!overlay.IsVisible)
+        {
+            ProbeOutput.Line("  覆盖层当前不可见，跳过。");
+            return;
+        }
+
+        var tokens = TokenStore.Current;
+        var menu = MenuSpec.BuiltInDefault;
+        var parentIndex = -1;
+        for (var i = 0; i < menu.Items.Count; i++)
+            if (menu.Items[i].HasChildren) { parentIndex = i; break; }
+
+        if (parentIndex < 0)
+        {
+            ProbeOutput.Line("  默认菜单里没有带子项的项，跳过。");
+            return;
+        }
+
+        var childCount = menu.Items[parentIndex].Children.Count;
+        ProbeOutput.Kv("父扇区", $"{parentIndex}（{menu.Items[parentIndex].Label}）");
+        ProbeOutput.Kv("子项数", childCount);
+
+        var arc = RadialLayout.ChildArc(parentIndex * (360.0 / menu.Items.Count), childCount,
+            tokens.Interaction.ChildSpanDegrees);
+        ProbeOutput.Kv("子弧角度跨度", $"{arc.SweepDeg:0.#}°（中线 {arc.CenterDeg:0.#}°）");
+        ProbeOutput.Kv("子弧环带", $"{tokens.Radius.Ring2Inner} → {tokens.Radius.Ring2Outer}");
+
+        // 直接调用窗口的展开路径，跳过悬停延迟 —— 延迟本身已由状态机单测覆盖。
+        overlay.ExpandChildArcForProbe(parentIndex);
+        await Task.Delay(400);   // 留出展开动画完成的时间
+
+        ProbeOutput.Kv("子弧已展开", overlay.IsChildArcExpanded ? "是" : "否");
+        ProbeOutput.Kv("展开进度", overlay.ChildArcProgress.ToString("0.###"));
+        ProbeOutput.Kv("子项数（渲染出来的）", overlay.ChildItemCount);
+
+        ProbeOutput.Line();
+        ProbeOutput.Line(overlay.IsChildArcExpanded && overlay.ChildArcProgress > 0.99
+            ? "  >>> 子弧展开完成，进度到 1。几何数值验证见 --render-preview --state=child。"
+            : "  >>> 子弧未完全展开，展开路径或动画有问题。");
+
+        overlay.CollapseChildArcForProbe();
+        await Task.Delay(300);
+        ProbeOutput.Kv("收起后仍可见", overlay.IsChildArcExpanded ? "是（异常）" : "否");
     }
 
     private static bool AnimationsEnabledForReport()

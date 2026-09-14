@@ -43,7 +43,7 @@ public sealed class OverlayController : IDisposable
     {
         _radial = new RadialWindow(menu);
         _radial.DismissRequested += (_, _) => Hide();
-        _radial.SectorActivated += (_, index) => SectorActivated?.Invoke(this, index);
+        _radial.ItemActivated += (_, selection) => ItemActivated?.Invoke(this, selection);
 
         _topmostTimer = new DispatcherTimer(DispatcherPriority.Background)
         {
@@ -67,8 +67,24 @@ public sealed class OverlayController : IDisposable
     /// <summary>诊断用：轮盘窗口句柄。</summary>
     internal nint RadialHandle => _radial.HandleValue;
 
-    /// <summary>某个叶子扇区被点击。</summary>
-    public event EventHandler<int>? SectorActivated;
+    /// <summary>诊断用：子弧是否展开。</summary>
+    internal bool IsChildArcExpanded => _radial.IsChildArcVisible;
+
+    /// <summary>诊断用：子弧展开进度。</summary>
+    internal double ChildArcProgress => _radial.ChildArcProgress;
+
+    /// <summary>诊断用：渲染出来的子项数量。</summary>
+    internal int ChildItemCount => _radial.ChildItemCount;
+
+    /// <summary>诊断用：跳过悬停延迟直接展开子弧。</summary>
+    internal void ExpandChildArcForProbe(int parentIndex) => _radial.ExpandChildArc(parentIndex);
+
+    internal void CollapseChildArcForProbe() => _radial.CollapseChildArc();
+
+    /// <summary>
+    /// 某个叶子项被点击。<c>ChildIndex</c> 为 -1 表示第一层的项，否则是子弧里的子项。
+    /// </summary>
+    public event EventHandler<(int ParentIndex, int ChildIndex)>? ItemActivated;
 
     /// <summary>
     /// 预先创建所有窗口并隐藏。必须在启动时调用一次，把渲染栈、字体缓存、
@@ -122,6 +138,7 @@ public sealed class OverlayController : IDisposable
         _radial.Show();
         _radial.ReassertTopmost();
         _radial.PlayEntrance();
+        _radial.StartInteraction();
 
         // 拿键盘焦点，否则 Esc 收不到。这里同步调用是刻意的（见方法注释）。
         ForegroundFocus.AttachTo(_radial);
@@ -143,6 +160,8 @@ public sealed class OverlayController : IDisposable
         IsVisible = false;
 
         _topmostTimer.Stop();
+        // 指针轮询必须停 —— 它每 25ms 唤醒一次 UI 线程，窗口不可见时纯属浪费。
+        _radial.StopInteraction();
         foreach (var dim in _dims) dim.Hide();
 
         // 退场期间不再接受输入，否则用户在收缩过程中还能点到扇区。

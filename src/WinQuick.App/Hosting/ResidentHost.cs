@@ -44,7 +44,7 @@ public sealed class ResidentHost : IDisposable
         _tray = new TrayHost(_overlay);
 
         _hotkeys.Pressed += (_, _) => _overlay.Toggle();
-        _overlay.SectorActivated += OnSectorActivated;
+        _overlay.ItemActivated += OnItemActivated;
         ActionExecutor.Completed += OnActionCompleted;
 
         _session.SessionLocked += (_, _) => _overlay.Hide();
@@ -99,17 +99,32 @@ public sealed class ResidentHost : IDisposable
     }
 
     /// <summary>
-    /// 扇区被点击。
+    /// 某个项被点击（第一层或子弧里的子项）。
     ///
     /// 顺序是刻意的：**先收界面，再执行动作**。
     /// 反过来的话，新启动的程序窗口会先冒出来、再被覆盖层挡住一下，观感像闪屏。
-    /// 而且 Hide() 会立刻把前台焦点还给用户原来的窗口，这是"按下就立刻响应"的前提。
+    /// 而且 Hide() 会立刻把前台焦点还给用户原来的窗口，这是「按下就立刻响应」的前提。
     /// </summary>
-    private void OnSectorActivated(object? sender, int index)
+    private void OnItemActivated(object? sender, (int ParentIndex, int ChildIndex) selection)
     {
-        if (index < 0 || index >= _menu.Items.Count) return;
+        if (selection.ParentIndex < 0 || selection.ParentIndex >= _menu.Items.Count) return;
 
-        var item = _menu.Items[index];
+        var item = _menu.Items[selection.ParentIndex];
+
+        if (selection.ChildIndex >= 0)
+        {
+            // 选中的是子弧里的子项。
+            if (selection.ChildIndex >= item.Children.Count) return;
+            item = item.Children[selection.ChildIndex];
+        }
+        else if (item.HasChildren)
+        {
+            // 第一层里"有子项但没展开"的项被直接执行了 —— 不该发生，
+            // 说明点击路径有问题。明确报出来而不是静默什么都不做。
+            _tray.ShowBalloon("WinQuick", $"「{item.Label}」有子菜单，应展开而不是执行。");
+            return;
+        }
+
         _overlay.Hide();
 
         // ActionExecutor 内部走线程池，这里不会阻塞 —— 覆盖层的关闭路径必须立刻返回。

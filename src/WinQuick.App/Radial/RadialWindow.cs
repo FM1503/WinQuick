@@ -3,12 +3,14 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using System.Windows.Threading;
 using WinQuick.App.Design;
 using WinQuick.App.Diagnostics;
 using WinQuick.App.Interop;
 using WinQuick.Core.Config;
 using WinQuick.Core.Design;
 using WinQuick.Core.Geometry;
+using WinQuick.Core.Interaction;
 using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.UI.WindowsAndMessaging;
@@ -30,6 +32,9 @@ public sealed class RadialWindow : Window
     private readonly DesignTokens _tokens;
     private readonly RadialRingView _view;
     private readonly ScaleTransform _scale = new(1, 1);
+    private readonly SubmenuHoverMachine _hoverMachine;
+    private readonly DispatcherTimer _pointerPoll;
+    private Point? _lastPointer;
     private bool _stylesApplied;
 
     public RadialWindow(MenuSpec menu)
@@ -56,9 +61,21 @@ public sealed class RadialWindow : Window
         _view.Root.RenderTransformOrigin = new Point(0.5, 0.5);
         _view.Root.RenderTransform = _scale;
 
+        _hoverMachine = new SubmenuHoverMachine(_tokens.Interaction);
+
+        // 状态机必须被**反复**喂入当前指针位置，而不是只在指针移动时喂。
+        // 原因是「等待展开延迟」这件事需要靠时间推进来触发：指针停住不动时，
+        // 若只在移动时才检查，子菜单就永远不会展开。（这条已用单测锁住。）
+        _pointerPoll = new DispatcherTimer(DispatcherPriority.Input)
+        {
+            Interval = TimeSpan.FromMilliseconds(25),
+        };
+        _pointerPoll.Tick += (_, _) => EvaluateHover();
+
         SourceInitialized += (_, _) => ApplyExtendedStyles();
 
         MouseMove += OnMouseMove;
+        MouseLeave += OnMouseLeave;
         MouseLeftButtonDown += OnMouseDown;
         MouseRightButtonDown += OnMouseDown;
         KeyDown += OnKeyDown;
@@ -68,8 +85,12 @@ public sealed class RadialWindow : Window
     /// <summary>要求关闭覆盖层（Esc / 点圆盘外 / 失去焦点）。</summary>
     public event EventHandler? DismissRequested;
 
-    /// <summary>某个叶子扇区被点击选中。</summary>
-    public event EventHandler<int>? SectorActivated;
+    /// <summary>
+    /// 某个叶子项被点击选中。
+    /// <paramref name="parentIndex"/> 是第一层扇区索引；
+    /// <paramref name="childIndex"/> 为 -1 表示选中的是第一层本身，否则是子弧里的子项。
+    /// </summary>
+    public event EventHandler<(int ParentIndex, int ChildIndex)>? ItemActivated;
 
     public int HoverIndex => _view.HoverIndex;
     public int RenderedIconCount => _view.RenderedIconCount;
@@ -127,6 +148,34 @@ public sealed class RadialWindow : Window
             SET_WINDOW_POS_FLAGS.SWP_NOOWNERZORDER);
 
         _view.SetHover(-1);
+    }
+
+    /// <summary>诊断用：子弧是否可见。</summary>
+    internal bool IsChildArcVisible => _view.IsChildArcVisible;
+
+    internal double ChildArcProgress => _view.ChildArcProgress;
+
+    internal int ChildItemCount => _view.ChildItemCount;
+
+    /// <summary>诊断用：跳过悬停延迟直接展开子弧。</summary>
+    internal void ExpandChildArc(int parentIndex) => _view.ExpandChildArc(parentIndex);
+
+    internal void CollapseChildArc() => _view.CollapseChildArc();
+
+    /// <summary>开始在可见期间轮询指针，以推进悬停延迟。</summary>
+    public void StartInteraction()
+    {
+        _hoverMachine.Reset();
+        _lastPointer = null;
+        _pointerPoll.Start();
+    }
+
+    /// <summary>停止轮询。窗口隐藏时必须调用。</summary>
+    public void StopInteraction()
+    {
+        _pointerPoll.Stop();
+        _hoverMachine.Reset();
+        _lastPointer = null;
     }
 
     /// <summary>
@@ -256,11 +305,81 @@ public sealed class RadialWindow : Window
 
     private void OnMouseMove(object sender, MouseEventArgs e)
     {
-        var local = e.GetPosition(_view.Root);
+        _lastPointer = e.GetPosition(_view.Root);
+        EvaluateHover();
+    }
+
+    private void OnMouseLeave(object sender, MouseEventArgs e)
+    {
+        // 指针离开窗口，等价于落在环外 —— 让状态机去安排收起。
+        _lastPointer = null;
+        _hoverMachine.OnPointer(new HoverProbe(HitZone.Outside, -1, false, NowMs()));
+        ApplyHoverAction(HoverAction.ScheduleClose);
+    }
+
+    private static long NowMs() => Environment.TickCount64;
+
+    /// <summary>
+    /// 把当前指针位置喂给状态机并执行它要求的动作。
+    /// 由 MouseMove 与轮询计时器共同调用 —— 轮询那一路是"指针不动也要推进延迟"的实现。
+    /// </summary>
+    private void EvaluateHover()
+    {
+        if (_lastPointer is not { } local)
+        {
+            ApplyHighlight(-1, -1);
+            return;
+        }
+
         var hit = _view.HitTest(local);
 
-        // 死区与环外都不高亮：死区语义是"取消"，环外是"无效区域"。
-        _view.SetHover(hit.Zone == HitZone.Sector ? hit.Index : -1);
+        var probe = new HoverProbe(
+            Zone: hit.Zone,
+            Index: hit.Index,
+            ItemHasChildren: hit.Zone == HitZone.Sector && _view.RootItemHasChildren(hit.Index),
+            NowMs: NowMs());
+
+        var action = _hoverMachine.OnPointer(probe);
+
+        // 收起延迟到期这一条没有指针事件可依附，只能在这里按时间判断。
+        if (action == HoverAction.None && _hoverMachine.CloseDelayElapsed(NowMs()))
+            action = _hoverMachine.OnCloseTimerElapsed(NowMs());
+
+        ApplyHoverAction(action);
+
+        ApplyHighlight(
+            hit.Zone == HitZone.Sector ? hit.Index : -1,
+            hit.Zone == HitZone.ChildSector ? hit.Index : -1);
+    }
+
+    private void ApplyHoverAction(HoverAction action)
+    {
+        switch (action)
+        {
+            case HoverAction.OpenNow:
+                if (_hoverMachine.OpenParent >= 0)
+                    _view.ExpandChildArc(_hoverMachine.OpenParent);
+                break;
+
+            case HoverAction.CloseNow:
+                _view.CollapseChildArc();
+                break;
+
+            // ScheduleOpen / ScheduleClose 不需要额外动作：
+            // 轮询计时器会持续喂入指针位置，延迟到期时自然会转成 OpenNow / CloseNow。
+            case HoverAction.ScheduleOpen:
+            case HoverAction.ScheduleClose:
+            case HoverAction.None:
+            default:
+                break;
+        }
+    }
+
+    private void ApplyHighlight(int rootIndex, int childIndex)
+    {
+        // 死区与环外都不高亮：死区语义是「取消」，环外是「无效区域」。
+        _view.SetHover(rootIndex);
+        _view.SetChildHover(childIndex);
     }
 
     private void OnMouseDown(object sender, MouseButtonEventArgs e)
@@ -272,13 +391,43 @@ public sealed class RadialWindow : Window
 
         switch (hit.Zone)
         {
+            case HitZone.ChildSector:
+                // 子项是叶子：执行它。父索引与子索引一起报上去，由上层解析成具体动作。
+                if (_view.ChildArcParent >= 0)
+                    ItemActivated?.Invoke(this, (_view.ChildArcParent, hit.Index));
+                break;
+
             case HitZone.Sector:
-                SectorActivated?.Invoke(this, hit.Index);
+                if (_view.RootItemHasChildren(hit.Index))
+                {
+                    // 点击有子项的扇区 = 跳过悬停延迟立即展开。
+                    _hoverMachine.OpenImmediately(hit.Index);
+                    _view.ExpandChildArc(hit.Index);
+                    _view.SetHover(hit.Index);
+                }
+                else
+                {
+                    ItemActivated?.Invoke(this, (hit.Index, -1));
+                }
                 break;
 
             case HitZone.DeadZone:
-                // 中心 = 取消整棵菜单。这是饼菜单的既定语义，不需要额外提示。
-                DismissRequested?.Invoke(this, EventArgs.Empty);
+                // 中心 = 「返回上一层」。有子弧展开时先收子弧，否则取消整棵菜单。
+                // 这与饼菜单的既定语义一致（Don Hopkins 的规范里中心就是取消，
+                // Kurtenbach 的标记菜单里指向子菜单中心则是返回上一级）。
+                if (_view.IsChildArcVisible)
+                {
+                    _hoverMachine.Reset();
+                    _view.CollapseChildArc();
+                }
+                else
+                {
+                    DismissRequested?.Invoke(this, EventArgs.Empty);
+                }
+                break;
+
+            case HitZone.ChildArcGap:
+                // 缝隙上的点击不做事 —— 它既不是选项也不是"外侧空白"。
                 break;
 
             case HitZone.Outside:
@@ -293,6 +442,15 @@ public sealed class RadialWindow : Window
     {
         if (e.Key != Key.Escape) return;
         e.Handled = true;
+
+        // Esc 先「返回上一层」，没有子弧时才关闭整棵菜单。
+        if (_view.IsChildArcVisible)
+        {
+            _hoverMachine.Reset();
+            _view.CollapseChildArc();
+            return;
+        }
+
         DismissRequested?.Invoke(this, EventArgs.Empty);
     }
 }

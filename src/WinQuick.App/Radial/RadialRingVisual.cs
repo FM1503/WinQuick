@@ -26,7 +26,11 @@ namespace WinQuick.App.Radial;
 /// 中间表面，叠多了整个窗口会退化到 WARP 软件渲染，那是 WPF 界面掉帧最常见的原因。
 /// 层次感用描边与明暗对比表达。
 /// </summary>
-public sealed class RadialRingView
+/// <summary>
+/// 轮盘视图。子弧（第二层）的渲染与命中测试在
+/// <c>RadialRingView.ChildArc.cs</c> 里，用 partial 拆开以免主文件无限膨胀。
+/// </summary>
+public sealed partial class RadialRingView
 {
     private readonly DesignTokens _tokens;
     private readonly Point _center;
@@ -36,14 +40,16 @@ public sealed class RadialRingView
     private readonly Image[] _icons;
     private readonly ShapePath?[] _childMarkers;
     private readonly SectorBulgeAnimator _bulge;
+    private readonly MenuSpec _menu;
     private int _hover = -1;
 
     internal RadialRingView(
-        FrameworkElement root, DesignTokens tokens, Point center, SectorSpan[] spans,
+        Canvas root, DesignTokens tokens, Point center, SectorSpan[] spans,
         ShapePath[] sectors, SectorLabel[] labels, Image[] icons, ShapePath?[] childMarkers,
-        SectorBulgeAnimator bulge)
+        SectorBulgeAnimator bulge, MenuSpec menu)
     {
         Root = root;
+        _menu = menu;
         _tokens = tokens;
         _center = center;
         _spans = spans;
@@ -54,7 +60,8 @@ public sealed class RadialRingView
         _bulge = bulge;
     }
 
-    public FrameworkElement Root { get; }
+    /// <summary>视觉根。类型是 Canvas 而不是 FrameworkElement —— 子弧需要往它里面增删图形。</summary>
+    public Canvas Root { get; }
 
     public int SectorCount => _sectors.Length;
     public int HoverIndex => _hover;
@@ -110,13 +117,12 @@ public sealed class RadialRingView
         _bulge.SetHover(index);
     }
 
-    /// <summary>把窗口内的坐标交给 Core 的命中测试，返回落在哪个区域/扇区。</summary>
+    /// <summary>
+    /// 把窗口内的坐标交给 Core 的命中测试，返回落在哪个区域/扇区。
+    /// 子弧环带优先于第一层环（实现在 partial 文件里）。
+    /// </summary>
     public HitResult HitTest(Point localPoint) =>
-        RadialLayout.HitTest(
-            new Vec2(localPoint.X - _center.X, localPoint.Y - _center.Y),
-            _tokens.Radius.DeadZone,
-            _tokens.Radius.Ring1Outer,
-            _spans);
+        HitTestWithChildArc(new Vec2(localPoint.X - _center.X, localPoint.Y - _center.Y));
 
     // ---------------------------------------------------------------- 构造
 
@@ -198,7 +204,7 @@ public sealed class RadialRingView
             tokens.Motion.HoverBulgePx, tokens.Motion.EntranceEasing, tokens.Motion.HoverBulgeMs);
 
         return new RadialRingView(
-            root, tokens, center, spans, sectors, labels, icons, childMarkers, bulge);
+            root, tokens, center, spans, sectors, labels, icons, childMarkers, bulge, menu);
     }
 
     /// <summary>
@@ -216,8 +222,46 @@ public sealed class RadialRingView
     public void ResetInteraction()
     {
         _bulge.Reset();
+        CollapseChildArcImmediate();
         _hover = -1;
     }
+
+    /// <summary>第一层某项是否有子菜单。状态机需要它来决定"悬停是否应展开"。</summary>
+    public bool RootItemHasChildren(int index) =>
+        index >= 0 && index < _menu.Items.Count && _menu.Items[index].HasChildren;
+
+    /// <summary>第一层某项的完整标签（未截断）。</summary>
+    public string RootItemLabel(int index) =>
+        index >= 0 && index < _menu.Items.Count ? _menu.Items[index].Label : "";
+
+    /// <summary>某个父扇区下各子项的标签。</summary>
+    public IReadOnlyList<string> ChildLabelsOf(int parentIndex) =>
+        parentIndex >= 0 && parentIndex < _menu.Items.Count
+            ? _menu.Items[parentIndex].Children.Select(c => c.Label).ToList()
+            : [];
+
+    /// <summary>子弧当前是否可见（含正在展开/收起的中间态）。</summary>
+    public bool IsChildArcVisible => _childArcParent >= 0;
+
+    /// <summary>当前显示的是哪个父扇区的子弧，-1 表示没有。</summary>
+    public int ChildArcParent => _childArcParent;
+
+    /// <summary>子弧里的子项数量。</summary>
+    public int ChildItemCount => _childSpans.Length;
+
+    /// <summary>子弧当前的展开进度：0 完全收起，1 完全展开。</summary>
+    public double ChildArcProgress => _childArcProgress;
+
+    /// <summary>被悬停的子项索引，-1 表示无。</summary>
+    public int HoveredChildIndex => _hoveredChild;
+
+    /// <summary>当前选中项的完整路径标签，用于在中心区域显示（长文本读全的另一条路）。</summary>
+    public string CurrentSelectionLabel =>
+        _hoveredChild >= 0 && _hoveredChild < _childLabels.Count
+            ? _childLabels[_hoveredChild].Text
+            : _hover >= 0 && _hover < _labels.Length
+                ? _menu.Items[_hover].Label
+                : "";
 
     /// <summary>
     /// 图标。取不到 shell 图标时画首字占位 —— 一个缺失的图标不该让整项看起来像坏了。

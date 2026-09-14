@@ -50,7 +50,22 @@ public enum HitZone
 {
     /// <summary>中心死区 —— 定义为"取消整棵菜单"，不会选中任何项。</summary>
     DeadZone,
+
+    /// <summary>第一层（根）环上的扇区。</summary>
     Sector,
+
+    /// <summary>第二层（子弧）环上的扇区。</summary>
+    ChildSector,
+
+    /// <summary>
+    /// 落在已展开子弧的角度范围内、但处在两个子扇区之间的缝隙上。
+    ///
+    /// 单独成一类而不是并进 Outside，是为了实现「斜向缓冲区」：
+    /// 指针从父扇区斜着移向子弧时，会经过缝隙和相邻扇区上方，
+    /// 若把这些位置判为"离开"，子弧就会在指针到达之前收起。
+    /// </summary>
+    ChildArcGap,
+
     /// <summary>在环外 —— 不选中任何项。</summary>
     Outside,
 }

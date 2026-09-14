@@ -52,11 +52,20 @@ public static class RenderPreview
             ProbeOutput.Line("已启用压力标签：全部标签追加长后缀");
         }
 
+        // child / child-leaf 两个状态用来验证子弧（第二层环）。
+        // 它们把子弧立即落定到展开态 —— 只渲染一帧，动画推进不了，
+        // 否则画出来的永远是未展开的形态，子弧就等于没被验证过。
+        var wantsChildArc = state is "child" or "child-leaf";
+        var parentWithChildren = -1;
+        for (var i = 0; i < trimmed.Items.Count; i++)
+            if (trimmed.Items[i].HasChildren) { parentWithChildren = i; break; }
+
         var hoverIndex = state switch
         {
             "hover" => Math.Min(2, count - 1),
             "hover-first" => 0,
             "hover-last" => count - 1,
+            "child" or "child-leaf" => parentWithChildren,
             _ => -1,
         };
 
@@ -69,6 +78,13 @@ public static class RenderPreview
             // 用立即落定而不是 SetHover：只渲染一帧，动画推进不了，
             // 否则画出来的永远是未形变状态，形变就等于没被验证过。
             view.SetHoverImmediate(hoverIndex);
+
+            if (wantsChildArc && parentWithChildren >= 0)
+            {
+                view.ExpandChildArc(parentWithChildren, immediate: true);
+                // child-leaf 额外高亮第一个子项，用来验证子弧的悬停高亮色。
+                if (state == "child-leaf") view.SetChildHover(0);
+            }
 
             var size = tokens.Radius.WindowSize;
             var root = view.Root;
@@ -102,6 +118,9 @@ public static class RenderPreview
             ProbeOutput.Kv("被自动缩小过字号的标签", view.ShrunkLabelCount);
             ProbeOutput.Kv("发生折行的标签", view.WrappedLabelCount);
             ProbeOutput.Kv("悬停扇区外扩", $"{view.CurrentHoverBulge:0.#} px");
+            ProbeOutput.Kv("子弧已展开", view.IsChildArcVisible ? $"是（父索引 {view.ChildArcParent}）" : "否");
+            ProbeOutput.Kv("子弧内的子项数", view.ChildItemCount);
+            ProbeOutput.Kv("子弧展开进度", view.ChildArcProgress.ToString("0.###"));
             ProbeOutput.Kv("最大溢出", $"{view.MaxLabelOverflow:0.#} px");
             ProbeOutput.Line();
 

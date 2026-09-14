@@ -20,7 +20,10 @@ param(
     [int]$CenterY = -1,
     [int]$ScanRadius = -1,
     [int]$IconRadius = -1,
-    [int]$SectorCount = 8
+    [int]$SectorCount = 8,
+    # 径向剖面的方向。子弧只画在父扇区那一侧，所以验证子弧时必须把剖面转到它的方向上，
+    # 否则沿 90° 剖下去什么都测不到、看不出问题。
+    [int]$ProfileAngle = 90
 )
 
 $ErrorActionPreference = 'Stop'
@@ -39,6 +42,7 @@ Write-Output "文件      : $Path"
 Write-Output "尺寸      : $($img.Width) x $($img.Height)"
 Write-Output "圆心      : ($CenterX, $CenterY)"
 Write-Output "扫描半径  : $ScanRadius"
+Write-Output "剖面方向  : $ProfileAngle 度"
 
 function Get-PixelAt([int]$x, [int]$y) {
     if ($x -lt 0 -or $y -lt 0 -or $x -ge $img.Width -or $y -ge $img.Height) { return $null }
@@ -198,7 +202,11 @@ Write-Output "  应用启动时会打印「成功取到图标的项 N/M」，两
 
 # ---------------------------------------------------------------- 径向剖面
 Write-Output ""
-Write-Output "=== 径向剖面 (沿 90 度方向，圆心向外，颜色跳变处) ==="
+Write-Output "=== 径向剖面 (沿 $ProfileAngle 度方向，圆心向外，颜色跳变处) ==="
+Write-Output "  提示：验证子弧时不要把 -ProfileAngle 设成子弧的**中心角** ——"
+Write-Output "        子项为偶数个时那里正好是两个子项之间的缝隙，沿它剖下去会看到一片透明，"
+Write-Output "        容易被误判成「子弧没画出来」。要取某个**子项**的中心角。"
+Write-Output ""
 Write-Output ""
 
 $maxRadius = [int]([math]::Min($img.Width, $img.Height) / 2)
@@ -207,7 +215,7 @@ $prevStart = 0
 $prevRep = $null
 
 for ($r = 0; $r -le $maxRadius; $r++) {
-    $p = SampleAt 90 $r
+    $p = SampleAt $ProfileAngle $r
     $key = Color-Key $p
     if ($null -eq $prevKey) { $prevKey = $key; $prevStart = 0; $prevRep = $p; continue }
     if ($key -ne $prevKey) {
@@ -229,10 +237,10 @@ Write-Output "=== 外缘抗锯齿与整体透明度 ==="
 
 $outermostOpaque = 0
 for ($r = $maxRadius; $r -ge 0; $r--) {
-    $p = SampleAt 90 $r
+    $p = SampleAt $ProfileAngle $r
     if ($null -ne $p -and $p.A -gt 8) { $outermostOpaque = $r; break }
 }
-Write-Output "  内容外边界 (90 度方向，A>8): r=$outermostOpaque"
+Write-Output "  内容外边界 ($ProfileAngle 度方向，A>8): r=$outermostOpaque"
 
 $partial = 0
 $total = 0

@@ -150,6 +150,12 @@ public sealed record RadiusTokens
     /// <summary>行高倍率，用于估算多行标签的高度。</summary>
     public double LabelLineHeightFactor { get; init; } = 1.35;
 
+    /// <summary>第一层（根）环的角度带。</summary>
+    public Band Ring1 => new(DeadZone, Ring1Outer);
+
+    /// <summary>第二层（子弧）环的角度带。</summary>
+    public Band Ring2 => new(Ring2Inner, Ring2Outer);
+
     public double IconRadius => (DeadZone + (Ring1Outer - DeadZone) * IconRadiusRatio);
     public double LabelRadius => (DeadZone + (Ring1Outer - DeadZone) * LabelRadiusRatio);
     public double Ring1MidRadius => (DeadZone + Ring1Outer) / 2.0;
@@ -159,22 +165,49 @@ public sealed record RadiusTokens
     /// ① 与图标不重叠所需的间隔（3 点/9 点方向的最坏情况）
     /// ② 扇区在标签半径处的弦长（文字不能越出自己的扇区）
     /// </summary>
-    public static double LabelMaxHalfWidth(RadiusTokens r, int sectorCount = 8)
+    public static double LabelMaxHalfWidth(RadiusTokens r, int sectorCount = 8) =>
+        LabelMaxHalfWidth(
+            iconRadius: r.IconRadius,
+            labelRadius: r.LabelRadius,
+            iconSize: r.IconSize,
+            labelSweepDegrees: 360.0 / Math.Max(1, sectorCount),
+            gapDegrees: r.SectorGapDegrees);
+
+    /// <summary>
+    /// 通用的标签半宽上限。子弧的每个子扇区角度跨度差异很大
+    /// （2 个子项时各 45°，8 个子项时各 25°），所以不能只按"扇区数"算。
+    /// </summary>
+    public static double LabelMaxHalfWidth(
+        double iconRadius, double labelRadius, double iconSize,
+        double labelSweepDegrees, double gapDegrees)
     {
         const double clearance = 4.0;
 
-        // ① 不压到图标
-        var radialGap = r.LabelRadius - r.IconRadius;
-        var byIcon = radialGap - r.IconSize / 2.0 - clearance;
+        // ① 不压到图标。3 点/9 点方向是最坏情况：那里标签的『宽度』落在半径方向上。
+        var radialGap = labelRadius - iconRadius;
+        var byIcon = radialGap - iconSize / 2.0 - clearance;
 
-        // ② 不越出扇区（弦长扣掉两侧视觉缝隙与安全余量）
-        var sweepRad = 2 * Math.PI / sectorCount;
-        var chord = 2 * r.LabelRadius * Math.Sin(sweepRad / 2);
-        var gapPixels = 2 * r.LabelRadius * r.SectorGapDegrees * Math.PI / 180.0;
+        // ② 不越出扇区。用弦长而不是弧长：文字是直的。
+        var sweepRad = labelSweepDegrees * Math.PI / 180.0;
+        var chord = 2 * labelRadius * Math.Sin(sweepRad / 2);
+        var gapPixels = 2 * labelRadius * gapDegrees * Math.PI / 180.0;
         var byWedge = (chord - gapPixels - 6.0) / 2.0;
 
         return Math.Max(16.0, Math.Min(byIcon, byWedge));
     }
+}
+
+/// <summary>
+/// 一个角度带（内外半径）。第一层环与第二层环共用同一套布局比例，
+/// 所以把它们抽象成同一个概念，避免两处各写一份半径计算。
+/// </summary>
+public readonly record struct Band(double Inner, double Outer)
+{
+    public double Width => Outer - Inner;
+    public double Mid => (Inner + Outer) / 2.0;
+
+    /// <summary>按比例取半径：0 = 内缘，1 = 外缘。</summary>
+    public double At(double ratio) => Inner + Width * ratio;
 }
 
 public sealed record TypographyTokens
@@ -200,6 +233,12 @@ public sealed record MotionTokens
 
     /// <summary>鼓出动画时长。比颜色高亮略长，因为它是有形的位移，太快会显得跳。</summary>
     public int HoverBulgeMs { get; init; } = 130;
+
+    /// <summary>子弧展开/收起时长。用官方规范里「已有元素点对点」的 167ms。</summary>
+    public int ChildArcDurationMs { get; init; } = 167;
+
+    /// <summary>子弧的缓动曲线。与入场用的是同一条（起步快、收尾缓），观感统一。</summary>
+    public string ChildArcEasing { get; init; } = "cubic-bezier(0,0,0,1)";
 
     public int TopmostReassertMs { get; init; } = 800;
 

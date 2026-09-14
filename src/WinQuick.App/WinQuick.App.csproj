@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>WinQuick.App</RootNamespace>
+    <AssemblyName>WinQuick</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <!-- 把 CsWin32 源生成器的产物落到 obj 下，方便排查签名与可访问性问题 -->
+    <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+    <CompilerGeneratedFilesOutputPath>$(BaseIntermediateOutputPath)generated</CompilerGeneratedFilesOutputPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="H.NotifyIcon.Wpf" Version="2.4.1" />
+    <PackageReference Include="Microsoft.Windows.CsWin32" Version="0.3.333">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\WinQuick.Core\WinQuick.Core.csproj" />
+  </ItemGroup>
+
+  <!-- CsWin32 reads this to decide which Win32 APIs to project. Keeping the list
+       explicit means generated signatures can't drift out from under us. -->
+  <ItemGroup>
+    <AdditionalFiles Include="NativeMethods.txt" />
+  </ItemGroup>
+
+  <!-- 视觉规格的单一真源以嵌入资源形式带上。用资源而不是代码生成，
+       是为了不存在"改了 JSON 忘了重新生成"的第二种真源。 -->
+  <ItemGroup>
+    <EmbeddedResource Include="../../design/tokens.json" LogicalName="WinQuick.tokens.json" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,40 @@
+# 行尾统一：仓库内存 LF，检出时按平台处理。
+* text=auto
+
+# ---------------------------------------------------------------- LFS
+# 二进制素材走 LFS。目前仓库里还没有这类文件，但 design/assets/ 规划用来存放
+# 从浏览器原型烘出来的阴影、辉光、噪声纹理 —— 那些是"作者产出的源素材"，
+# 与 artifacts/ 下可随时重生成的探针输出性质不同，应当入库。
+#
+# 先声明规则，避免以后有人直接提交大 PNG 才发现需要改写历史。
+*.png  filter=lfs diff=lfs merge=lfs -text
+*.jpg  filter=lfs diff=lfs merge=lfs -text
+*.jpeg filter=lfs diff=lfs merge=lfs -text
+*.webp filter=lfs diff=lfs merge=lfs -text
+*.ico  filter=lfs diff=lfs merge=lfs -text
+*.gif  filter=lfs diff=lfs merge=lfs -text
+*.ttf  filter=lfs diff=lfs merge=lfs -text
+*.otf  filter=lfs diff=lfs merge=lfs -text
+
+# 安装包与压缩包（发布产物若需要入库时）
+*.zip filter=lfs diff=lfs merge=lfs -text
+*.msi filter=lfs diff=lfs merge=lfs -text
+*.exe filter=lfs diff=lfs merge=lfs -text
+
+# ---------------------------------------------------------------- 例外
+# tools/*.ps1 带 UTF-8 BOM，而**这个 BOM 是有功能的**：
+# Windows PowerShell 5.1 在没有 BOM 时会按 ANSI（中文系统上是 GBK）解码，
+# 中文注释会变成乱码并破坏 here-string 解析（踩过这个坑）。
+# 保持它们参与正常的文本处理即可 —— git 不会动 BOM，只做行尾归一。
+*.ps1 text
+
+# 视觉规格的单一真源，必须可读可 diff。
+design/tokens.json text
+
+# C# / XAML
+*.cs       text
+*.xaml     text
+*.csproj   text
+*.slnx     text
+*.manifest text
+*.md       text

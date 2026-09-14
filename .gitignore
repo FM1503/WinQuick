@@ -1,0 +1,28 @@
+# 构建产物
+[Bb]in/
+[Oo]bj/
+*.user
+*.suo
+.vs/
+*.binlog
+
+# 探针输出：由 --env / --mem-probe / --hook-probe / --overlay-probe /
+# --action-probe / --render-preview 随时重新生成。
+# 不提交的原因不是"不重要"，而是每次跑探针都会让工作树变脏 ——
+# 那会让 git status 充满噪声，反而掩盖真正的改动。
+# 需要在某次提交里留下实测证据时，用 git add -f 强制加入。
+artifacts/
+
+# 图标缓存与日志落在 %LOCALAPPDATA%，不应出现在仓库里；
+# 这条是防御性的，防止有人把整个目录复制进来。
+iconcache/
+crash.log
+
+# ZCode 客户端自己的状态目录（计划文件等）。它属于工具状态而不是项目源码，
+# 计划的内容已经整理进 README 与 docs/。
+.zcode/
+
+# 编辑器
+*.swp
+*~
+.idea/

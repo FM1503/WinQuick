@@ -1,0 +1,138 @@
+// CsWin32 生成清单。每行一个 API / 结构体 / 常量。
+// 只列真正用到的，避免生成一大堆无用代码。M1 会继续追加。
+
+// --- 全局热键 ---
+RegisterHotKey
+UnregisterHotKey
+
+// --- 低级键盘钩子 ---
+SetWindowsHookEx
+UnhookWindowsHookEx
+CallNextHookEx
+GetModuleHandle
+KBDLLHOOKSTRUCT
+VIRTUAL_KEY
+
+// --- 注入幽灵按键，清掉系统侧残留的 Win 按下状态 ---
+SendInput
+INPUT
+KEYBDINPUT
+
+// --- 显示器拓扑与 DPI ---
+EnumDisplayMonitors
+MONITORINFO
+GetMonitorInfo
+GetDpiForMonitor
+GetDpiForWindow
+GetSystemMetrics
+GetSystemMetricsForDpi
+GetCursorPos
+SetCursorPos
+MonitorFromPoint
+MonitorFromWindow
+GetWindowRect
+GetWindowText
+GetWindowTextLength
+
+// --- 分层窗口（遮罩层） ---
+// 注意：CsWin32 解析不到 SetWindowLongPtr / GetWindowLongPtr（会静默忽略），
+// 所以用 32 位版本 —— GWL_EXSTYLE 这类样式值本身就是 32 位，足够用。
+GetWindowLong
+SetWindowLong
+SetLayeredWindowAttributes
+SetWindowPos
+WS_EX_LAYERED
+WS_EX_TOOLWINDOW
+WS_EX_NOACTIVATE
+WS_EX_TOPMOST
+LWA_ALPHA
+GWL_EXSTYLE
+HWND_TOPMOST
+SWP_NOACTIVATE
+SWP_NOMOVE
+SWP_NOSIZE
+SWP_NOZORDER
+SWP_NOOWNERZORDER
+SWP_SHOWWINDOW
+
+// --- 窗口消息 ---
+WM_HOTKEY
+WM_KEYDOWN
+WM_SYSKEYDOWN
+WM_KEYUP
+WM_SYSKEYUP
+WM_DISPLAYCHANGE
+WM_MOUSEACTIVATE
+WM_LBUTTONDOWN
+WM_RBUTTONDOWN
+WM_MBUTTONDOWN
+WM_DESTROY
+WM_CLOSE
+MA_NOACTIVATE
+DefWindowProc
+
+// --- 窗口样式（消息窗口用） ---
+WS_POPUP
+WS_OVERLAPPED
+
+// --- 原生遮罩窗口（不用 WPF，避开它的合成表面开销） ---
+// 实测：一个隐藏的全屏 WPF 分层窗口吃掉 61MB，远超其原始像素（1755x1097x4 ≈ 7.7MB），
+// 说明 WPF 为纯色窗口也分配了完整渲染目标。原生窗口实测只占 0.1MB。
+CreateWindowEx
+DestroyWindow
+// 注册自己的窗口类：系统预定义类（STATIC）的背景画刷是"按钮表面色"，
+// LWA_ALPHA 只会给那个灰色加透明度 —— 得到灰纱而不是黑纱。
+// 而且预定义类不会使用我们的窗口过程，导致点击关闭与 MA_NOACTIVATE 完全失效。
+RegisterClassEx
+UnregisterClass
+WNDCLASSEX
+WNDPROC
+CREATESTRUCT
+GetStockObject
+BLACK_BRUSH
+DeleteObject
+HGDIOBJ
+LoadCursor
+IDC_ARROW
+CS_HREDRAW
+CS_VREDRAW
+HTTRANSPARENT
+WM_ERASEBKGND
+WM_NCHITTEST
+GCLP_HBRBACKGROUND
+// 屏幕取色：用来验证遮罩确实是「半透明黑」而不是「灰纱」
+GetDC
+ReleaseDC
+GetPixel
+GetDeviceCaps
+ShowWindow
+SW_SHOWNOACTIVATE
+SW_HIDE
+SW_RESTORE
+HWND_MESSAGE
+
+// --- 焦点保存与还原 ---
+// 显示前存档 GetForegroundWindow，关闭时还原；
+// WM_HOTKEY 处理函数里必须同步调 SetForegroundWindow（该进程有前台权限豁免）。
+GetForegroundWindow
+SetForegroundWindow
+GetWindowThreadProcessId
+AttachThreadInput
+SetFocus
+BringWindowToTop
+IsWindow
+IsWindowVisible
+PostMessage
+
+// --- 会话与显示器变更通知 ---
+WTSRegisterSessionNotification
+WTSUnRegisterSessionNotification
+WM_WTSSESSION_CHANGE
+RegisterWindowMessage
+WM_SETTINGCHANGE
+NOTIFY_FOR_THIS_SESSION
+
+// --- 窗口激活消息（判断轮盘是否失去焦点） ---
+WM_KILLFOCUS
+WM_ACTIVATEAPP
+WM_NCACTIVATE

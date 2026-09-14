@@ -60,15 +60,19 @@ public static class DefaultMenu
     {
         var windir = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
         var full = Path.Combine([windir, .. relativePath]);
-        var label = Path.GetFileNameWithoutExtension(relativePath[^1]);
 
         var exists = File.Exists(full) || Directory.Exists(full);
 
         items.Add(new MenuItemSpec
         {
-            Label = label,
-            // 图标路径与动作目标分开：UWP 项的图标走 shell 路径，
-            // 而文件项这里两者相同。
+            // 显示名向 shell 要，而不是用文件名。
+            // 文件名会得到 "notepad"、"Taskmgr" 这种，而资源管理器里显示的是
+            // 「记事本」「任务管理器」；UWP 项的显示名本来就来自 shell，
+            // 两者来源统一才不会出现"一半中文一半英文文件名"的菜单。
+            // 同时这也让名字自动跟随系统语言，代码里不必硬编码任何标签。
+            Label = exists ? ShellNames.Get(full) : Path.GetFileNameWithoutExtension(relativePath[^1]),
+
+            // 图标路径与动作目标分开：UWP 项的图标走 shell 路径，文件项这里两者相同。
             IconPath = exists ? full : null,
             Action = MenuAction.Launch(full),
         });

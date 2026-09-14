@@ -3,6 +3,7 @@ using System.Windows.Threading;
 using WinQuick.App.Diagnostics;
 using WinQuick.App.Tray;
 using WinQuick.App.Actions;
+using WinQuick.App.Config;
 using WinQuick.Core.Config;
 using WinQuick.Core.Hotkey;
 
@@ -25,7 +26,9 @@ public sealed class ResidentHost : IDisposable
     private static readonly TimeSpan HookHealthInterval = TimeSpan.FromSeconds(5);
 
     private readonly SingleInstance _singleInstance = new();
-    private readonly MenuSpec _menu;
+    private readonly ConfigStore _config = new();
+    private readonly ConfigReloadResult _initialLoad;
+    private MenuSpec _menu;
     private readonly HotkeyManager _hotkeys;
     private readonly OverlayController _overlay;
     private readonly SessionWatcher _session;
@@ -37,10 +40,15 @@ public sealed class ResidentHost : IDisposable
     public ResidentHost()
     {
         _hotkeys = new HotkeyManager();
-        // M4 之前先用装配出来的默认菜单；配置系统完成后换成从 menus.json 读取。
-        // 装配包含 UWP 应用的 shell 枚举，所以放在 App 层（Core 不依赖 Win32）。
-        _menu = DefaultMenu.Build();
-        _overlay = new OverlayController(_menu);
+        // 先读配置。首次运行会写出一份带注释的 config.json，
+        // 以及一份由当前装配结果序列化出来的 menus.json（填好真实路径，可直接改）。
+        _initialLoad = _config.LoadOrCreateDefaults();
+        _menu = _config.Menu;
+
+        _overlay = new OverlayController(_menu)
+        {
+            DimOpacityOverride = _config.Config.Appearance.DimOpacity,
+        };
         _session = new SessionWatcher();
         _tray = new TrayHost(_overlay);
 
@@ -68,8 +76,16 @@ public sealed class ResidentHost : IDisposable
 
         _overlay.Prewarm();
 
-        var result = _hotkeys.Apply(HotkeySpec.Default);
+        var hotkey = ResolveHotkey();
+        var result = _hotkeys.Apply(hotkey, _config.Config.AllowHookFallback);
         WarnIfHotkeyDegraded(result);
+
+        _config.StartWatching();
+        _config.Changed += OnConfigChanged;
+
+        // 首次加载就有问题时也要提示 —— 但注意此时订阅的改动事件已经生效，
+        // 后续每次热重载都会独立提示，不会漏报。
+        if (!_initialLoad.AllOk) ReportConfigProblems(_initialLoad);
 
         _hookHealthTimer.Start();
     }
@@ -142,6 +158,52 @@ public sealed class ResidentHost : IDisposable
         _tray.ShowBalloon("WinQuick 无法执行", $"「{item.Label}」{result.Message}");
     }
 
+    /// <summary>热键来自配置；配置里没写或解析失败时用默认热键。</summary>
+    private HotkeySpec ResolveHotkey()
+    {
+        if (string.IsNullOrWhiteSpace(_config.Config.Hotkey)) return HotkeySpec.Default;
+
+        return HotkeySpec.TryParse(_config.Config.Hotkey, out var spec, out var error) && spec is not null
+            ? spec
+            : HotkeySpec.Default;
+    }
+
+    /// <summary>
+    /// 配置热重载。
+    ///
+    /// 菜单变了要**重建轮盘窗口**（视觉树是构造时用菜单建立的）；
+    /// 热键变了要重新注册。两者都失败也要保留上一份可用状态 ——
+    /// 手写 JSON 出错太容易，不能让"改错配置"变成"程序不能用"。
+    /// </summary>
+    private void OnConfigChanged(object? sender, EventArgs e)
+    {
+        var problems = _config.LastProblems;
+
+        // 菜单：仅在内容真的换了才重建窗口（重建有成本，且会丢掉预热状态）。
+        if (!ReferenceEquals(_config.Menu, _menu))
+        {
+            _menu = _config.Menu;
+            _overlay.DimOpacityOverride = _config.Config.Appearance.DimOpacity;
+            _overlay.RebuildForMenu(_menu);
+        }
+
+        // 热键：仅在配置里的值变了才重新注册，避免无谓地注销再注册。
+        var wanted = ResolveHotkey();
+        if (wanted != _hotkeys.Current)
+        {
+            var result = _hotkeys.Apply(wanted, _config.Config.AllowHookFallback);
+            WarnIfHotkeyDegraded(result);
+        }
+
+        if (problems.Count > 0) ReportConfigProblems(new ConfigReloadResult(true, true, problems));
+    }
+
+    private void ReportConfigProblems(ConfigReloadResult result)
+    {
+        _tray.ShowBalloon("WinQuick 配置有问题",
+            result.Summary + "。已保留上一份有效配置，程序继续运行。");
+    }
+
     private void CheckHookHealth()
     {
         if (_hotkeys.ReinstallHookIfLost())
@@ -167,6 +229,8 @@ public sealed class ResidentHost : IDisposable
         _disposed = true;
 
         _hookHealthTimer.Stop();
+        _config.Changed -= OnConfigChanged;
+        _config.Dispose();
         ActionExecutor.Completed -= OnActionCompleted;
         _hotkeys.Dispose();
         _session.Dispose();

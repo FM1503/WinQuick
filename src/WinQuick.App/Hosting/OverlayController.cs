@@ -29,7 +29,7 @@ public sealed class OverlayController : IDisposable
     private static readonly TimeSpan TopmostReassertInterval = TimeSpan.FromMilliseconds(800);
 
     private readonly List<RawDimWindow> _dims = [];
-    private readonly RadialWindow _radial;
+    private RadialWindow _radial;   // 菜单热重载时会整体替换，所以不是 readonly
     private readonly ForegroundFocus _focus = new();
     private readonly DispatcherTimer _topmostTimer;
 
@@ -41,9 +41,7 @@ public sealed class OverlayController : IDisposable
 
     public OverlayController(MenuSpec menu)
     {
-        _radial = new RadialWindow(menu);
-        _radial.DismissRequested += (_, _) => Hide();
-        _radial.ItemActivated += (_, selection) => ItemActivated?.Invoke(this, selection);
+        _radial = CreateRadialWindow(menu);
 
         _topmostTimer = new DispatcherTimer(DispatcherPriority.Background)
         {
@@ -58,6 +56,44 @@ public sealed class OverlayController : IDisposable
             FinishHide();
         };
     }
+
+    private RadialWindow CreateRadialWindow(MenuSpec menu)
+    {
+        var window = new RadialWindow(menu);
+        window.DismissRequested += (_, _) => Hide();
+        window.ItemActivated += (_, selection) => ItemActivated?.Invoke(this, selection);
+        return window;
+    }
+
+    /// <summary>
+    /// 换用另一份菜单。
+    ///
+    /// 必须重建轮盘窗口，因为视觉树是用菜单在构造时建立的 —— 与其让视图支持
+    /// 就地重建（要小心处理子弧、悬停状态、动画器等一堆状态），
+    /// 不如整体替换来得干净。菜单变更本来就是低频的用户主动操作。
+    /// 替换后立刻预热，所以随后的首次唤出仍然不慢。
+    /// </summary>
+    public void RebuildForMenu(MenuSpec menu)
+    {
+        if (_disposed) return;
+
+        var wasVisible = IsVisible;
+        ForceHideAndRebuild();
+
+        _radialSource?.RemoveHook(OnRadialMessage);
+        var previous = _radial;
+        _radial = CreateRadialWindow(menu);
+        _radialSource = null;
+
+        try { previous.Close(); } catch { /* 已关闭则忽略 */ }
+
+        Prewarm();
+
+        if (wasVisible) Show();
+    }
+
+    /// <summary>遮罩不透明度的用户覆盖值（0–1）。null 表示沿用设计基线。</summary>
+    public double? DimOpacityOverride { get; set; }
 
     public bool IsVisible { get; private set; }
 
@@ -237,9 +273,14 @@ public sealed class OverlayController : IDisposable
 
         // 每屏一个遮罩窗口。一个 HWND 只能有一个 DPI，所以不能合并成一个横跨的窗口。
         // 遮罩用统一 alpha（40% 黑），原生窗口实测几乎零内存开销。
+        // 透明度可以由用户配置覆盖；默认用设计基线里的值。
+        var alpha = DimOpacityOverride is { } opacity
+            ? (byte)Math.Clamp(Math.Round(opacity * 255), 0, 255)
+            : RawDimWindow.DefaultAlpha;
+
         foreach (var monitor in MonitorLayout.All())
         {
-            var dim = new RawDimWindow(alpha: 102);
+            var dim = new RawDimWindow(alpha);
             dim.SetPhysicalBounds(monitor.X, monitor.Y, monitor.Width, monitor.Height);
             dim.DismissRequested += OnDimDismiss;
             _dims.Add(dim);

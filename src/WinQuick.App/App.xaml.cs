@@ -44,6 +44,11 @@ public partial class App : Application
                 RunDetached(() => M0.HookProbe.RunAsync(cli));
                 break;
 
+            case "--config-probe":
+                // 需要消息循环：热重载靠 DispatcherTimer 触发防抖。
+                RunDetached(() => M0.ConfigProbe.RunAsync(cli));
+                break;
+
             case "--apps-probe":
                 M0.AppsProbe.Run(cli);
                 ExitSoon();

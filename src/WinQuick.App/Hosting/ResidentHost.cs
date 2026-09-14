@@ -64,6 +64,8 @@ public sealed class ResidentHost : IDisposable
         _overlay.SettingsChanged += (_, config) => OnSettingsChanged(config);
         _overlay.SetHotkeyProbe(spec => _hotkeys.ProbeTemporarily(spec));
         _overlay.SetSettingsSource(_config.Config);
+        _overlay.SetMenuSource(_menu);
+        _overlay.MenuChanged += (_, menu) => PersistMenu(menu);
         ActionExecutor.Completed += OnActionCompleted;
 
         _session.SessionLocked += (_, _) => _overlay.Hide();
@@ -217,8 +219,9 @@ public sealed class ResidentHost : IDisposable
             _menuSignature = signature;
             _menu = _config.Menu;
 
-            // 面板开着时重建轮盘会打断预览，所以先收面板。
-            if (_overlay.IsSettingsOpen) _overlay.CloseSettings();
+            // 这里刻意**不关**设置面板：菜单变更正是面板里的操作引起的，
+            // 重建轮盘恰好让用户立刻看到新项 —— 关掉面板反而把预览打断。
+            // 面板是独立窗口，重建轮盘不影响它。Show() 里也判了"面板开着就不夺焦点"。
             _overlay.RebuildForMenu(_menu);
         }
 
@@ -252,7 +255,10 @@ public sealed class ResidentHost : IDisposable
     public void OpenSettings()
     {
         _overlay.SetSettingsSource(_config.Config);
+        _overlay.SetMenuSource(_menu);
 
+        // 面板开在覆盖层会话里，所以先把覆盖层唤出来。
+        // 从托盘打开时用户可能不在轮盘界面，这一步让他看到完整上下文。
         if (!_overlay.IsVisible) _overlay.Show();
         _overlay.OpenSettings();
     }
@@ -272,6 +278,23 @@ public sealed class ResidentHost : IDisposable
     }
 
     private AppConfig? _pendingSettings;
+
+    /// <summary>
+    /// 设置面板里改了菜单：写回 menus.json。
+    /// 写盘会触发热重载，进而走既有的"内容变了才重建轮盘"那条路径 ——
+    /// 所以这里不必额外重建，用户改完立刻就能在轮盘上看到。
+    /// </summary>
+    private void PersistMenu(MenuSpec menu)
+    {
+        if (!_config.SaveMenu(menu, out var error))
+        {
+            _tray.ShowBalloon("WinQuick 无法保存菜单", error ?? "未知原因");
+            return;
+        }
+
+        _menu = menu;
+        _overlay.SetMenuSource(menu);
+    }
 
     private void PersistSettings()
     {

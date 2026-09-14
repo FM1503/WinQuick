@@ -356,6 +356,30 @@ public sealed class ConfigStore : IDisposable
     /// <summary>首次运行写出的那份配置内容（全部沿用设计基线）。</summary>
     public static string DefaultConfigJson => RenderConfig(new AppConfig());
 
+    /// <summary>
+    /// 把菜单写回 menus.json 并重新加载。
+    /// 设置面板里增删菜单项走这里 —— 用户不必再手改 JSON。
+    /// </summary>
+    public bool SaveMenu(MenuSpec menu, out string? error)
+    {
+        error = null;
+        try
+        {
+            System.IO.Directory.CreateDirectory(_directory);
+            File.WriteAllText(MenusPath, SerializeMenu(menu), Utf8NoBom);
+
+            var result = Reload();
+            if (!result.MenuOk && result.Problems.Count > 0) error = result.Summary;
+            return result.MenuOk;
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            CrashLog.Write("保存菜单失败", ex);
+            return false;
+        }
+    }
+
     /// <summary>把配置写回文件。设置界面保存时调用。</summary>
     public bool SaveConfig(AppConfig config, out string? error)
     {

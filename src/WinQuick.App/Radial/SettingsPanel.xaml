@@ -8,6 +8,7 @@
         AllowsTransparency="True"
         Background="Transparent"
         ShowInTaskbar="False"
+        Topmost="True"
         WindowStartupLocation="Manual"
         UseLayoutRounding="True"
         TextOptions.TextFormattingMode="Ideal">
@@ -94,6 +95,12 @@
             BorderThickness="1"
             CornerRadius="{DynamicResource Wq.Size.CornerRadius}"
             Opacity="0.97">
+        <!-- 内容可滚动：面板项目不少（热键、外观、行为、菜单项、启动），
+             加上菜单列表后总高度可能超过屏幕可用高度。
+             不设滚动的话在小屏上底部的按钮会被截掉、点不到。 -->
+        <ScrollViewer VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Disabled"
+                      Padding="0,0,2,0">
         <StackPanel Margin="18,14,18,16">
 
             <!-- 标题栏 -->
@@ -208,6 +215,33 @@
             <CheckBox x:Name="HideOnFocusLossBox" Style="{StaticResource Check}"
                       Content="失去焦点时关闭覆盖层" Click="OnHideOnFocusLossChanged" />
 
+            <!-- ============ 菜单项 ============ -->
+            <TextBlock Text="菜单项" Style="{StaticResource Section}" />
+            <TextBlock x:Name="MenuSummary" Style="{StaticResource Hint}" Margin="0,0,0,4" />
+            <Border Background="{DynamicResource Wq.Color.FieldBackground}"
+                    BorderBrush="{DynamicResource Wq.Color.Stroke}"
+                    BorderThickness="1"
+                    CornerRadius="{DynamicResource Wq.Size.ControlCornerRadius}"
+                    Padding="4,4,4,4">
+                <ScrollViewer MaxHeight="170" VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel x:Name="MenuItemList" />
+                </ScrollViewer>
+            </Border>
+            <Grid Margin="0,8,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Button Grid.Column="0" Style="{StaticResource FlatButton}"
+                        Content="＋ 添加程序…" Click="OnAddProgramClick" />
+                <Button Grid.Column="2" Style="{StaticResource FlatButton}"
+                        Content="打开 menus.json" Click="OnOpenMenuFileClick" />
+            </Grid>
+            <TextBlock Style="{StaticResource Hint}"
+                       Text="从文件浏览器选中程序即可加入。名称自动取自程序的版本信息，可以直接改。修改立刻生效。" />
+
             <!-- ============ 启动 ============ -->
             <TextBlock Text="启动" Style="{StaticResource Section}" />
             <CheckBox x:Name="AutoStartBox" Style="{StaticResource Check}"
@@ -229,5 +263,6 @@
             <TextBlock x:Name="FooterStatus" Style="{StaticResource Hint}" Margin="0,10,0,0"
                        Text="改动即时生效并自动保存。" />
         </StackPanel>
+        </ScrollViewer>
     </Border>
 </Window>

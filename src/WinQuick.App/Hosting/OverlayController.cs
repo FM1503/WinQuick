@@ -169,6 +169,9 @@ public sealed class OverlayController : IDisposable
     /// <summary>设置面板已关闭（用户点 ✕ 或按 Esc）。</summary>
     public event EventHandler? SettingsClosed;
 
+    /// <summary>设置面板里改了菜单（增删项、改名称）。需要写回 menus.json 并重建轮盘。</summary>
+    public event EventHandler<MenuSpec>? MenuChanged;
+
     /// <summary>用户在覆盖层左上角点了「退出」。</summary>
     public event EventHandler? ExitRequested;
 
@@ -231,7 +234,9 @@ public sealed class OverlayController : IDisposable
         _radial.StartInteraction();
 
         // 拿键盘焦点，否则 Esc 收不到。这里同步调用是刻意的（见方法注释）。
-        ForegroundFocus.AttachTo(_radial);
+        // 设置面板开着时不能夺焦点 —— 用户可能正在里面打字（热键录制、改名、填色值），
+        // 抢走焦点会打断输入。
+        if (!IsSettingsOpen) ForegroundFocus.AttachTo(_radial);
 
         IsVisible = true;
         _topmostTimer.Start();
@@ -312,8 +317,17 @@ public sealed class OverlayController : IDisposable
 
         _settingsPanel ??= CreateSettingsPanel();
 
+        // 两遍定位：先按"最大高度"估个位置，让窗口出现时就大致在正确的地方（避免可见的跳动）；
+        // 显示并完成布局后，再按**真实尺寸**重新摆一次并钳制在屏内。
+        //
+        // 为什么必须两遍：布局完成前 ActualHeight 不可靠，按它算出的 top 会让面板底部溢出屏幕，
+        // 而溢出的恰恰是最常用的底部按钮 —— 用户就点不到了。
+        // （这个溢出是被探针的「面板完整落在屏内」核对抓到的。）
         PositionSettingsPanel();
         _settingsPanel.Show();
+        _settingsPanel.UpdateLayout();
+        PositionSettingsPanel();
+
         _settingsPanel.PlayEntrance();
 
         // 面板需要键盘输入（热键录制、文本框），所以它会夺走轮盘的焦点。
@@ -335,8 +349,10 @@ public sealed class OverlayController : IDisposable
     {
         var panel = new SettingsPanel(
             _settings,
+            _menu,
             probeHotkey: spec => _settingsPanelProbe(spec),
-            apply: config => SettingsChanged?.Invoke(this, config));
+            applyConfig: config => SettingsChanged?.Invoke(this, config),
+            applyMenu: menu => MenuChanged?.Invoke(this, menu));
 
         panel.CloseRequested += (_, _) => CloseSettings();
         return panel;
@@ -350,6 +366,11 @@ public sealed class OverlayController : IDisposable
 
     /// <summary>告诉覆盖层"面板打开时应当以哪份配置为基准"。</summary>
     public void SetSettingsSource(AppConfig config) => _settings = config;
+
+    private MenuSpec _menu = MenuSpec.BuiltInDefault;
+
+    /// <summary>告诉覆盖层当前用的是哪份菜单（面板需要它来编辑菜单项）。</summary>
+    public void SetMenuSource(MenuSpec menu) => _menu = menu;
 
     /// <summary>注入热键探测函数。</summary>
     public void SetHotkeyProbe(Func<Core.Hotkey.HotkeySpec, (bool Available, int ErrorCode)> probe) =>
@@ -365,11 +386,24 @@ public sealed class OverlayController : IDisposable
 
         var monitor = MonitorLayout.AtCursor();
         var scale = monitor.Scale;
-        var panelWidth = (int)Math.Round(_settingsPanel.Width * scale);
-        var panelHeight = (int)Math.Round(_settingsPanel.ActualHeight * scale);
-        if (panelHeight <= 0) panelHeight = (int)Math.Round(620 * scale);
 
         const int margin = 24;
+
+        // 先把最大高度限制在屏幕内：面板在小屏幕上可能比屏幕还高，
+        // 那时底部的按钮会被截掉、点不到。内容本身可滚动（见 XAML 的 ScrollViewer）。
+        var availableDips = (monitor.Height - margin * 2) / scale;
+        if (_settingsPanel.MaxHeight <= 0 || _settingsPanel.MaxHeight > availableDips)
+            _settingsPanel.MaxHeight = Math.Max(320, availableDips);
+
+        var panelWidth = (int)Math.Round(_settingsPanel.Width * scale);
+
+        // 布局完成前 ActualHeight 不可靠，退化为按最大高度估算 ——
+        // 第一遍（Show 之前）走的就是这条。
+        var measuredDips = _settingsPanel.ActualHeight;
+        var panelHeight = measuredDips > 0
+            ? (int)Math.Round(measuredDips * scale)
+            : (int)Math.Round(_settingsPanel.MaxHeight * scale);
+
         var cursorOnLeftHalf = !MonitorLayout.TryGetCursorPosition(out var cx, out _)
                                || cx < monitor.X + monitor.Width / 2;
 
@@ -378,6 +412,11 @@ public sealed class OverlayController : IDisposable
             : monitor.X + (int)Math.Round(margin * scale);
 
         var top = monitor.Y + (monitor.Height - panelHeight) / 2;
+
+        // 钳制在屏内。竖直方向尤其重要：面板是纵向表单，底部是最常用的按钮，
+        // 溢出屏幕就等于点不到 —— 用户已经因为"按钮点不到"报过一次问题了。
+        left = Math.Clamp(left, monitor.X, Math.Max(monitor.X, monitor.Right - panelWidth));
+        top = Math.Clamp(top, monitor.Y, Math.Max(monitor.Y, monitor.Bottom - panelHeight));
 
         var hwnd = (HWND)_settingsPanel.HandleValue;
         PInvoke.SetWindowPos(hwnd, default, left, top, 0, 0,
@@ -496,6 +535,7 @@ public sealed class OverlayController : IDisposable
         foreach (var dim in _dims) dim.ReassertTopmost();
         _radial.ReassertTopmost();
         _actionBar.ReassertTopmost();
+        _settingsPanel?.ReassertTopmost();
     }
 
     private IntPtr OnRadialMessage(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)

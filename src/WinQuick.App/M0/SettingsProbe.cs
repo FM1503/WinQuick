@@ -7,6 +7,7 @@ using WinQuick.Core.Config;
 using WinQuick.Core.Hotkey;
 using Windows.Win32;
 using Windows.Win32.Foundation;
+using Windows.Win32.UI.WindowsAndMessaging;
 
 namespace WinQuick.App.M0;
 
@@ -43,8 +44,10 @@ public static class SettingsProbe
             {
                 panel = new SettingsPanel(
                     store.Config,
+                    store.Menu,
                     probeHotkey: spec => (HotkeySpec.TryParse(spec.ToString(), out _, out _), 0),
-                    apply: _ => { });
+                    applyConfig: _ => { },
+                    applyMenu: _ => { });
 
                 ProbeOutput.Kv("构造成功（XAML 与令牌资源均可用）", "是");
                 results.Add(("XAML 与令牌加载", true, ""));
@@ -72,9 +75,16 @@ public static class SettingsProbe
                 ProbeOutput.Kv("窗口句柄已创建", handleCreated ? "是" : "否");
                 ProbeOutput.Kv("面板尺寸", $"{panel.ActualWidth:0} x {panel.ActualHeight:0}");
 
-                var fg = PInvoke.GetForegroundWindow();
                 var self = (HWND)new WindowInteropHelper(panel).Handle;
+                var fg = PInvoke.GetForegroundWindow();
                 ProbeOutput.Kv("面板取得前台（可输入）", fg == self ? "是" : "否");
+
+                // 置顶是硬需求：遮罩与轮盘都是置顶的，面板不置顶就会被压在遮罩下面，
+                // 既看不见也点不到 —— 用户报的正是这个现象。
+                var ex = (WINDOW_EX_STYLE)(uint)PInvoke.GetWindowLong(self, WINDOW_LONG_PTR_INDEX.GWL_EXSTYLE);
+                var topmost = ex.HasFlag(WINDOW_EX_STYLE.WS_EX_TOPMOST);
+                ProbeOutput.Kv("面板已置顶（WS_EX_TOPMOST）", topmost ? "是" : "否（会被遮罩盖住）");
+                results.Add(("面板已置顶", topmost, ""));
             }
             catch (Exception ex)
             {
@@ -87,7 +97,8 @@ public static class SettingsProbe
             ProbeOutput.Section("改动即应用的语义");
 
             var applied = new List<AppConfig>();
-            panel = new SettingsPanel(store.Config, _ => (true, 0), config => applied.Add(config));
+            panel = new SettingsPanel(store.Config, store.Menu, _ => (true, 0),
+                config => applied.Add(config), _ => { });
 
             var baseline = applied.Count;
             panel.SetHotkeyForTest(new HotkeySpec(HotkeyModifiers.Alt, 0x20, "Space"));
@@ -178,6 +189,21 @@ public static class SettingsProbe
 
                 var panelHandle = (HWND)overlay.SettingsPanelHandle;
                 ProbeOutput.Kv("面板实际可见", PInvoke.IsWindowVisible(panelHandle) ? "是" : "否");
+
+                // 面板必须完整落在屏内：比屏幕还高的话底部按钮会被截掉、点不到。
+                if (PInvoke.GetWindowRect(panelHandle, out var panelRect))
+                {
+                    var mon = MonitorLayout.AtCursor();
+                    var fits = panelRect.top >= mon.Y && panelRect.bottom <= mon.Bottom
+                               && panelRect.left >= mon.X && panelRect.right <= mon.Right;
+
+                    ProbeOutput.Kv("面板尺寸（物理像素）",
+                        $"{panelRect.right - panelRect.left} x {panelRect.bottom - panelRect.top}");
+                    ProbeOutput.Kv("屏幕可用高度（物理像素）", mon.Height.ToString());
+                    ProbeOutput.Kv("完整落在屏内", fits ? "是" : "否（底部按钮可能点不到）");
+                    results.Add(("面板完整落在屏内", fits,
+                        $"{panelRect.bottom - panelRect.top} vs {mon.Height}"));
+                }
                 ProbeOutput.Kv("面板取得前台（可输入）",
                     PInvoke.GetForegroundWindow() == panelHandle ? "是" : "否");
 
@@ -250,6 +276,69 @@ public static class SettingsProbe
                 ? "  >>> 留空即沿用设计基线：打开面板看一眼、什么都没改，"
                   + "配置里不会多出显式值，设计基线以后改了仍然影响得到他。"
                 : "  >>> 留空没有写回 null —— 用户的配置会被固化成一个显式值。");
+
+            // ---- 菜单项的图形化编辑 ----
+            ProbeOutput.Section("菜单项的图形化编辑");
+
+            var menuApplied = new List<MenuSpec>();
+            panel = new SettingsPanel(store.Config, store.Menu, _ => (true, 0),
+                _ => { }, menu => menuApplied.Add(menu));
+
+            var startCount = panel.MenuItemCountForTest;
+            ProbeOutput.Kv("初始项数", startCount.ToString());
+
+            // 加入一个真实存在的程序。
+            var target = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.Windows), "System32", "notepad.exe");
+            ProbeOutput.Kv("待加入的程序", target);
+            ProbeOutput.Kv("程序存在", File.Exists(target) ? "是" : "否");
+
+            panel.AddProgramForTest(target);
+
+            ProbeOutput.Kv("加入后项数", panel.MenuItemCountForTest.ToString());
+            var added = panel.MenuItemsForTest[^1];
+            ProbeOutput.Kv("新项名称（自动取自版本信息）", added.Label);
+            ProbeOutput.Kv("新项图标路径", added.IconPath ?? "(空)");
+            ProbeOutput.Kv("新项动作", added.Action is null ? "(空)" : added.Action.Type + " → " + added.Action.Target);
+
+            var addOk = panel.MenuItemCountForTest == startCount + 1
+                        && added.Label.Length > 0
+                        && added.IconPath == target
+                        && added.Action?.Target == target
+                        && menuApplied.Count == 1;
+
+            results.Add(("能加入程序项", addOk, added.Label));
+
+            // 落盘：写回 menus.json 再读回来核对
+            var menuSaved = store.SaveMenu(menuApplied[^1], out var saveError);
+            ProbeOutput.Kv("写入 menus.json", menuSaved ? "是" : $"否：{saveError}");
+
+            var reloaded = MenuConfigFile.Parse(File.ReadAllText(store.MenusPath));
+            var reloadedMenu = reloaded.Menus.FirstOrDefault();
+            var lastReloaded = reloadedMenu?.Items.LastOrDefault();
+
+            ProbeOutput.Kv("读回后的项数", reloadedMenu?.Items.Count.ToString() ?? "(无)");
+            ProbeOutput.Kv("读回后最后一项", lastReloaded?.Label ?? "(无)");
+
+            var persistOk = menuSaved
+                            && reloadedMenu is not null
+                            && reloadedMenu.Items.Count == startCount + 1
+                            && lastReloaded?.Action?.Target == target;
+
+            results.Add(("增项已落盘且可读回", persistOk, lastReloaded?.Label ?? ""));
+
+            // 移除
+            panel.RemoveItemForTest(panel.MenuItemCountForTest - 1);
+            ProbeOutput.Kv("移除后项数", panel.MenuItemCountForTest.ToString());
+            results.Add(("能移除菜单项", panel.MenuItemCountForTest == startCount,
+                panel.MenuItemCountForTest.ToString()));
+
+            // 至少保留一项：把剩下的全删掉，最后一个应当被拒绝
+            while (panel.MenuItemCountForTest > 1) panel.RemoveItemForTest(0);
+            panel.RemoveItemForTest(0);
+            ProbeOutput.Kv("只剩一项时再移除", panel.MenuItemCountForTest == 1 ? "被拒绝（正确）" : "被允许（异常）");
+            results.Add(("不允许删到空菜单", panel.MenuItemCountForTest == 1,
+                panel.MenuItemCountForTest.ToString()));
 
             panel.Close();
             store.Dispose();

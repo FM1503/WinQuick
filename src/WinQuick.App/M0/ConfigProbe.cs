@@ -47,7 +47,7 @@ public static class ConfigProbe
             ProbeOutput.Kv("热键", store.Config.Hotkey ?? "(未设置)");
 
             // 默认模板本身必须是合法的 —— 否则第一次运行就会报错。
-            var templateProblems = AppConfig.Parse(ConfigStore.DefaultConfigTemplate).Validate();
+            var templateProblems = AppConfig.Parse(ConfigStore.DefaultConfigJson).Validate();
             results.Add(("默认 config.json 模板合法", templateProblems.Count == 0,
                 string.Join("；", templateProblems)));
 

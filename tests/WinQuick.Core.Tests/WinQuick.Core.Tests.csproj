@@ -1,7 +1,10 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <!-- 引用 App 层是为了能单测其中的纯逻辑（热键录制映射、名称处理等）。
+         这些逻辑原本只能靠手点验证，是测试盲区。 -->
+    <UseWPF>true</UseWPF>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
@@ -15,7 +18,13 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\src\WinQuick.App\WinQuick.App.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Using Include="Xunit" />
+    <!-- 切到 net10.0-windows + UseWPF 之后隐式 using 集合变了，不再包含 System.IO，显式补回。 -->
+    <Using Include="System.IO" />
   </ItemGroup>
 
   <ItemGroup>

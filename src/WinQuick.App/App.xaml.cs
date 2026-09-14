@@ -44,6 +44,11 @@ public partial class App : Application
                 RunDetached(() => M0.HookProbe.RunAsync(cli));
                 break;
 
+            case "--settings-probe":
+                // 需要消息循环：要真的把窗口显示出来核对。
+                RunDetached(() => M0.SettingsProbe.RunAsync(cli));
+                break;
+
             case "--config-probe":
                 // 需要消息循环：热重载靠 DispatcherTimer 触发防抖。
                 RunDetached(() => M0.ConfigProbe.RunAsync(cli));
@@ -91,7 +96,7 @@ public partial class App : Application
 
         if (!_resident.IsFirstInstance)
         {
-            // 已经有实例在跑：唤醒它把覆盖层带出来，然后安静退出。
+            // 已经有实例在跑：唤醒它打开设置界面，然后安静退出。
             // 不弹错误框 —— 用户双击图标期望的是"看到界面"，不是"看到一条提示"。
             Hosting.SingleInstance.SignalExistingInstance();
             Shutdown(0);

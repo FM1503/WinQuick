@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Text.Json;
@@ -79,6 +80,15 @@ public sealed class ConfigStore : IDisposable
     /// <summary>配置或菜单发生变化并已生效。UI 与热键需要据此重新应用。</summary>
     public event EventHandler? Changed;
 
+    /// <summary>
+    /// 本次加载时是否新建了默认配置文件。
+    /// 用来判断"要不要把配置里的开机自启意图写进注册表" —— 只在首次运行时写一次。
+    ///
+    /// 不能每次启动都按配置写注册表：用户也可能从托盘菜单切换自启，
+    /// 那时注册表变了而配置没变，下次启动又会被配置覆盖回去 —— 表现为"关掉自启后又自己开了"。
+    /// </summary>
+    public bool DefaultsWereCreated { get; private set; }
+
     /// <summary>加载，必要时创建默认文件。返回本次加载的结果。</summary>
     public ConfigReloadResult LoadOrCreateDefaults()
     {
@@ -86,8 +96,17 @@ public sealed class ConfigStore : IDisposable
         {
             System.IO.Directory.CreateDirectory(Directory);
 
-            if (!File.Exists(ConfigPath)) File.WriteAllText(ConfigPath, DefaultConfigJson, Utf8NoBom);
-            if (!File.Exists(MenusPath)) File.WriteAllText(MenusPath, BuildDefaultMenusJson(), Utf8NoBom);
+            if (!File.Exists(ConfigPath))
+            {
+                File.WriteAllText(ConfigPath, DefaultConfigJson, Utf8NoBom);
+                DefaultsWereCreated = true;
+            }
+
+            if (!File.Exists(MenusPath))
+            {
+                File.WriteAllText(MenusPath, BuildDefaultMenusJson(), Utf8NoBom);
+                DefaultsWereCreated = true;
+            }
         }
         catch (Exception ex)
         {
@@ -255,75 +274,108 @@ public sealed class ConfigStore : IDisposable
 
     private string BuildDefaultMenusJson() => SerializeMenu(Hosting.DefaultMenu.Build());
 
-    /// <summary>把当前的 config.json 模板写出来（供探针检查模板本身是否合法）。</summary>
-    public static string DefaultConfigTemplate => DefaultConfigJson;
-
     private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
 
     /// <summary>
-    /// 首次运行写出的 config.json。
+    /// 渲染 config.json 的文本。
     ///
-    /// 所有可选项都写成 null 并附注释：null 的含义是「沿用 design/tokens.json 里的设计基线」。
-    /// 这么设计是为了避免同一个值有两个来源 —— 两处都能改同一个值时，
-    /// 改了 A 没改 B 会静默分叉，而分叉要到界面看起来不对才发现。
+    /// 用"模板 + 插值"而不是直接序列化 <see cref="AppConfig"/>，是为了**保住注释**。
+    /// 序列化会把注释全部丢掉，而这个文件是给人看的 —— 注释里写着每个字段的依据
+    /// （比如悬停延迟为什么建议 200ms）。设置界面每次保存都会重写这个文件，
+    /// 丢掉注释等于让用户失去唯一的说明来源。
+    ///
+    /// 代价：用户自己在 config.json 里加的注释会在设置界面保存后被覆盖。
+    /// menus.json 不受影响 —— 设置界面不碰它。
     /// </summary>
-    private const string DefaultConfigJson = """
+    public static string RenderConfig(AppConfig config)
+    {
+        static string Str(string? value) => value is null ? "null" : $"\"{value}\"";
+        static string Dec(double? value) => value?.ToString("0.##", CultureInfo.InvariantCulture) ?? "null";
+        static string Int(int? value) => value?.ToString(CultureInfo.InvariantCulture) ?? "null";
+        static string Bool(bool? value) => value is null ? "null" : (value.Value ? "true" : "false");
+
+        return $$"""
+            {
+              // WinQuick 用户配置。
+              //
+              // 这里只放"用户会调"的旋钮。视觉基线（配色、半径、时长、缓动曲线）在
+              // design/tokens.json 里，属于开发者的设计决定。
+              // 下面各项写成 null 表示「沿用设计基线」，只有显式设了值才覆盖。
+              //
+              // 改完保存即可生效，无需重启。
+              // 写错了也不会导致程序打不开 —— 会保留上一份有效配置并在托盘提示。
+
+              "version": 1,
+
+              // 全局热键。格式：修饰键+主键，例如 "Ctrl+Win+W"、"Alt+Space"。
+              // 注意 Win+单字母 在 Windows 11 上大多被系统预留（Win+W 是小组件），
+              // 叠加一个 Ctrl 通常就能绕开。
+              "hotkey": {{Str(config.Hotkey)}},
+
+              // RegisterHotKey 失败时是否允许降级到低级键盘钩子抢键。
+              // 关掉它意味着热键被占用时直接报错，而不会去抢键 —— 抢键会影响系统原有功能。
+              "allowHookFallback": {{Bool(config.AllowHookFallback)}},
+
+              "appearance": {
+                // 全屏遮罩的不透明度，0–0.95。数值越大屏幕压得越暗。
+                "dimOpacity": {{Dec(config.Appearance.DimOpacity)}},
+
+                // 悬停高亮色，#RRGGBB。
+                "accentColor": {{Str(config.Appearance.AccentColor)}}
+              },
+
+              "behavior": {
+                // 悬停多久展开子菜单（毫秒）。
+                // 实测依据：200ms 太快会误展开，250ms 时用户偏好五五开，400ms 更稳。
+                // 设成 0 就是"立即展开" —— 允许，但指针划过时容易误触发。
+                "hoverOpenDelayMs": {{Int(config.Behavior.HoverOpenDelayMs)}},
+
+                // 离开多久收起子菜单（毫秒）。必须大于展开延迟，
+                // 否则指针掠过扇区边缘时子菜单会闪。
+                "hoverCloseDelayMs": {{Int(config.Behavior.HoverCloseDelayMs)}},
+
+                // 是否播放动画。null = 跟随系统「在 Windows 中显示动画」的无障碍设置。
+                "animationsEnabled": {{Bool(config.Behavior.AnimationsEnabled)}},
+
+                // 覆盖层失去焦点时是否关闭。
+                "hideOnFocusLoss": {{Bool(config.Behavior.HideOnFocusLoss)}}
+              },
+
+              "startup": {
+                // 是否开机自启。改这里不会立刻写入注册表 ——
+                // 自启开关以托盘菜单和设置界面里的那个为准，避免两处状态不一致。
+                "autoStart": {{Bool(config.Startup.AutoStart)}}
+              },
+
+              // 使用哪一份菜单（menus.json 里的 id）。null = 用第一份。
+              "activeMenu": {{Str(config.ActiveMenu)}}
+            }
+            """;
+    }
+
+    /// <summary>首次运行写出的那份配置内容（全部沿用设计基线）。</summary>
+    public static string DefaultConfigJson => RenderConfig(new AppConfig());
+
+    /// <summary>把配置写回文件。设置界面保存时调用。</summary>
+    public bool SaveConfig(AppConfig config, out string? error)
+    {
+        error = null;
+        try
         {
-          // WinQuick 用户配置。
-          //
-          // 这里只放"用户会调"的旋钮。视觉基线（配色、半径、时长、缓动曲线）在
-          // design/tokens.json 里，属于开发者的设计决定。
-          // 下面各项写成 null 表示「沿用设计基线」，只有显式设了值才覆盖。
-          //
-          // 改完保存即可生效，无需重启。
-          // 写错了也不会导致程序打不开 —— 会保留上一份有效配置并在托盘提示。
+            System.IO.Directory.CreateDirectory(_directory);
+            File.WriteAllText(ConfigPath, RenderConfig(config), Utf8NoBom);
 
-          "version": 1,
-
-          // 全局热键。格式：修饰键+主键，例如 "Ctrl+Win+W"、"Alt+Space"。
-          // 注意 Win+单字母 在 Windows 11 上大多被系统预留（Win+W 是小组件），
-          // 叠加一个 Ctrl 通常就能绕开。
-          "hotkey": "Ctrl+Win+W",
-
-          // RegisterHotKey 失败时是否允许降级到低级键盘钩子抢键。
-          // 关掉它意味着热键被占用时直接报错，而不会去抢键 —— 抢键会影响系统原有功能。
-          "allowHookFallback": true,
-
-          "appearance": {
-            // 全屏遮罩的不透明度，0–0.95。数值越大屏幕压得越暗。
-            "dimOpacity": null,
-
-            // 悬停高亮色，#RRGGBB。
-            "accentColor": null
-          },
-
-          "behavior": {
-            // 悬停多久展开子菜单（毫秒）。
-            // 实测依据：200ms 太快会误展开，250ms 时用户偏好五五开，400ms 更稳。
-            // 设成 0 就是"立即展开" —— 允许，但指针划过时容易误触发。
-            "hoverOpenDelayMs": null,
-
-            // 离开多久收起子菜单（毫秒）。必须大于展开延迟，
-            // 否则指针掠过扇区边缘时子菜单会闪。
-            "hoverCloseDelayMs": null,
-
-            // 是否播放动画。null = 跟随系统「在 Windows 中显示动画」的无障碍设置。
-            "animationsEnabled": null,
-
-            // 覆盖层失去焦点时是否关闭。
-            "hideOnFocusLoss": true
-          },
-
-          "startup": {
-            // 是否开机自启。改这里不会立刻写入注册表 ——
-            // 自启开关以托盘菜单里的那个为准，避免两处状态不一致。
-            "autoStart": false
-          },
-
-          // 使用哪一份菜单（menus.json 里的 id）。null = 用第一份。
-          "activeMenu": null
+            var result = Reload();
+            if (!result.AllOk) error = result.Summary;
+            return result.ConfigOk;
         }
-        """;
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            CrashLog.Write("保存配置失败", ex);
+            return false;
+        }
+    }
 
     public void Dispose()
     {

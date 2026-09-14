@@ -4,6 +4,7 @@ using WinQuick.App.Diagnostics;
 using WinQuick.App.Tray;
 using WinQuick.App.Actions;
 using WinQuick.App.Config;
+using WinQuick.App.Settings;
 using WinQuick.Core.Config;
 using WinQuick.Core.Hotkey;
 
@@ -35,6 +36,7 @@ public sealed class ResidentHost : IDisposable
     private readonly TrayHost _tray;
     private readonly DispatcherTimer _hookHealthTimer;
 
+    private SettingsWindow? _settings;
     private bool _disposed;
 
     public ResidentHost()
@@ -45,10 +47,8 @@ public sealed class ResidentHost : IDisposable
         _initialLoad = _config.LoadOrCreateDefaults();
         _menu = _config.Menu;
 
-        _overlay = new OverlayController(_menu)
-        {
-            DimOpacityOverride = _config.Config.Appearance.DimOpacity,
-        };
+        _overlay = new OverlayController(_menu);
+        _overlay.ApplyDimOpacity(_config.Config.Appearance.DimOpacity);
         _session = new SessionWatcher();
         _tray = new TrayHost(_overlay);
 
@@ -79,6 +79,10 @@ public sealed class ResidentHost : IDisposable
         var hotkey = ResolveHotkey();
         var result = _hotkeys.Apply(hotkey, _config.Config.AllowHookFallback);
         WarnIfHotkeyDegraded(result);
+
+        // 开机自启只在首次运行时按配置写一次。之后注册表就是事实来源 ——
+        // 每次启动都按配置覆盖的话，用户从托盘关掉自启后，下次启动又会被配置打开。
+        if (_config.DefaultsWereCreated) AutoStart.SetEnabled(_config.Config.Startup.AutoStart);
 
         _config.StartWatching();
         _config.Changed += OnConfigChanged;
@@ -183,9 +187,10 @@ public sealed class ResidentHost : IDisposable
         if (!ReferenceEquals(_config.Menu, _menu))
         {
             _menu = _config.Menu;
-            _overlay.DimOpacityOverride = _config.Config.Appearance.DimOpacity;
             _overlay.RebuildForMenu(_menu);
         }
+
+        _overlay.ApplyDimOpacity(_config.Config.Appearance.DimOpacity);
 
         // 热键：仅在配置里的值变了才重新注册，避免无谓地注销再注册。
         var wanted = ResolveHotkey();
@@ -202,6 +207,49 @@ public sealed class ResidentHost : IDisposable
     {
         _tray.ShowBalloon("WinQuick 配置有问题",
             result.Summary + "。已保留上一份有效配置，程序继续运行。");
+    }
+
+    /// <summary>打开设置界面（托盘菜单与重复启动都会调用）。</summary>
+    public void OpenSettings()
+    {
+        if (_settings is { IsLoaded: true })
+        {
+            if (_settings.WindowState == WindowState.Minimized)
+                _settings.WindowState = WindowState.Normal;
+
+            _settings.Activate();
+            return;
+        }
+
+        _settings = new SettingsWindow(
+            _config.Config,
+            probeHotkey: spec => _hotkeys.ProbeTemporarily(spec),
+            save: SaveFromSettings);
+
+        _settings.Closed += (_, _) => _settings = null;
+        _settings.Show();
+    }
+
+    /// <summary>
+    /// 设置界面点保存。返回是否成功与失败原因。
+    ///
+    /// 顺序：先写自启注册表（它可能因组策略失败，要能让用户知道），
+    /// 再写配置文件，最后把变化应用到运行中的组件（热键、遮罩透明度）。
+    /// </summary>
+    private (bool Ok, string? Error) SaveFromSettings(AppConfig config)
+    {
+        var autoStartOk = AutoStart.SetEnabled(config.Startup.AutoStart);
+
+        if (!_config.SaveConfig(config, out var error))
+            return (false, error);
+
+        // SaveConfig 内部会 Reload，于是 OnConfigChanged 已经被触发、
+        // 热键与菜单都已按新配置重新应用。这里只需处理它覆盖不到的部分。
+        _overlay.ApplyDimOpacity(config.Appearance.DimOpacity);
+
+        return autoStartOk
+            ? (true, null)
+            : (true, "设置已保存，但开机自启写入注册表失败（可能被组策略或安全软件限制）。");
     }
 
     private void CheckHookHealth()
@@ -229,6 +277,7 @@ public sealed class ResidentHost : IDisposable
         _disposed = true;
 
         _hookHealthTimer.Stop();
+        try { _settings?.Close(); } catch { /* 已关闭则忽略 */ }
         _config.Changed -= OnConfigChanged;
         _config.Dispose();
         ActionExecutor.Completed -= OnActionCompleted;

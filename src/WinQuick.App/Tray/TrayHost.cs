@@ -17,6 +17,9 @@ public sealed class TrayHost : IDisposable
 {
     private readonly TaskbarIcon _icon;
     private readonly OverlayController _overlay;
+
+    /// <summary>点「设置…」时调用。由常驻装配注入，托盘本身不认识设置窗口。</summary>
+    public Action? OpenSettings { get; set; }
     private MenuItem _autoStartItem = null!;
     private bool _disposed;
 
@@ -57,6 +60,7 @@ public sealed class TrayHost : IDisposable
         _autoStartItem.IsChecked = AutoStart.IsEnabled;
         menu.Items.Add(_autoStartItem);
 
+        menu.Items.Add(MakeItem("设置…", () => OpenSettings?.Invoke()));
         menu.Items.Add(MakeItem("打开配置文件夹", OpenConfigFolder));
         menu.Items.Add(MakeItem("查看崩溃日志", OpenLogFolder));
         menu.Items.Add(new Separator());

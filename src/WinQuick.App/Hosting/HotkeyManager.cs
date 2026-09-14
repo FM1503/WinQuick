@@ -102,6 +102,36 @@ public sealed class HotkeyManager : IDisposable
         return (ok, err);
     }
 
+    /// <summary>
+    /// 探测候选组合能否注册，**过程中会临时释放当前热键**，探测完立刻恢复。
+    ///
+    /// 为什么必须临时释放：如果候选组合正好等于当前生效的那个，
+    /// 直接探测会因为"被自己占用"而返回 1409 —— 用户会看到"当前热键被占用"，
+    /// 完全莫名其妙。释放再探测才能得到真实结论。
+    ///
+    /// 代价是在这个过程中热键短暂失效；调用方是设置界面，用户正在手动操作，
+    /// 这个窗口期没有问题。
+    /// </summary>
+    public (bool Available, int ErrorCode) ProbeTemporarily(HotkeySpec spec)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        var current = _current;
+        var currentAllowsHook = current is not null;
+        Release();
+
+        try
+        {
+            return Probe(Handle, spec);
+        }
+        finally
+        {
+            // 无论探测结果如何都要把原来的热键装回去 ——
+            // 否则用户打开设置界面看一眼、什么都没改，热键却没了。
+            if (current is not null) Apply(current, currentAllowsHook);
+        }
+    }
+
     /// <summary>把当前热键切成新的组合。失败时保持原样不变。</summary>
     public HotkeyApplyResult Apply(HotkeySpec spec, bool allowHookFallback = true)
     {

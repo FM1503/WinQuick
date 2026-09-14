@@ -93,7 +93,25 @@ public sealed class OverlayController : IDisposable
     }
 
     /// <summary>遮罩不透明度的用户覆盖值（0–1）。null 表示沿用设计基线。</summary>
-    public double? DimOpacityOverride { get; set; }
+    public double? DimOpacityOverride { get; private set; }
+
+    /// <summary>
+    /// 更新遮罩不透明度。已建好的遮罩窗口用的是旧的 alpha，必须重建才会生效。
+    /// 只重建遮罩窗口，不动轮盘 —— 后者重建的代价大得多（要重画视觉树）。
+    /// </summary>
+    public void ApplyDimOpacity(double? opacity)
+    {
+        if (_disposed) return;
+        if (DimOpacityOverride == opacity) return;
+
+        DimOpacityOverride = opacity;
+        var wasVisible = IsVisible;
+        if (wasVisible) Hide();
+
+        RebuildDimWindows();
+
+        if (wasVisible) Show();
+    }
 
     public bool IsVisible { get; private set; }
 

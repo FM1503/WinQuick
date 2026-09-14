@@ -76,6 +76,18 @@ public sealed record DesignTokens
         if (MotionTokens.TryParseEasing(Motion.ExitEasing, out _) is false)
             problems.Add($"motion.exitEasing 无法解析: {Motion.ExitEasing}");
 
+        // 子环内缘必须给悬停鼓出留出空间。
+        // 带子环的扇区恰恰就是被悬停（因此会鼓出）的那个，两者留不出距离就会重叠。
+        const double bulgeClearance = 4.0;
+        if (Radius.Ring2Inner < Radius.Ring1Outer + Motion.HoverBulgePx + bulgeClearance)
+        {
+            problems.Add(
+                $"radius.ring2Inner={Radius.Ring2Inner} 距环一外缘（{Radius.Ring1Outer}）太近：" +
+                $"至少要为悬停鼓出（{Motion.HoverBulgePx}）留出 {bulgeClearance} 的余量，即 " +
+                $"{Radius.Ring1Outer + Motion.HoverBulgePx + bulgeClearance}。否则悬停有子菜单的扇区时，" +
+                "鼓出的部分会压在子环下面。");
+        }
+
         // 图标与标签在 3 点/9 点方向不得重叠。
         // 那两个方向是最坏情况：扇区中心线水平，标签的『宽度』落在半径方向上，
         // 而 12 点/6 点方向落在半径方向上的是仅约 20px 的『高度』，所以不会冲突。

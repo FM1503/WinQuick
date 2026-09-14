@@ -424,6 +424,12 @@ public static class OverlayProbe
         }
 
         var childCount = menu.Items[parentIndex].Children.Count;
+        // 视觉树泄漏检查：展开/收起一轮之后，画布上的直接子元素数量必须回到原值。
+        // 「每次收起都留下几个元素」这类泄漏在性能劣化前完全不可见，
+        // 只有靠这种结构计数才抓得住。
+        var baselineVisuals = overlay.VisualChildCount;
+        ProbeOutput.Kv("展开前视觉树元素数", baselineVisuals);
+
         ProbeOutput.Kv("父扇区", $"{parentIndex}（{menu.Items[parentIndex].Label}）");
         ProbeOutput.Kv("子项数", childCount);
 
@@ -439,6 +445,7 @@ public static class OverlayProbe
         ProbeOutput.Kv("子弧已展开", overlay.IsChildArcExpanded ? "是" : "否");
         ProbeOutput.Kv("展开进度", overlay.ChildArcProgress.ToString("0.###"));
         ProbeOutput.Kv("子项数（渲染出来的）", overlay.ChildItemCount);
+        ProbeOutput.Kv("展开后视觉树元素数", overlay.VisualChildCount);
 
         ProbeOutput.Line();
         ProbeOutput.Line(overlay.IsChildArcExpanded && overlay.ChildArcProgress > 0.99
@@ -446,8 +453,27 @@ public static class OverlayProbe
             : "  >>> 子弧未完全展开，展开路径或动画有问题。");
 
         overlay.CollapseChildArcForProbe();
-        await Task.Delay(300);
+        await Task.Delay(400);
         ProbeOutput.Kv("收起后仍可见", overlay.IsChildArcExpanded ? "是（异常）" : "否");
+
+        var afterVisuals = overlay.VisualChildCount;
+        ProbeOutput.Kv("收起后视觉树元素数", afterVisuals);
+        ProbeOutput.Line();
+        ProbeOutput.Line(afterVisuals == baselineVisuals
+            ? $"  >>> 视觉树无残留：{baselineVisuals} → {afterVisuals}。"
+            : $"  >>> 视觉树有残留：{baselineVisuals} → {afterVisuals}，" +
+              $"多了 {afterVisuals - baselineVisuals} 个元素。每次展开收起都会累积。");
+
+        // 再走一轮，确认残留不是"只漏一次"而是会累积。
+        overlay.ExpandChildArcForProbe(parentIndex);
+        await Task.Delay(300);
+        overlay.CollapseChildArcForProbe();
+        await Task.Delay(400);
+        var secondRound = overlay.VisualChildCount;
+        ProbeOutput.Kv("第二轮回合后元素数", secondRound);
+        ProbeOutput.Line(secondRound == baselineVisuals
+            ? "  >>> 第二轮同样无残留。"
+            : $"  >>> 第二轮回合后多出 {secondRound - baselineVisuals} 个元素 —— 泄漏会累积。");
     }
 
     private static bool AnimationsEnabledForReport()

@@ -28,6 +28,13 @@ public sealed partial class RadialRingView
     private readonly List<SectorLabel> _childLabels = [];
     private readonly List<ShapePath?> _childChildMarkers = [];
 
+    /// <summary>
+    /// 子弧里除扇区/图标/标记之外的图形（目前是取不到图标时画的占位图）。
+    /// 必须单独登记 —— 它们由 AddPlaceholder 直接加进画布，不在上面几个列表里，
+    /// 漏登记的话收起后不会移除，每展开一次就残留一份。
+    /// </summary>
+    private readonly List<UIElement> _childExtraVisuals = [];
+
     private SectorSpan[] _childSpans = [];
     private SectorSpan _childArcSpan;
     private int _childArcParent = -1;
@@ -98,6 +105,7 @@ public sealed partial class RadialRingView
             Root.Children.Add(sector);
 
             _childIcons.Add(AddChildIcon(child, iconRadius, span.CenterDeg, radius.IconSize));
+            // 占位图与图标是互斥的：有图标就不画占位。两者都登记，清理时一并移除。
             _childLabels.Add(new SectorLabel(
                 Root, _center, labelRadius, span.CenterDeg, child.Label,
                 tokens.Typography.LabelFontSize,
@@ -235,10 +243,13 @@ public sealed partial class RadialRingView
     {
         foreach (var visual in _childSectors.Cast<UIElement>()
                      .Concat(_childIcons)
-                     .Concat(_childChildMarkers.Where(m => m is not null).Cast<UIElement>()))
+                     .Concat(_childChildMarkers.Where(m => m is not null).Cast<UIElement>())
+                     .Concat(_childExtraVisuals))
         {
             Root.Children.Remove(visual);
         }
+
+        _childExtraVisuals.Clear();
 
         foreach (var label in _childLabels)
             label.Detach();
@@ -257,11 +268,28 @@ public sealed partial class RadialRingView
         image.Opacity = _childArcProgress;
 
         var source = ShellIcons.Get(child.IconPath);
-        if (source is not null) image.Source = source;
+        if (source is not null)
+        {
+            image.Source = source;
+        }
+        else
+        {
+            // 与第一层环一致：取不到图标就画首字占位，而不是留一块空白。
+            // 把占位图收进 _childExtraVisuals，否则收起时会残留在视觉树上。
+            AddPlaceholder(Root, _center, iconRadius, angleDeg, child.Label, iconSize,
+                _childExtraVisuals);
+        }
 
         var offset = Vec2.FromPolar(iconRadius, angleDeg);
         Canvas.SetLeft(image, _center.X + offset.X - iconSize / 2);
         Canvas.SetTop(image, _center.Y + offset.Y - iconSize / 2);
+
+        // 必须挂到视觉树上才会被渲染。
+        // 这里漏掉过一次：函数返回了 Image 对象，调用方也把它收进了 _childIcons，
+        // 但没有任何一行把它加进画布 —— 结果是子弧只有文字、没有图标，
+        // 而对象模型里一切看起来都正常。同类错误（对象建好但没接进树）已经出现过两次。
+        Root.Children.Add(image);
+
         return image;
     }
 

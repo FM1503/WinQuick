@@ -173,6 +173,31 @@ public class DesignTokensTests
     }
 
     [Fact]
+    public void SecondRing_ClearsTheHoverBulge()
+    {
+        // 带子环的扇区恰恰就是被悬停（因此会向外鼓出）的那个。
+        // 子环内缘若不给鼓出留出距离，悬停时会看到子环压在鼓出的扇区上。
+        // 这条重叠是用户实际看到的，根因是这两个数值当初各自独立定、没人检查它们的关系。
+        var gap = Tokens.Radius.Ring2Inner - Tokens.Radius.Ring1Outer;
+        Assert.True(gap > Tokens.Motion.HoverBulgePx,
+            $"子环内缘距环一外缘 {gap}，而悬停鼓出是 {Tokens.Motion.HoverBulgePx} —— 会重叠");
+    }
+
+    [Fact]
+    public void Validate_CatchesSecondRingOverlappingTheBulge()
+    {
+        // 构造一个内缘贴着环一外缘的配置，校验必须拦住它。
+        var overlapping = new DesignTokens
+        {
+            Radius = new RadiusTokens { Ring1Outer = 200, Ring2Inner = 202, Ring2Outer = 350 },
+            Motion = new MotionTokens { HoverBulgePx = 12 },
+        };
+
+        Assert.Contains(overlapping.Validate(), p => p.Contains("ring2Inner"));
+        Assert.Contains(overlapping.Validate(), p => p.Contains("压在子环"));
+    }
+
+    [Fact]
     public void Validate_CatchesIconLabelCollision()
     {
         // 这条约束来自用户反馈「9 点 3 点方向的扇区文字和图标容易重叠」。

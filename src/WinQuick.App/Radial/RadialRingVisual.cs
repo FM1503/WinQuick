@@ -226,6 +226,12 @@ public sealed partial class RadialRingView
         _hover = -1;
     }
 
+    /// <summary>
+    /// 视觉树上的直接子元素数量。用于核对展开/收起一轮之后有没有残留 ——
+    /// 「每次收起都留下几个元素」这类泄漏在性能劣化前完全不可见。
+    /// </summary>
+    public int VisualChildCount => Root.Children.Count;
+
     /// <summary>第一层某项是否有子菜单。状态机需要它来决定"悬停是否应展开"。</summary>
     public bool RootItemHasChildren(int index) =>
         index >= 0 && index < _menu.Items.Count && _menu.Items[index].HasChildren;
@@ -290,8 +296,13 @@ public sealed partial class RadialRingView
         return image;
     }
 
+    /// <param name="collector">
+    /// 非 null 时把创建出来的图形收进去，供调用方在之后一并移除。
+    /// 子弧必须传它 —— 否则占位图会永久留在视觉树上（每次展开收起都留一份）。
+    /// </param>
     private static void AddPlaceholder(
-        Canvas root, Point center, double radius, double angleDeg, string label, double iconSize)
+        Canvas root, Point center, double radius, double angleDeg, string label, double iconSize,
+        List<UIElement>? collector = null)
     {
         var tokens = TokenStore.Current;
         var half = iconSize / 2;
@@ -309,10 +320,12 @@ public sealed partial class RadialRingView
         Canvas.SetLeft(circle, center.X + offset.X - half);
         Canvas.SetTop(circle, center.Y + offset.Y - half);
         root.Children.Add(circle);
+        collector?.Add(circle);
 
         var initial = string.IsNullOrEmpty(label) ? "?" : label[..1];
-        AddText(root, center, radius, angleDeg, initial,
+        var text = AddText(root, center, radius, angleDeg, initial,
             TokenBrushes.Brush(tokens.Color.Label, 0.9), iconSize * 0.5);
+        collector?.Add(text);
     }
 
     /// <summary>子菜单指示：贴着扇区外缘画一个折角，指向圆心之外。</summary>

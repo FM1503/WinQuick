@@ -157,6 +157,8 @@ public sealed class RadialWindow : Window
 
     internal int ChildItemCount => _view.ChildItemCount;
 
+    internal int VisualChildCount => _view.VisualChildCount;
+
     /// <summary>诊断用：跳过悬停延迟直接展开子弧。</summary>
     internal void ExpandChildArc(int parentIndex) => _view.ExpandChildArc(parentIndex);
 

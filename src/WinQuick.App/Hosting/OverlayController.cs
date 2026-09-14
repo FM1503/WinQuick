@@ -76,6 +76,9 @@ public sealed class OverlayController : IDisposable
     /// <summary>诊断用：渲染出来的子项数量。</summary>
     internal int ChildItemCount => _radial.ChildItemCount;
 
+    /// <summary>诊断用：视觉树上的直接子元素数量。</summary>
+    internal int VisualChildCount => _radial.VisualChildCount;
+
     /// <summary>诊断用：跳过悬停延迟直接展开子弧。</summary>
     internal void ExpandChildArcForProbe(int parentIndex) => _radial.ExpandChildArc(parentIndex);
 

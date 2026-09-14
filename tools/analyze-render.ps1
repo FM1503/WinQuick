@@ -23,7 +23,13 @@ param(
     [int]$SectorCount = 8,
     # 径向剖面的方向。子弧只画在父扇区那一侧，所以验证子弧时必须把剖面转到它的方向上，
     # 否则沿 90° 剖下去什么都测不到、看不出问题。
-    [int]$ProfileAngle = 90
+    [int]$ProfileAngle = 90,
+    # 图标核对要扫的角度，逗号分隔。默认按 SectorCount 均匀分布（用于第一层环）；
+    # 验证子弧时必须显式传入子项的中心角 —— 它们不与第一层的角度重合。
+    #
+    # 用字符串而不是 [double[]]：通过 -File 调用脚本时，PowerShell 会把整个
+    # "292.5,337.5" 当成一个值去转 double 而失败。字符串自己切分最稳。
+    [string]$IconAngleList = ""
 )
 
 $ErrorActionPreference = 'Stop'
@@ -189,16 +195,29 @@ function Test-AnyColorful([double]$deg, [int]$radius, [int]$box) {
 
 $colorful = 0
 $grayOnly = 0
-for ($i = 0; $i -lt $SectorCount; $i++) {
-    $centerDeg = $i * (360.0 / $SectorCount)
+$IconAngles = @()
+if ($IconAngleList.Trim().Length -gt 0) {
+    foreach ($token in $IconAngleList.Split(',')) {
+        $value = 0.0
+        if ([double]::TryParse($token.Trim(), [ref]$value)) { $IconAngles += $value }
+    }
+}
+if ($IconAngles.Count -eq 0) {
+    for ($i = 0; $i -lt $SectorCount; $i++) { $IconAngles += $i * (360.0 / $SectorCount) }
+}
+
+for ($i = 0; $i -lt $IconAngles.Count; $i++) {
+    $centerDeg = $IconAngles[$i]
     $sat = Test-AnyColorful $centerDeg $IconRadius 18
     # 阈值 12%：足以把彩色图标和灰度占位/纯扇区分开，又不会把浅色图标判成灰色。
     $verdict = if ($sat -ge 12) { "彩色（真图标）"; $colorful++ } else { "无彩色（占位或无内容）"; $grayOnly++ }
-    Write-Output ("  扇区 {0}  中心 {1,5}°  最大饱和度 {2,3}%  -> {3}" -f $i, ("{0:0.#}" -f $centerDeg), $sat, $verdict)
+    Write-Output ("  位置 {0}  角度 {1,6}°  最大饱和度 {2,3}%  -> {3}" -f $i, ("{0:0.#}" -f $centerDeg), $sat, $verdict)
 }
 Write-Output ""
-Write-Output ("  彩色扇区 {0} / {1}，无彩色 {2}" -f $colorful, $SectorCount, $grayOnly)
+Write-Output ("  彩色 {0} / {1}，无彩色 {2}" -f $colorful, $IconAngles.Count, $grayOnly)
 Write-Output "  应用启动时会打印「成功取到图标的项 N/M」，两个数字应当一致。"
+Write-Output "  注意：这里只检查"有没有彩色像素"。若某处本该有图标却是灰度，"
+Write-Output "        可能是取不到图标而退化为首字占位（灰度圆 + 文字），不是渲染问题。"
 
 # ---------------------------------------------------------------- 径向剖面
 Write-Output ""

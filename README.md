@@ -37,6 +37,21 @@ src/WinQuick.App/bin/Release/net10.0-windows/WinQuick.exe
 > **热键不是 Win+W。** 实测 Win+W 在 Windows 11 上被 shell 预留，`RegisterHotKey`
 > 必然返回 1409。Ctrl+Win+W 可以正常注册。详见 [M0 文档](docs/M0-findings.md)。
 
+## 开发提示
+
+**重新构建前必须退出正在运行的 WinQuick**，否则 `dotnet build` 会因为
+`WinQuick.Core.dll` 被占用而失败（程序集被已加载的进程锁定）。
+
+```powershell
+Get-Process WinQuick -ErrorAction SilentlyContinue | Stop-Process -Force
+```
+
+托盘程序在跑是常态（这正是它的用途），所以这条会反复遇到 ——
+先杀进程再编译是最省事的做法。
+
+另一个相关的小坑：用 `Start-Process` 启动的进程会以 `explorer.exe` 作为父进程
+（它走的是 ShellExecute 路径），排查"进程是谁启动的"时不要被这一点误导。
+
 ## 诊断探针
 
 这些命令既是排查工具，也是本项目的验证手段 —— 界面好不好看只能靠人眼，

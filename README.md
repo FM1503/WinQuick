@@ -14,14 +14,15 @@ Windows 10/11 的快捷访问轮盘：按热键唤出全屏遮罩 + 圆形轮盘
 | M1 | 热键三级降级、每屏遮罩、焦点保存还原、托盘、单实例、开机自启 | 完成 |
 | M2 | 视觉规格单一真源、真实图标、入场/退场动画 | 完成 |
 | M3 | 动作执行、文字折行、悬停形变 | 进行中（环 2 子菜单与 hover 状态机未完成） |
-| M4 | 配置系统（menus.json）、设置界面、打包 | 未开始 |
+| M4 | 配置系统（config.json + menus.json + 热重载） | 完成（设置界面与打包未做） |
 
 各阶段的实测数据与结论见 [`docs/`](docs/)：
 
 - [M0 实测结论](docs/M0-findings.md) —— 环境、Win+W、内存模型、视觉验证方法
 - [M1 状态](docs/M1-status.md) —— 热键与遮罩，含两个被验证机制抓出的 bug
 - [M2 状态](docs/M2-status.md) —— 视觉规格与图标
-- [M3 进展](docs/M3-status.md) —— 动作执行与文字处理
+- [M3 进展](docs/M3-status.md) —— 动作执行、文字处理、环 2 子菜单、UWP 支持
+- [M4 进展](docs/M4-status.md) —— 配置系统：两份配置的分工与热重载
 
 ---
 
@@ -78,6 +79,36 @@ dotnet test          # 73 条单测：几何、命中测试、视觉规格约束
 ```
 
 ---
+
+## 配置与自定义
+
+配置在 `%APPDATA%\WinQuick\`，**改完保存即生效，无需重启**；写错也不会导致打不开 ——
+会保留上一份有效配置并在托盘提示。
+
+| 文件 | 内容 |
+|---|---|
+| `config.json` | 热键、遮罩透明度、悬停延迟、是否动画、自启 |
+| `menus.json` | 菜单项、图标、动作、子菜单、角度 |
+| `design/tokens.json` | 设计基线（配色/半径/时长/曲线），随程序嵌入，不是给用户改的 |
+
+**同一个值不能有两个来源。** `config.json` 里所有可选项默认是 `null`，
+含义是「沿用设计基线」。两处都能改同一个值时会静默分叉，
+而这个项目已经为此付出过一次代价（见 M2 文档）。
+
+往菜单里加一项：
+
+```json
+{
+  "label": "你的项目",
+  "icon": "C:\Tools\myapp.exe",
+  "action": { "type": "launch", "target": "C:\Tools\myapp.exe", "args": "--flag" }
+}
+```
+
+`angle` 可省略（省略则均匀分布），指定时必须严格递增。
+UWP / 商店应用没有可执行文件，`icon` 与 `action.target` 写
+`shell:AppsFolder\<AppUserModelId>`（例如 `Microsoft.WindowsCalculator_8wekyb3d8bbwe!App`），
+`action.type` 用 `shell`。
 
 ## 设计约束（不是审美偏好，是实测反推的）
 

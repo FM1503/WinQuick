@@ -26,6 +26,7 @@ GetDpiForMonitor
 GetDpiForWindow
 GetSystemMetrics
 GetSystemMetricsForDpi
+SM_CXSMICON
 GetCursorPos
 SetCursorPos
 MonitorFromPoint

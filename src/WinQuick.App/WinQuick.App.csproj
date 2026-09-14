@@ -9,6 +9,7 @@
     <RootNamespace>WinQuick.App</RootNamespace>
     <AssemblyName>WinQuick</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>../../assets/winquick.ico</ApplicationIcon>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
     <!-- 把 CsWin32 源生成器的产物落到 obj 下，方便排查签名与可访问性问题 -->
@@ -38,6 +39,10 @@
        是为了不存在"改了 JSON 忘了重新生成"的第二种真源。 -->
   <ItemGroup>
     <EmbeddedResource Include="../../design/tokens.json" LogicalName="WinQuick.tokens.json" />
+    <!-- 托盘图标从嵌入资源加载，而不是 System.Drawing.SystemIcons.Application。
+         用系统图标本来是临时占位，而它一旦加载失败就完全没有兜底路径 ——
+         托盘会变成一个没有图标的条目，Windows 可能根本不显示它。 -->
+    <EmbeddedResource Include="../../assets/winquick.ico" LogicalName="WinQuick.tray.ico" />
   </ItemGroup>
 
 </Project>

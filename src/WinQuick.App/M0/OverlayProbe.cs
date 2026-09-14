@@ -104,6 +104,9 @@ public static class OverlayProbe
 
             await VerifyChildArcAsync(overlay);
 
+            await VerifyActionBarAsync(overlay);
+            VerifyTrayIconResource();
+
             ProbeOutput.Section("点遮罩空白处是否关闭");
             if (overlay.IsVisible && overlay.DimHandles.Count > 0)
             {
@@ -474,6 +477,90 @@ public static class OverlayProbe
         ProbeOutput.Line(secondRound == baselineVisuals
             ? "  >>> 第二轮同样无残留。"
             : $"  >>> 第二轮回合后多出 {secondRound - baselineVisuals} 个元素 —— 泄漏会累积。");
+    }
+
+    /// <summary>
+    /// 核对左上角操作条：显示时应可见，且位置在光标所在屏的左上角。
+    /// 它是托盘图标之外的设置入口 —— Win11 默认把新托盘图标收进溢出区，
+    /// 用户不一定找得到，所以这个入口存在是必要的。
+    /// </summary>
+    private static async Task VerifyActionBarAsync(OverlayController overlay)
+    {
+        ProbeOutput.Section("左上角操作条");
+        if (!overlay.IsVisible)
+        {
+            ProbeOutput.Line("  覆盖层当前不可见，跳过。");
+            return;
+        }
+
+        await Task.Delay(200);
+
+        var handle = (HWND)overlay.ActionBarHandle;
+        ProbeOutput.Kv("操作条实际可见", PInvoke.IsWindowVisible(handle) ? "是" : "否");
+
+        if (!PInvoke.GetWindowRect(handle, out var rect))
+        {
+            ProbeOutput.Line("  取窗口矩形失败。");
+            return;
+        }
+
+        var monitor = MonitorLayout.AtCursor();
+        ProbeOutput.Kv("光标所在屏", monitor.ToString());
+        ProbeOutput.Kv("操作条矩形", $"({rect.left},{rect.top})-({rect.right},{rect.bottom})");
+
+        // 左上角 = 靠近屏幕原点，且整块都在屏内。
+        var nearLeft = rect.left - monitor.X is >= 0 and <= 60;
+        var nearTop = rect.top - monitor.Y is >= 0 and <= 60;
+        var insideX = rect.right <= monitor.Right;
+        var insideY = rect.bottom <= monitor.Bottom;
+
+        ProbeOutput.Kv("贴近屏幕左上角", nearLeft && nearTop ? "是" : "否");
+        ProbeOutput.Kv("完整落在屏内", insideX && insideY ? "是" : "否");
+        ProbeOutput.Line();
+        ProbeOutput.Line(nearLeft && nearTop && insideX && insideY
+            ? "  >>> 操作条位于光标所在屏的左上角。"
+            : "  >>> 操作条位置不符合预期。");
+    }
+
+    /// <summary>
+    /// 核对托盘图标能否从嵌入资源加载。
+    /// 这一步是必要的：托盘图标一旦加载失败，Windows 可能根本不显示那个条目，
+    /// 而用户看到的现象是"托盘里什么都没有"，与真正的原因之间没有任何线索。
+    /// </summary>
+    private static void VerifyTrayIconResource()
+    {
+        ProbeOutput.Section("托盘图标资源");
+
+        try
+        {
+            using var stream = System.Reflection.Assembly.GetExecutingAssembly()
+                .GetManifestResourceStream("WinQuick.tray.ico");
+
+            if (stream is null)
+            {
+                ProbeOutput.Line("  嵌入资源 WinQuick.tray.ico 不存在 —— 托盘会没有图标，Windows 可能不显示它。");
+                return;
+            }
+
+            ProbeOutput.Kv("嵌入资源大小", $"{stream.Length} 字节");
+            ProbeOutput.Kv("系统请求的小图标边长", Tray.TrayHost.SystemSmallIconSize.ToString());
+
+            // 关键：核对**托盘真实加载到的那份**，而不是在这里另写一段加载代码 ——
+            // 那样测的是探针自己，生产路径仍然没被验证。
+            using var tray = new Tray.TrayHost(new OverlayController(MenuSpec.BuiltInDefault));
+            ProbeOutput.Kv("托盘实际加载的图标尺寸", tray.IconDescription);
+            tray.Dispose();
+
+            ProbeOutput.Line();
+            ProbeOutput.Line("  图标可加载。注意：这只能证明资源本身没问题，");
+            ProbeOutput.Line("  不能证明 Windows 一定把它显示出来 —— Windows 11 默认把**新的**托盘图标");
+            ProbeOutput.Line("  收进溢出区（任务栏的 ^ 箭头里）。看不到时先点 ^，");
+            ProbeOutput.Line("  或在「设置 → 个性化 → 任务栏 → 其他系统托盘图标」里把它打开。");
+        }
+        catch (Exception ex)
+        {
+            ProbeOutput.Kv("加载失败", ex.Message);
+        }
     }
 
     private static bool AnimationsEnabledForReport()

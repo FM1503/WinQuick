@@ -54,6 +54,8 @@ public sealed class ResidentHost : IDisposable
 
         _hotkeys.Pressed += (_, _) => _overlay.Toggle();
         _overlay.ItemActivated += OnItemActivated;
+        _overlay.SettingsRequested += (_, _) => OpenSettings();
+        _overlay.ExitRequested += (_, _) => Application.Current.Shutdown(0);
         ActionExecutor.Completed += OnActionCompleted;
 
         _session.SessionLocked += (_, _) => _overlay.Hide();

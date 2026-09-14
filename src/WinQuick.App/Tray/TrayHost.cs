@@ -4,6 +4,8 @@ using System.Windows;
 using System.Windows.Controls;
 using H.NotifyIcon;
 using WinQuick.App.Hosting;
+using Windows.Win32;
+using Windows.Win32.UI.WindowsAndMessaging;
 
 namespace WinQuick.App.Tray;
 
@@ -37,15 +39,54 @@ public sealed class TrayHost : IDisposable
         _icon.TrayLeftMouseUp += (_, _) => _overlay.Show();
         _icon.TrayMouseDoubleClick += (_, _) => _overlay.Show();
 
+        LoadIcon();
+    }
+
+    /// <summary>
+    /// 加载托盘图标。
+    ///
+    /// 从嵌入资源读，而不是用 System.Drawing.SystemIcons.Application：
+    /// 后者只是临时占位，而且**它一旦失败就没有兜底** —— 托盘会变成一个没有图标的条目，
+    /// Windows 可能根本不显示它，而用户看到的现象是"托盘里什么都没有"，
+    /// 与真正的原因（图标没加载成功）之间没有任何线索。
+    ///
+    /// 所以这里失败要**明确报出来**：写日志 + 托盘气泡提示。
+    /// 上一版只写了 Debug.WriteLine，等于静默吞掉。
+    /// </summary>
+    private void LoadIcon()
+    {
         try
         {
-            _icon.Icon = System.Drawing.SystemIcons.Application;
+            using var stream = System.Reflection.Assembly.GetExecutingAssembly()
+                .GetManifestResourceStream("WinQuick.tray.ico");
+
+            if (stream is null)
+            {
+                ReportIconFailure("嵌入资源 WinQuick.tray.ico 不存在（检查 csproj 的 EmbeddedResource 项）");
+                return;
+            }
+
+            // 按系统的小图标尺寸选取 ICO 里最接近的那一帧，而不是让 Icon 自己挑。
+            // Icon(stream) 默认会挑一帧（本机实测挑到 48px），再由外壳缩小到托盘尺寸，
+            // 多一次缩放就多一分糊。ico 里有 16/20/24/32/48 各帧，直接选对的最清晰。
+            var small = PInvoke.GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_CXSMICON);
+            var wantSize = small > 0 ? small : 16;
+
+            _icon.Icon = new System.Drawing.Icon(stream, new System.Drawing.Size(wantSize, wantSize));
         }
         catch (Exception ex)
         {
-            // M4 会换成正式图标。M1 阶段用系统图标，缺失不该让托盘整体失效。
-            Debug.WriteLine("托盘图标加载失败: " + ex.Message);
+            ReportIconFailure(ex.Message);
         }
+    }
+
+    private void ReportIconFailure(string reason)
+    {
+        CrashLog.Write("托盘图标加载失败", new InvalidOperationException(reason));
+        Debug.WriteLine("托盘图标加载失败: " + reason);
+
+        // 失败时退回系统图标 —— 有个图标总比没有好，但用户应当知道托盘可能不显示。
+        try { _icon.Icon = System.Drawing.SystemIcons.Application; } catch { /* 连系统图标都拿不到就放弃 */ }
     }
 
     private ContextMenu BuildMenu()
@@ -124,6 +165,14 @@ public sealed class TrayHost : IDisposable
     {
         Application.Current.Shutdown(0);
     }
+
+    /// <summary>诊断用：实际加载到的图标描述。验证真实路径，而不是另写一段加载代码。</summary>
+    internal string IconDescription =>
+        _icon.Icon is { } icon ? $"{icon.Width}x{icon.Height}" : "(未加载)";
+
+    /// <summary>诊断用：系统请求的小图标边长。</summary>
+    internal static int SystemSmallIconSize =>
+        PInvoke.GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_CXSMICON);
 
     /// <summary>
     /// 托盘气泡提示。用于「热键被占用」「钩子需要确认」这类必须让用户知道的降级情况 ——

@@ -30,6 +30,7 @@ public sealed class OverlayController : IDisposable
 
     private readonly List<RawDimWindow> _dims = [];
     private RadialWindow _radial;   // 菜单热重载时会整体替换，所以不是 readonly
+    private readonly OverlayActionBar _actionBar = new();
     private readonly ForegroundFocus _focus = new();
     private readonly DispatcherTimer _topmostTimer;
 
@@ -48,6 +49,15 @@ public sealed class OverlayController : IDisposable
             Interval = TopmostReassertInterval,
         };
         _topmostTimer.Tick += (_, _) => ReassertTopmost();
+
+        _actionBar.SettingsRequested += (_, _) =>
+        {
+            // 先收覆盖层再开设置界面，否则设置窗口会被置顶的覆盖层压住。
+            Hide();
+            SettingsRequested?.Invoke(this, EventArgs.Empty);
+        };
+
+        _actionBar.ExitRequested += (_, _) => ExitRequested?.Invoke(this, EventArgs.Empty);
 
         _exitTimer = new DispatcherTimer(DispatcherPriority.Normal);
         _exitTimer.Tick += (_, _) =>
@@ -143,6 +153,12 @@ public sealed class OverlayController : IDisposable
     /// </summary>
     public event EventHandler<(int ParentIndex, int ChildIndex)>? ItemActivated;
 
+    /// <summary>用户在覆盖层左上角点了「设置」。</summary>
+    public event EventHandler? SettingsRequested;
+
+    /// <summary>用户在覆盖层左上角点了「退出」。</summary>
+    public event EventHandler? ExitRequested;
+
     /// <summary>
     /// 预先创建所有窗口并隐藏。必须在启动时调用一次，把渲染栈、字体缓存、
     /// D3D 表面都热起来 —— 否则第一次唤出会明显卡顿。
@@ -195,6 +211,10 @@ public sealed class OverlayController : IDisposable
         _radial.Show();
         _radial.ReassertTopmost();
         _radial.PlayEntrance();
+
+        _actionBar.PlaceAtMonitorCorner();
+        _actionBar.Show();
+        _actionBar.ReassertTopmost();
         _radial.StartInteraction();
 
         // 拿键盘焦点，否则 Esc 收不到。这里同步调用是刻意的（见方法注释）。
@@ -220,6 +240,7 @@ public sealed class OverlayController : IDisposable
         // 指针轮询必须停 —— 它每 25ms 唤醒一次 UI 线程，窗口不可见时纯属浪费。
         _radial.StopInteraction();
         foreach (var dim in _dims) dim.Hide();
+        _actionBar.Hide();
 
         // 退场期间不再接受输入，否则用户在收缩过程中还能点到扇区。
         _radial.IsHitTestVisible = false;
@@ -239,6 +260,12 @@ public sealed class OverlayController : IDisposable
         // 焦点立刻归还，不等动画。
         _focus.Restore();
     }
+
+    /// <summary>诊断用：操作条句柄。</summary>
+    internal nint ActionBarHandle => _actionBar.HandleValue;
+
+    /// <summary>诊断用：操作条是否可见。</summary>
+    internal bool IsActionBarVisible => _actionBar.IsVisible;
 
     /// <summary>真正把轮盘窗口隐藏并重置动画状态。</summary>
     private void FinishHide()
@@ -315,6 +342,7 @@ public sealed class OverlayController : IDisposable
     {
         foreach (var dim in _dims) dim.ReassertTopmost();
         _radial.ReassertTopmost();
+        _actionBar.ReassertTopmost();
     }
 
     private IntPtr OnRadialMessage(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
@@ -354,5 +382,6 @@ public sealed class OverlayController : IDisposable
         _dims.Clear();
 
         _radial.Close();
+        _actionBar.Close();
     }
 }

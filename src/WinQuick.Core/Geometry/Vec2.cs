@@ -30,6 +30,11 @@ public readonly record struct SectorSpan(double StartDeg, double EndDeg)
 
     public bool Contains(double angleDeg)
     {
+        // 整圈要先单独判。跨度到 360° 时 Normalize 之后起止相等，
+        // 会掉进下面的"跨越 0°"分支，而那个分支恰好对任何角度都成立 ——
+        // 结果是对的，但靠的是一个巧合。子环现在可以撑满整圈，不能留这种巧合。
+        if (SweepDeg >= 360.0) return true;
+
         var a = Normalize(angleDeg);
         var s = Normalize(StartDeg);
         var e = Normalize(EndDeg);

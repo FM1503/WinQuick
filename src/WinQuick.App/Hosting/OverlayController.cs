@@ -137,6 +137,7 @@ public sealed class OverlayController : IDisposable
         window.ItemActivated += (_, selection) => ItemActivated?.Invoke(this, selection);
         window.AddItemRequested += (_, parentIndex) => AddItemRequested?.Invoke(this, parentIndex);
         window.SectorEditRequested += (_, request) => SectorEditRequested?.Invoke(this, request);
+        window.AddGroupRequested += (_, request) => AddGroupRequested?.Invoke(this, request);
         window.FocusLost += (_, _) => OnRadialFocusLost();
         return window;
     }
@@ -248,14 +249,29 @@ public sealed class OverlayController : IDisposable
         _radial.RightClickForProbe(new System.Windows.Point(x, y));
 
     /// <summary>诊断用：编辑面板是否开着且真的在视觉树上。</summary>
-    internal bool IsEditPanelOpen => _radial.IsEditPanelOpen;
+    internal bool IsPanelOpen => _radial.IsPanelOpen;
 
     /// <summary>诊断用：直接要求编辑某一项，跳过命中测试。</summary>
     internal void ShowSectorEditForProbe(int rootIndex, int childIndex) =>
         _radial.ShowSectorEditForProbe(rootIndex, childIndex);
 
-    /// <summary>诊断用：收起编辑面板。</summary>
-    internal void DismissSectorEditForProbe() => _radial.DismissSectorEditForProbe();
+    /// <summary>诊断用：收起面板。</summary>
+    internal void DismissPanelForProbe() => _radial.DismissPanelForProbe();
+
+    /// <summary>诊断用：面板是否真的挂在视觉树上。</summary>
+    internal bool PanelAttached => _radial.PanelAttached;
+
+    /// <summary>诊断用：当前是哪一块面板。</summary>
+    internal string PanelKindForProbe => _radial.PanelKindForProbe;
+
+    /// <summary>诊断用：面板各行的文案。</summary>
+    internal IReadOnlyList<string> PanelRowLabelsForProbe => _radial.PanelRowLabelsForProbe;
+
+    /// <summary>诊断用：点面板的第 index 行（走按钮同一个委托）。</summary>
+    internal void InvokePanelRowForProbe(int index) => _radial.InvokePanelRowForProbe(index);
+
+    /// <summary>诊断用：改输入框文字并确认。</summary>
+    internal void ConfirmPanelTextForProbe(string text) => _radial.ConfirmPanelTextForProbe(text);
 
     /// <summary>诊断用：直接切换编辑态（正式路径由打开/关闭设置面板驱动）。</summary>
     internal void SetEditModeForProbe(bool editMode) => _radial.SetEditMode(editMode);
@@ -296,6 +312,9 @@ public sealed class OverlayController : IDisposable
     /// 参数是父项索引；-1 表示第一层。
     /// </summary>
     public event EventHandler<int>? AddItemRequested;
+
+    /// <summary>用户要求新建分组（带子菜单的项）。</summary>
+    public event EventHandler<(int ParentIndex, string Label)>? AddGroupRequested;
 
     /// <summary>用户在扇区的编辑面板上选了改名或移除。</summary>
     public event EventHandler<(int RootIndex, int ChildIndex, Radial.SectorEditAction Action, string? Label)>?

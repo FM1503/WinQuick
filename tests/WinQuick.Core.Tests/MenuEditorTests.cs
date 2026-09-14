@@ -86,13 +86,41 @@ public class MenuEditorTests
     {
         var full = new MenuSpec("t", "测试",
         [
-            Container("组", Enumerable.Range(1, MenuEditor.MaxItems).Select(i => Item($"子{i}")).ToList()),
+            Container("组",
+                Enumerable.Range(1, MenuEditor.MaxChildItems).Select(i => Item($"子{i}")).ToList()),
         ]);
 
         var (menu, error) = MenuEditor.Add(full, 0, Item("多出来的"));
 
         Assert.NotNull(error);
-        Assert.Equal(MenuEditor.MaxItems, menu.Items[0].Children.Count);
+        Assert.Equal(MenuEditor.MaxChildItems, menu.Items[0].Children.Count);
+    }
+
+    /// <summary>
+    /// 子层比第一层能装更多：子环可以铺满整圈，而第一层要留住
+    /// 「上/右上/右/…」的钟面直觉，项数一多那种直觉就没了。
+    /// </summary>
+    [Fact]
+    public void Add_子层上限比第一层宽松()
+    {
+        Assert.True(MenuEditor.MaxChildItems > MenuEditor.MaxItems,
+            "子环能铺满整圈，上限应当高于第一层");
+
+        // 子层一直加到上限都应当被接受。
+        var menu = new MenuSpec("t", "测试", [Container("组", [])]);
+        for (var i = 1; i <= MenuEditor.MaxChildItems; i++)
+        {
+            var (updated, error) = MenuEditor.Add(menu, 0, Item($"子{i}"));
+            Assert.Null(error);
+            menu = updated;
+        }
+
+        Assert.Equal(MenuEditor.MaxChildItems, menu.Items[0].Children.Count);
+
+        // 再超一项就该被拒绝。
+        var (tooMany, error2) = MenuEditor.Add(menu, 0, Item("多出来的"));
+        Assert.NotNull(error2);
+        Assert.Equal(MenuEditor.MaxChildItems, tooMany.Items[0].Children.Count);
     }
 
     [Fact]

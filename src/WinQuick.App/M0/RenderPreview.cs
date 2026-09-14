@@ -54,6 +54,34 @@ public static class RenderPreview
             ProbeOutput.Line("已启用压力标签：全部标签追加长后缀");
         }
 
+        // --children=N：把带子项那一项的 children 换成 N 个占位项。
+        // 用来验证子环在不同项数下的几何 —— 尤其是"铺满整圈"那一档：
+        // 12 项以内是弧、15 项以上是完整一圈，这两者的几何完全不同，
+        // 光看代码看不出渲染成什么样。
+        var forcedChildren = cli.GetInt("children", 0);
+        if (forcedChildren > 0)
+        {
+            var index = -1;
+            for (var i = 0; i < trimmed.Items.Count; i++)
+                if (trimmed.Items[i].HasChildren) { index = i; break; }
+
+            if (index < 0)
+            {
+                ProbeOutput.Line("菜单里没有带子项的项，--children 无法生效。");
+            }
+            else
+            {
+                var placeholder = Enumerable.Range(1, forcedChildren)
+                    .Select(i => new MenuItemSpec { Label = $"子项 {i}" })
+                    .ToList();
+
+                var items = trimmed.Items.ToList();
+                items[index] = items[index] with { Children = placeholder };
+                trimmed = trimmed with { Items = items };
+                ProbeOutput.Line($"已把「{items[index].Label}」的子项替换为 {forcedChildren} 个占位项");
+            }
+        }
+
         // child / child-leaf 两个状态用来验证子弧（第二层环）。
         // 它们把子弧立即落定到展开态 —— 只渲染一帧，动画推进不了，
         // 否则画出来的永远是未展开的形态，子弧就等于没被验证过。

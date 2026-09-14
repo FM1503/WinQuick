@@ -273,4 +273,127 @@ public class RadialLayoutTests
         Assert.False(span.Contains(20));
         Assert.False(span.Contains(340));
     }
+
+    // ---------------------------------------------------------------- 子环容量
+
+    /// <summary>
+    /// 子环项少时仍是一个贴着父扇区的弧 —— "与父级同向对齐"是第二层形成肌肉记忆的前提，
+    /// 不能因为要支持整圈就把它丢掉。
+    /// </summary>
+    [Fact]
+    public void ChildArc_项少时仍是对齐父级的弧()
+    {
+        var arc = RadialLayout.ChildArc(parentCenterDeg: 90, childCount: 3);
+
+        Assert.Equal(90, arc.CenterDeg, 6);
+        Assert.Equal(90, arc.SweepDeg, 6);      // 90° 的默认跨度
+    }
+
+    /// <summary>项数够多时弧被撑宽，每项至少 25°。</summary>
+    [Fact]
+    public void ChildArc_项数多时按最小角度撑宽()
+    {
+        var arc = RadialLayout.ChildArc(0, 8);
+
+        Assert.Equal(200, arc.SweepDeg, 6);     // 8 × 25
+    }
+
+    /// <summary>
+    /// 弧随项数**平滑**加宽，每项恒定 25°，直到铺满整圈为止。
+    ///
+    /// 之所以是"每项 25° 一路加到 360"而不是"够多就直接整圈"：
+    /// 后者会让 11 项（275°）到 12 项（360°）之间跳一下，扇区宽度其实没变、
+    /// 总跨度却突变。平滑加宽没有这个跳变 —— 缺口是一度一度收拢的。
+    /// </summary>
+    [Theory]
+    [InlineData(3, 90)]      // 少于按最小角度撑宽所需时，用默认跨度
+    [InlineData(8, 200)]     // 8 × 25
+    [InlineData(12, 300)]    // 12 × 25，此时还差 60° 才满圈
+    [InlineData(14, 350)]
+    [InlineData(15, 360)]    // 15 × 25 = 375，被整圈封顶 → 从这里开始是完整一圈
+    public void ChildArc_随项数平滑加宽到整圈(int count, double expectedSpan)
+    {
+        var arc = RadialLayout.ChildArc(parentCenterDeg: 0, childCount: count);
+
+        Assert.Equal(expectedSpan, arc.SweepDeg, 6);
+    }
+
+    /// <summary>
+    /// 上限之内项数再加也不会超过整圈 —— 超过 360 就开始自己压自己了。
+    ///
+    /// 这一组是用户报的"上限不能只有 12 个，至少要能围成完整一圈"的落点：
+    /// 上限从 12 提到 20 之后，15~20 项都是完整一圈（每项 18~24°）。
+    /// </summary>
+    [Fact]
+    public void ChildArc_上限之内都不超过整圈()
+    {
+        for (var n = 15; n <= RadialLayout.MaxChildSectors; n++)
+            Assert.Equal(360, RadialLayout.ChildArc(37, n).SweepDeg, 6);
+
+        // 超出上限时调用方不该传到，但函数本身也不能给出大于整圈的结果。
+        Assert.Equal(360, RadialLayout.ChildArc(37, 40).SweepDeg, 6);
+    }
+
+    /// <summary>整圈不能靠"起止归一化后相等"这个巧合判定 —— 那个分支对任何角度都成立。</summary>
+    [Fact]
+    public void 整圈跨度包含任意角度()
+    {
+        var arc = new SectorSpan(-180, 180);
+
+        foreach (var angle in new[] { 0, 37, 90, 179.9, 180, 181, 270, 359.9 })
+            Assert.True(arc.Contains(angle), $"{angle}° 未被整圈包含");
+    }
+
+    /// <summary>
+    /// 整圈铺满之后各子扇区必须首尾相接：既不重叠（同一角度命中两项）也不留缝
+    /// （落进缝隙会被判成"离开子弧"，表现为指针移过去子菜单就收起）。
+    /// </summary>
+    [Fact]
+    public void DistributeWithin_整圈时首尾相接且无接缝()
+    {
+        const int count = RadialLayout.MaxChildSectors;
+        var arc = RadialLayout.ChildArc(123, count);
+        var spans = RadialLayout.DistributeWithin(arc, count);
+
+        Assert.Equal(count, spans.Length);
+
+        // 相邻子扇区的边界必须重合。
+        // 注意要**归一化之后**比：整圈时最后一项的 EndDeg 会落到 0° 另一侧
+        // （例如 303 与 -57 是同一个角度），直接比原始度数会误报。
+        for (var i = 0; i < count; i++)
+        {
+            var current = spans[i];
+            var next = spans[(i + 1) % count];
+            Assert.Equal(
+                SectorSpan.Normalize(current.EndDeg),
+                SectorSpan.Normalize(next.StartDeg),
+                6);
+        }
+
+        // 逐度扫一圈：每个角度都必须恰好命中一项。
+        for (var angle = 0; angle < 360; angle++)
+        {
+            var matched = spans.Count(s => s.Contains(angle));
+            Assert.True(matched == 1, $"{angle}° 命中了 {matched} 项，应当恰好 1 项");
+        }
+    }
+
+    /// <summary>
+    /// 整圈下列每项的中心都必须落在**自己**的区间里。
+    /// 这是渲染与命中测试共用同一份数学的前提，错了就会出现"看着在 A、点下去选中 B"。
+    /// </summary>
+    [Fact]
+    public void 整圈时每项的中心都落在自己区间内()
+    {
+        const int count = RadialLayout.MaxChildSectors;
+        var spans = RadialLayout.DistributeWithin(RadialLayout.ChildArc(200, count), count);
+
+        for (var i = 0; i < count; i++)
+        {
+            var center = spans[i].CenterDeg;
+            Assert.True(spans[i].Contains(center),
+                $"第 {i} 项的中心 {center:0.#}° 不在自己的区间内");
+            Assert.Equal(1, spans.Count(s => s.Contains(center)));
+        }
+    }
 }

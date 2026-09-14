@@ -109,6 +109,25 @@ public sealed record DesignTokens
         if (Interaction.ChildMinSectorDegrees < 15)
             problems.Add($"interaction.childMinSectorDegrees={Interaction.ChildMinSectorDegrees} 过小，子项会细到点不中");
 
+        // 子环撑满整圈时，最细的那一档（= MaxChildSectors）也必须还能放下文字。
+        //
+        // 这条把"环的尺寸"和"子项上限"绑在一起：以后谁把环改小了、
+        // 或者把上限调大了，这里会先报出来，而不是等用户看到一排挤成一团的标签。
+        // 判据取 30：比"不压到图标"的限值（约 35）留一点余量，
+        // 且 30 的半宽对应两行文字每行 4~5 个汉字，是能读的下限。
+        var fullCircleSweep = 360.0 / Geometry.RadialLayout.MaxChildSectors;
+        var childLabelHalfWidth = RadiusTokens.LabelMaxHalfWidth(
+            iconRadius: Radius.Ring2.At(Radius.IconRadiusRatio),
+            labelRadius: Radius.Ring2.At(Radius.LabelRadiusRatio),
+            iconSize: Radius.IconSize,
+            labelSweepDegrees: fullCircleSweep,
+            gapDegrees: Radius.SectorGapDegrees);
+
+        if (childLabelHalfWidth < 30)
+            problems.Add(
+                $"子环按 {Geometry.RadialLayout.MaxChildSectors} 项铺满整圈时每项 {fullCircleSweep:0.#}°，" +
+                $"此时标签半宽只剩 {childLabelHalfWidth:0.#}（要求 ≥ 30）—— 环太小或子项上限太大");
+
         return problems;
     }
 }

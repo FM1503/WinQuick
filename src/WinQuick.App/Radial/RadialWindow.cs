@@ -83,7 +83,7 @@ public sealed class RadialWindow : Window
         };
         _pointerPoll.Tick += (_, _) => EvaluateHover();
 
-        _view.SectorEditRequested += OnSectorEditRequested;
+        WireViewEvents(_view);
 
         SourceInitialized += (_, _) => ApplyExtendedStyles();
 
@@ -118,6 +118,12 @@ public sealed class RadialWindow : Window
     /// 不知道菜单存在哪、也不碰配置文件。
     /// </summary>
     public event EventHandler<int>? AddItemRequested;
+
+    /// <summary>
+    /// 用户要求新建分组。参数是（父项索引, 分组名称）。
+    /// 上层要再问一次"第一项是什么" —— 分组不能是空的。
+    /// </summary>
+    public event EventHandler<(int ParentIndex, string Label)>? AddGroupRequested;
 
     /// <summary>
     /// 用户在扇区的编辑面板上选了动作（改名 / 移除）。
@@ -257,9 +263,9 @@ public sealed class RadialWindow : Window
         fresh.Root.RenderTransformOrigin = new Point(0.5, 0.5);
         fresh.Root.RenderTransform = _scale;
 
-        _view.SectorEditRequested -= OnSectorEditRequested;
+        UnwireViewEvents(_view);
         _view = fresh;
-        _view.SectorEditRequested += OnSectorEditRequested;
+        WireViewEvents(_view);
 
         Content = _view.Root;
         _view.SetAccentOverride(_accentHex);
@@ -287,6 +293,32 @@ public sealed class RadialWindow : Window
         if (_editMode == editMode) return;
         ApplyMenu(_menu, editMode);
     }
+
+    /// <summary>
+    /// 把视觉树上的上报事件接到窗口上。
+    ///
+    /// 换视觉树（<see cref="ApplyMenu"/>）时必须先摘后接：只接不摘的话，
+    /// 旧的视觉树会一直被事件引用住，它的整棵元素树也就跟着留在内存里。
+    /// </summary>
+    private void WireViewEvents(RadialRingView view)
+    {
+        view.AddItemRequested += OnViewAddItemRequested;
+        view.AddGroupRequested += OnViewAddGroupRequested;
+        view.SectorEditRequested += OnSectorEditRequested;
+    }
+
+    private void UnwireViewEvents(RadialRingView view)
+    {
+        view.AddItemRequested -= OnViewAddItemRequested;
+        view.AddGroupRequested -= OnViewAddGroupRequested;
+        view.SectorEditRequested -= OnSectorEditRequested;
+    }
+
+    private void OnViewAddItemRequested(object? sender, int parentIndex) =>
+        AddItemRequested?.Invoke(this, parentIndex);
+
+    private void OnViewAddGroupRequested(object? sender, (int ParentIndex, string Label) request) =>
+        AddGroupRequested?.Invoke(this, request);
 
     private void OnSectorEditRequested(
         object? sender, (int RootIndex, int ChildIndex, SectorEditAction Action, string? Label) request) =>
@@ -344,7 +376,7 @@ public sealed class RadialWindow : Window
     internal int ChildAddSectorIndex => _view.ChildAddSectorIndex;
 
     /// <summary>诊断用：编辑面板是否开着且真的在视觉树上。</summary>
-    internal bool IsEditPanelOpen => _view.EditPanelAttached;
+    internal bool IsPanelOpen => _view.PanelAttached;
 
     /// <summary>诊断用：模拟一次右键落点，走与鼠标同一条分派。</summary>
     internal HitResult RightClickForProbe(Point localPoint)
@@ -358,8 +390,20 @@ public sealed class RadialWindow : Window
     internal void ShowSectorEditForProbe(int rootIndex, int childIndex) =>
         _view.ShowSectorEdit(rootIndex, childIndex);
 
-    /// <summary>诊断用：确认编辑面板真的被加进了视觉树。</summary>
-    internal bool EditPanelAttached => _view.EditPanelAttached;
+    /// <summary>诊断用：确认面板真的被加进了视觉树。</summary>
+    internal bool PanelAttached => _view.PanelAttached;
+
+    /// <summary>诊断用：当前是哪一块面板。</summary>
+    internal string PanelKindForProbe => _view.PanelKindForProbe.ToString();
+
+    /// <summary>诊断用：面板各行的文案。</summary>
+    internal IReadOnlyList<string> PanelRowLabelsForProbe => _view.PanelRowLabelsForProbe;
+
+    /// <summary>诊断用：点面板的第 index 行（走按钮同一个委托）。</summary>
+    internal void InvokePanelRowForProbe(int index) => _view.InvokePanelRowForProbe(index);
+
+    /// <summary>诊断用：改输入框文字并确认。</summary>
+    internal void ConfirmPanelTextForProbe(string text) => _view.ConfirmPanelTextForProbe(text);
 
     /// <summary>诊断用：面板当前编辑的是哪一项。</summary>
     internal (int RootIndex, int ChildIndex) EditTargetForProbe => _view.EditTargetForProbe;
@@ -379,7 +423,7 @@ public sealed class RadialWindow : Window
     }
 
     /// <summary>诊断用：收起编辑面板。</summary>
-    internal void DismissSectorEditForProbe() => _view.DismissSectorEdit();
+    internal void DismissPanelForProbe() => _view.DismissPanel();
 
     /// <summary>诊断用：把窗口内坐标交给视图做命中测试。</summary>
     internal HitResult HitTestForProbe(Point localPoint) => _view.HitTest(localPoint);
@@ -417,7 +461,7 @@ public sealed class RadialWindow : Window
     /// </summary>
     public void ResetInteraction()
     {
-        _view.DismissSectorEdit();
+        _view.DismissPanel();
         _view.ResetInteraction();
     }
 
@@ -565,7 +609,7 @@ public sealed class RadialWindow : Window
         // 编辑面板开着时不推进悬停状态机。
         // 面板通常压在某个扇区上，指针在那里会被判成"悬停在那个扇区"——
         // 于是面板开着的时候子弧会自己展开、收起，用户正在改的这一项还会高亮闪动。
-        if (_view.IsEditPanelOpen)
+        if (_view.IsPanelOpen)
         {
             ApplyHighlight(-1, -1);
             return;
@@ -639,9 +683,9 @@ public sealed class RadialWindow : Window
     {
         // 编辑面板开着时，左键的第一下只用来收起面板 —— 不让它顺手把下面的项执行掉。
         // 这与"点空白处关闭弹层"的一般直觉一致，也避免误触。
-        if (_view.IsEditPanelOpen)
+        if (_view.IsPanelOpen)
         {
-            _view.DismissSectorEdit();
+            _view.DismissPanel();
             return;
         }
 
@@ -658,9 +702,9 @@ public sealed class RadialWindow : Window
     {
         e.Handled = true;
 
-        if (_view.IsEditPanelOpen)
+        if (_view.IsPanelOpen)
         {
-            _view.DismissSectorEdit();
+            _view.DismissPanel();
             return;
         }
 
@@ -713,7 +757,9 @@ public sealed class RadialWindow : Window
             case HitZone.Sector:
                 if (_view.IsAddSector(hit.Index))
                 {
-                    AddItemRequested?.Invoke(this, -1);
+                    // 第一层的「＋」先给一个选择：加程序，还是建一个带子菜单的分组。
+                    // 原来这里直接进文件浏览器，于是"新建分组"这条路径根本不存在。
+                    _view.ShowAddChoice(hit.Index);
                 }
                 else if (_view.RootItemHasChildren(hit.Index))
                 {
@@ -770,9 +816,9 @@ public sealed class RadialWindow : Window
     private void HandleEscape()
     {
         // 从最内层开始逐层退出，是用户对 Esc 的一贯预期。
-        if (_view.IsEditPanelOpen)
+        if (_view.IsPanelOpen)
         {
-            _view.DismissSectorEdit();
+            _view.DismissPanel();
             return;
         }
 

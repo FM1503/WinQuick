@@ -120,6 +120,10 @@ public static class MenuConfigMapper
             }
         }
 
+        if (children.Count > Geometry.RadialLayout.MaxChildSectors)
+            problems.Add($"{path}（{source.Label}）有 {children.Count} 个子项，" +
+                         $"超过上限 {Geometry.RadialLayout.MaxChildSectors}");
+
         // 有子项又有动作是配置错误：点击该扇区的语义会变得不确定（展开还是执行？）。
         if (children.Count > 0 && source.Action is not null)
             problems.Add($"{path}（{source.Label}）同时配了子项和动作 —— 点击时无法确定该展开还是执行");

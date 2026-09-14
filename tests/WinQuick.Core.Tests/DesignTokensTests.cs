@@ -183,6 +183,31 @@ public class DesignTokensTests
             $"子环内缘距环一外缘 {gap}，而悬停鼓出是 {Tokens.Motion.HoverBulgePx} —— 会重叠");
     }
 
+    /// <summary>
+    /// 子环铺满整圈时，最细的一档也必须还能放下文字。
+    ///
+    /// 这条把"环的尺寸"和"子项上限"绑在一起：谁把环改小、或把上限调大，
+    /// 都应该在这里先失败，而不是等用户看到一圈挤成一团的标签。
+    /// </summary>
+    [Fact]
+    public void Validate_CatchesChildRingTooSmallForItsItemCap()
+    {
+        // 子环带压到只剩一半宽：文字半径跟着塌下来，18° 的楔形就放不下字了。
+        var cramped = Tokens with
+        {
+            Radius = Tokens.Radius with { Ring2Outer = 280 },
+        };
+
+        Assert.Contains(cramped.Validate(), p => p.Contains("子环按"));
+    }
+
+    /// <summary>现实那一份必须过 —— 否则上面那条测试只是在测一个不可能的状态。</summary>
+    [Fact]
+    public void RealTokens_SurviveTheChildRingLabelCheck()
+    {
+        Assert.Empty(Tokens.Validate());
+    }
+
     [Fact]
     public void Validate_CatchesSecondRingOverlappingTheBulge()
     {

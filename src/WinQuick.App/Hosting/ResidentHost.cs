@@ -64,6 +64,7 @@ public sealed class ResidentHost : IDisposable
         _overlay.ItemActivated += OnItemActivated;
         _overlay.AddItemRequested += OnAddItemRequested;
         _overlay.SectorEditRequested += OnSectorEditRequested;
+        _overlay.AddGroupRequested += OnAddGroupRequested;
         _overlay.ExitRequested += (_, _) => Application.Current.Shutdown(0);
         _overlay.SettingsChanged += (_, config) => OnSettingsChanged(config);
         _overlay.SetHotkeyProbe(spec => _hotkeys.ProbeTemporarily(spec));
@@ -216,6 +217,35 @@ public sealed class ResidentHost : IDisposable
         // 加进子环的项，重建之后要把子弧重新展开 —— 否则用户看不到刚加的东西，
         // 会以为没加上。第一层不需要（它本来就全在屏幕上）。
         _reopenChildArcAfterRebuild = parentIndex;
+
+        PersistMenu(updated);
+    }
+
+    /// <summary>
+    /// 新建一个分组。分两步：名称已经在轮盘的面板里问过了，这里再让用户选**第一项**。
+    ///
+    /// 为什么必须有第一项：空分组会渲染成一个既无子项、又无动作的扇区，
+    /// 点它什么都不发生、悬停也不展开东西，而用户看不出为什么。
+    /// 两步之间用户取消选程序，就整个放弃 —— 不留一个残缺的分组。
+    /// </summary>
+    private void OnAddGroupRequested(object? sender, (int ParentIndex, string Label) request)
+    {
+        var path = _overlay.PickExecutableForMenu();
+        if (path is null) return;          // 用户取消
+
+        var firstChild = new MenuItemSpec
+        {
+            Label = ShellNames.Get(path),
+            IconPath = path,
+            Action = MenuAction.Launch(path),
+        };
+
+        var (updated, error) = MenuEditor.AddGroup(_menu, request.Label, firstChild);
+        if (error is not null)
+        {
+            _tray.ShowBalloon("WinQuick 无法新建分组", error);
+            return;
+        }
 
         PersistMenu(updated);
     }

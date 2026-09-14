@@ -136,17 +136,58 @@ public static class AddSectorProbe
 
             ProbeOutput.Line();
 
-            // ---- 点击「＋」 --------------------------------------------------
+            // ---- 点击「＋」：先给选择 -----------------------------------------
             var addPoint = ToLocal(Vec2.FromPolar(midRadius, spans[rootAdd].CenterDeg),
                 tokens.Radius.WindowSize);
             ResetRecorders();
             overlay.ClickForProbe(addPoint.X, addPoint.Y);
 
-            ProbeOutput.Kv("点第一层「＋」→ AddItemRequested", addRequested?.ToString() ?? "(没有)");
+            ProbeOutput.Kv("点第一层「＋」弹出的面板", overlay.PanelKindForProbe);
+            ProbeOutput.Kv("　面板给出的选项", string.Join(" / ", overlay.PanelRowLabelsForProbe));
+            ProbeOutput.Kv("　是否已经请求加项（应当还没）", addRequested?.ToString() ?? "没有（对）");
+
+            // 用户要的是"能加带子级选项的项"，所以这个面板必须同时给出两条路 ——
+            // 只给"添加程序"的话，建分组这条路径就还是不存在。
+            var labels = overlay.PanelRowLabelsForProbe;
+            var hasProgram = labels.Any(l => l.Contains("添加程序"));
+            var hasGroup = labels.Any(l => l.Contains("新建分组"));
+            results.Add(("「＋」面板同时给出加程序与建分组",
+                overlay.PanelKindForProbe == "AddChoice" && hasProgram && hasGroup && addRequested is null,
+                string.Join(" / ", labels)));
+
+            // 选「添加程序…」→ 这时才发加项请求。
+            var programRow = labels.ToList().FindIndex(l => l.Contains("添加程序"));
+            ResetRecorders();
+            overlay.InvokePanelRowForProbe(programRow);
+
+            ProbeOutput.Kv("选「添加程序…」→ AddItemRequested", addRequested?.ToString() ?? "(没有)");
             ProbeOutput.Kv("　同时触发了 ItemActivated", activated is null ? "否" : $"是 {activated}");
-            results.Add(("点第一层「＋」请求加项",
-                addRequested == -1 && activated is null,
-                $"parent={addRequested?.ToString() ?? "无"}，activated={activated?.ToString() ?? "无"}"));
+            results.Add(("选「添加程序…」后才请求加项",
+                addRequested == -1 && activated is null && !overlay.PanelAttached,
+                $"parent={addRequested?.ToString() ?? "无"}"));
+
+            // 选「新建分组…」→ 转入命名输入，确认后发出建分组请求。
+            var groupLabel = "探针分组";
+            string? groupRequested = null;
+            overlay.AddGroupRequested += (_, r) => groupRequested = $"{r.ParentIndex}|{r.Label}";
+
+            ResetRecorders();
+            overlay.ClickForProbe(addPoint.X, addPoint.Y);
+            var groupRow = overlay.PanelRowLabelsForProbe.ToList().FindIndex(l => l.Contains("新建分组"));
+            overlay.InvokePanelRowForProbe(groupRow);
+
+            ProbeOutput.Kv("选「新建分组…」后的面板", overlay.PanelKindForProbe);
+            results.Add(("选「新建分组…」转入命名输入",
+                overlay.PanelKindForProbe == "TextInput",
+                overlay.PanelKindForProbe));
+
+            // 输入框里的默认名字是「新建分组」，确认后应当带着名字发出请求。
+            overlay.ConfirmPanelTextForProbe(groupLabel);
+            ProbeOutput.Kv("　　确认命名后的请求", groupRequested ?? "(没有)");
+            ProbeOutput.Kv("　　是否同时请求了加项", addRequested is null ? "否（对）" : $"是 {addRequested}");
+            results.Add(("确认命名后请求新建分组",
+                groupRequested == $"-1|{groupLabel}" && addRequested is null,
+                groupRequested ?? "无"));
 
             // ---- 点击真实叶子项 ----------------------------------------------
             // 找一个没有子项的项：它应当是"执行"，而不是"请求加项"。
@@ -247,6 +288,69 @@ public static class AddSectorProbe
                 await Task.Delay(400);
             }
 
+            // ---- 子环容量：铺满整圈 ------------------------------------------
+            // 用户报的："外圈子环的选项数量上限不能只有 12 个，至少要能围成完整一圈"。
+            // 这里用一个 16 子项的菜单核对：弧跨度到 360°、每个子项命中自己、
+            // 并且「＋」在编辑态下还留得住（16 < 20）。
+            ProbeOutput.Section("子环容量（16 个子项）");
+            const int manyChildren = 16;
+            var wide = menu with
+            {
+                Items = menu.Items.Take(menu.Items.Count - 1).Append(menu.Items[^1] with
+                {
+                    Children = Enumerable.Range(1, manyChildren)
+                        .Select(i => new MenuItemSpec { Label = $"子项 {i}" })
+                        .ToList(),
+                }).ToList(),
+            };
+
+            overlay.RebuildForMenu(wide);
+            overlay.SetEditModeForProbe(true);
+            await Task.Delay(600);
+
+            overlay.ExpandChildArcForProbe(wide.Items.Count - 1);
+            await Task.Delay(400);
+
+            var wideParent = wide.Items.Count - 1;
+            var parentCenter = RadialLayout.Distribute(wide.Items.Count + 1)[wideParent].CenterDeg;
+            var wideArc = RadialLayout.ChildArc(
+                parentCenter, manyChildren + 1, tokens.Interaction.ChildSpanDegrees);
+            var wideSpan = RadialLayout.DistributeWithin(wideArc, manyChildren + 1);
+
+            ProbeOutput.Kv("父项中心角", $"{parentCenter:0.#}°");
+            ProbeOutput.Kv("子弧跨度", $"{wideArc.SweepDeg:0.#}°（整圈 360° 表示已铺满）");
+
+            results.Add(($"{manyChildren} 个子项时子弧铺满整圈",
+                Math.Abs(wideArc.SweepDeg - 360) < 0.001,
+                $"{wideArc.SweepDeg:0.#}°"));
+
+            var wideMisses = new List<string>();
+            var wideMid = tokens.Radius.Ring2.At(0.5);
+            for (var i = 0; i < wideSpan.Length; i++)
+            {
+                var local = ToLocal(Vec2.FromPolar(wideMid, wideSpan[i].CenterDeg), tokens.Radius.WindowSize);
+                var hit = overlay.HitTestForProbe(local.X, local.Y);
+                if (hit.Zone != HitZone.ChildSector || hit.Index != i)
+                    wideMisses.Add($"子扇区{i}（{wideSpan[i].CenterDeg:0.#}°）→ {hit.Zone}/{hit.Index}");
+            }
+
+            ProbeOutput.Kv("逐项命中核对", wideMisses.Count == 0
+                ? $"{wideSpan.Length} 项全部命中自己"
+                : string.Join("；", wideMisses));
+            results.Add(("整圈子环每项都命中自己", wideMisses.Count == 0,
+                wideMisses.Count == 0 ? $"{wideSpan.Length} 项" : string.Join("；", wideMisses)));
+
+            ProbeOutput.Kv("子弧「＋」索引", overlay.ChildAddSectorIndexForProbe.ToString());
+            results.Add(("整圈子环里「＋」仍留得住",
+                overlay.ChildAddSectorIndexForProbe == manyChildren,
+                $"索引 {overlay.ChildAddSectorIndexForProbe}，期望 {manyChildren}"));
+
+            overlay.CollapseChildArcForProbe();
+            await Task.Delay(300);
+            overlay.RebuildForMenu(menu);
+            overlay.SetEditModeForProbe(true);
+            await Task.Delay(600);
+
             // ---- 右键扇区：编辑面板 ------------------------------------------
             ProbeOutput.Section("右键扇区（改名 / 移除）");
 
@@ -256,12 +360,12 @@ public static class AddSectorProbe
                 tokens.Radius.WindowSize);
             var rHit = overlay.RightClickForProbe(sectorPoint.X, sectorPoint.Y);
             ProbeOutput.Kv("右键扇区 #2 的命中", $"{rHit.Zone}/{rHit.Index}");
-            ProbeOutput.Kv("  面板已打开且已挂到视觉树", overlay.IsEditPanelOpen ? "是" : "否");
+            ProbeOutput.Kv("  面板已打开且已挂到视觉树", overlay.IsPanelOpen ? "是" : "否");
             ProbeOutput.Kv("  面板指向的项", overlay.EditTargetForProbe.ToString());
 
             results.Add(("右键扇区会弹出编辑面板",
-                overlay.IsEditPanelOpen && overlay.EditTargetForProbe == (2, -1),
-                $"open={overlay.IsEditPanelOpen}，target={overlay.EditTargetForProbe}"));
+                overlay.IsPanelOpen && overlay.EditTargetForProbe == (2, -1),
+                $"open={overlay.IsPanelOpen}，target={overlay.EditTargetForProbe}"));
 
             // 面板开着时，左键的第一下只收面板，不能顺手执行下面的项 ——
             // 面板通常正好压在某个扇区上，误执行就是"想改名却启动了程序"。
@@ -269,10 +373,10 @@ public static class AddSectorProbe
             overlay.LeftClickForProbe(sectorPoint.X, sectorPoint.Y);
             ProbeOutput.Kv("面板开着时左键点扇区", activated is null && addRequested is null
                 ? "只收起了面板（正确）" : $"触发了动作 {activated}{addRequested}");
-            ProbeOutput.Kv("  面板已收起", overlay.IsEditPanelOpen ? "否（异常）" : "是");
+            ProbeOutput.Kv("  面板已收起", overlay.IsPanelOpen ? "否（异常）" : "是");
             results.Add(("面板开着时左键只收面板、不执行下面的项",
-                !overlay.IsEditPanelOpen && activated is null && addRequested is null,
-                $"open={overlay.IsEditPanelOpen}，activated={activated?.ToString() ?? "无"}"));
+                !overlay.IsPanelOpen && activated is null && addRequested is null,
+                $"open={overlay.IsPanelOpen}，activated={activated?.ToString() ?? "无"}"));
 
             // ---- 加一项之后：窗口本身不动 ------------------------------------
             // 这一节对应用户报的"每次修改快捷选项工具都要重新打开一次"。
@@ -346,9 +450,13 @@ public static class AddSectorProbe
             ProbeOutput.Section("换树时的逐帧回调");
             ProbeOutput.Kv("换树前活跃回调数", AnimatorHeadroom());
 
-            // 先制造一次进行中的形变动画，再立刻换树。
+            // 先制造一次形变动画，再换树。
+            //
+            // 这里刻意**不等**：形变只有 130ms，而探针里的 Task.Delay 会因为调度器忙
+            // 而超时很远 —— 等 30ms 实际可能过了 200ms，动画早播完、回调也摘干净了，
+            // 于是核对变成"没抓到"而不是"没问题"（第一版就是这样时好时坏）。
+            // 挂回调是同步发生的，所以同步读就是确定的。
             overlay.HoverForProbe(2);
-            await Task.Delay(30);                       // 形变动画约 130ms，这里还在播
             ProbeOutput.Kv("悬停后活跃回调数", AnimatorHeadroom());
 
             var duringHover = SectorBulgeAnimator.ActiveHookCount + ChildArcAnimator.ActiveHookCount;
@@ -396,11 +504,11 @@ public static class AddSectorProbe
             overlay.ShowSectorEditForProbe(1, -1);
             overlay.EscapeForProbe();
             await Task.Delay(400);
-            ProbeOutput.Kv("Esc（面板开着）", overlay.IsEditPanelOpen ? "面板仍在（异常）" : "收起了面板");
+            ProbeOutput.Kv("Esc（面板开着）", overlay.IsPanelOpen ? "面板仍在（异常）" : "收起了面板");
             ProbeOutput.Kv("  覆盖层是否被顺手关掉", overlay.IsVisible ? "否（正确）" : "是（异常）");
             results.Add(("Esc 先收编辑面板、不关闭覆盖层",
-                !overlay.IsEditPanelOpen && overlay.IsVisible,
-                $"panel={overlay.IsEditPanelOpen}，visible={overlay.IsVisible}"));
+                !overlay.IsPanelOpen && overlay.IsVisible,
+                $"panel={overlay.IsPanelOpen}，visible={overlay.IsVisible}"));
 
             // 右键「＋」：那里没有可编辑的项，应当当作取消。
             //
@@ -417,13 +525,13 @@ public static class AddSectorProbe
                 $"索引 {overlay.AddSectorIndexForProbe}"));
 
             overlay.RightClickForProbe(addPoint.X, addPoint.Y);
-            ProbeOutput.Kv("右键「＋」扇区是否弹面板", overlay.IsEditPanelOpen ? "弹了（异常）" : "没弹（正确）");
+            ProbeOutput.Kv("右键「＋」扇区是否弹面板", overlay.IsPanelOpen ? "弹了（异常）" : "没弹（正确）");
 
             await Task.Delay(500);
             ProbeOutput.Kv("  覆盖层是否被关掉", overlay.IsVisible ? "否（异常）" : "是（当作取消）");
             results.Add(("右键「＋」不弹面板、按取消处理",
-                !overlay.IsEditPanelOpen && !overlay.IsVisible,
-                $"panel={overlay.IsEditPanelOpen}，visible={overlay.IsVisible}"));
+                !overlay.IsPanelOpen && !overlay.IsVisible,
+                $"panel={overlay.IsPanelOpen}，visible={overlay.IsVisible}"));
 
             overlay.Hide();
         }

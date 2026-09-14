@@ -74,7 +74,7 @@ public sealed partial class RadialRingView
         // 弧跨度必须按含「＋」的个数算：ChildArc 有一条"每格至少 25°"的规则，
         // 用 children.Count 算会让多出来的那格被挤窄。
         _childAddSectorIndex =
-            EditMode && children.Count < RadialLayout.MaxSectors ? children.Count : -1;
+            EditMode && children.Count < RadialLayout.MaxChildSectors ? children.Count : -1;
         var slotCount = _childAddSectorIndex >= 0 ? children.Count + 1 : children.Count;
 
         _childArcSpan = RadialLayout.ChildArc(

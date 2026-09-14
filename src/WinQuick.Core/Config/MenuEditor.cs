@@ -16,8 +16,14 @@ namespace WinQuick.Core.Config;
 /// </summary>
 public static class MenuEditor
 {
-    /// <summary>一项菜单里最多几项。与扇区数硬上限一致 —— 再多就细到点不中。</summary>
+    /// <summary>第一层最多几项。与扇区数硬上限一致 —— 再多就细到点不中。</summary>
     public const int MaxItems = RadialLayout.MaxSectors;
+
+    /// <summary>
+    /// 子层最多几项。比第一层宽松：子环可以撑满整圈，而第一层要留住
+    /// 「上/右上/右/…」的钟面直觉，项数一多那种直觉就没了。
+    /// </summary>
+    public const int MaxChildItems = RadialLayout.MaxChildSectors;
 
     /// <summary>
     /// 往某一级加一项。<paramref name="parentIndex"/> 为 -1 表示加进第一层，
@@ -37,12 +43,38 @@ public static class MenuEditor
             return (menu, $"没有第 {parentIndex + 1} 项，无法往它里面加。");
 
         var parent = menu.Items[parentIndex];
-        if (parent.Children.Count >= MaxItems)
-            return (menu, $"「{parent.Label}」的子菜单最多 {MaxItems} 项，已经满了。");
+        if (parent.Children.Count >= MaxChildItems)
+            return (menu, $"「{parent.Label}」的子菜单最多 {MaxChildItems} 项，已经满了。");
 
         var items = menu.Items.ToList();
         items[parentIndex] = parent with { Children = parent.Children.Append(item).ToList() };
         return (menu with { Items = items }, null);
+    }
+
+    /// <summary>
+    /// 新建一个分组（带子菜单的项）。
+    ///
+    /// **分组必须带着第一个子项一起建。** 不允许建出空分组，原因是空分组会渲染成
+    /// 一个既无子项、又无动作的扇区：点它什么都不发生、悬停也不展开任何东西，
+    /// 而用户完全看不出为什么。宁可要求"先给它放一样东西"，
+    /// 建好之后把鼠标移上去、在子环里点「＋」继续加就是了。
+    ///
+    /// 分组只加在第一层：子环里再放分组就是第三层，而当前只支持两层。
+    /// </summary>
+    public static (MenuSpec Menu, string? Error) AddGroup(
+        MenuSpec menu, string? label, MenuItemSpec firstChild)
+    {
+        var trimmedLabel = label?.Trim();
+        if (string.IsNullOrEmpty(trimmedLabel))
+            return (menu, "分组名称不能为空。");
+
+        var group = new MenuItemSpec
+        {
+            Label = trimmedLabel,
+            Children = [firstChild],
+        };
+
+        return Add(menu, parentIndex: -1, group);
     }
 
     /// <summary>

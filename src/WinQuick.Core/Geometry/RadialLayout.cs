@@ -108,12 +108,35 @@ public static class RadialLayout
     }
 
     /// <summary>
+    /// 子环最多几项。
+    ///
+    /// 与第一层的 <see cref="MaxSectors"/>=12 不同，这里允许子环撑满整圈，
+    /// 因为子环只有一层、没有更深的分支，项多是用户把一类工具收在一起的正常用法
+    /// （"开发工具"里放十几个都很常见）。12 项按每项 25° 只能铺 300°，
+    /// 剩 60° 空着，那就是"想围成整圈却围不成"。
+    ///
+    /// 20 这个数不是拍的，是两处约束里更紧的那个：
+    /// - **标签**：子环文字半径约 304、图标 30，当扇区降到 18° 时，
+    ///   按弦长算出的可用半宽正好降到与"不压到图标"的限值相等（约 35）。
+    ///   再细分下去楔形就不再是瓶颈了，所以 18° 是"再分也不损失文字宽度"的转折点。
+    /// - **点中**：18° 在子环内缘（218）上是约 68px 的弧长 —— 远大于任何可点性下限。
+    ///
+    /// 360 / 18 = 20。这条换算由 <c>DesignTokens.Validate</c> 的核对锁住：
+    /// 谁要是把环改小到 18° 时文字宽度不够，那里会先报出来。
+    /// </summary>
+    public const int MaxChildSectors = 20;
+
+    /// <summary>
     /// 子环的角度跨度：以父扇区中心线为中线，默认 90°，
     /// 但保证每个子扇区至少 25° —— 否则 12 扇区父级下子项会细到点不中。
+    ///
+    /// 上限是**整圈 360°**：项数够多时子环就铺满一整圈，不再是一个贴着父扇区的弧。
+    /// 到那一步"与父级同向对齐"这个性质自然消失（整圈没有方向可言），
+    /// 换来的是项数不再被弧宽卡住。
     /// </summary>
     public static SectorSpan ChildArc(double parentCenterDeg, int childCount, double preferredSpanDeg = 90.0)
     {
-        var span = Math.Min(Math.Max(preferredSpanDeg, childCount * 25.0), 300.0);
+        var span = Math.Min(Math.Max(preferredSpanDeg, childCount * 25.0), 360.0);
         return new SectorSpan(parentCenterDeg - span / 2.0, parentCenterDeg + span / 2.0);
     }
 

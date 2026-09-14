@@ -228,6 +228,9 @@
             <TextBlock Style="{StaticResource Hint}"
                        Text="加一项：点旁边轮盘上外圈末尾那个「＋」，选中程序即加入。" />
             <TextBlock Style="{StaticResource Hint}"
+                       Text="建分组（像「开发工具」那种带子菜单的）：点「＋」后选「新建分组…」，
+                             起个名字、再选第一个程序。之后把鼠标移到该分组上，在它的子环里点「＋」继续加。" />
+            <TextBlock Style="{StaticResource Hint}"
                        Text="改名或移除：在轮盘的扇区上点右键。子环里的「＋」会把程序加进该子菜单。" />
             <TextBlock Style="{StaticResource Hint}"
                        Text="改动立刻生效，覆盖层不会关闭 —— 加完就能看见新扇区长出来。" />

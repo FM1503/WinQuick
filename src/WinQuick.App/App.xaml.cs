@@ -44,6 +44,11 @@ public partial class App : Application
                 RunDetached(() => M0.HookProbe.RunAsync(cli));
                 break;
 
+            case "--apps-probe":
+                M0.AppsProbe.Run(cli);
+                ExitSoon();
+                break;
+
             case "--action-probe":
                 RunDetached(() => M0.ActionProbe.RunAsync(cli));
                 break;

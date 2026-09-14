@@ -412,7 +412,7 @@ public static class OverlayProbe
         }
 
         var tokens = TokenStore.Current;
-        var menu = MenuSpec.BuiltInDefault;
+        var menu = Hosting.DefaultMenu.Build();
         var parentIndex = -1;
         for (var i = 0; i < menu.Items.Count; i++)
             if (menu.Items[i].HasChildren) { parentIndex = i; break; }

@@ -302,7 +302,7 @@ r=220..349   #1F1F1F  A=235   ← 子环扇区
 
 ---
 
-## 5. 仍然存在的 UWP 缺口（未解决）
+## 5. ~~UWP 缺口~~（已解决，见 §7）
 
 Win11 上「设置」「计算器」「画图」「照片」等常用应用**没有可执行文件**，
 既不能用文件路径取图标，也不能用文件路径启动。实测确认
@@ -349,4 +349,75 @@ src\WinQuick.App\bin\Release\net10.0-windows\WinQuick.exe
 WinQuick.exe --action-probe      动作执行链路
 WinQuick.exe --overlay-probe     覆盖层 + 点击检测
 WinQuick.exe --render-preview    离屏渲染成 PNG
+```
+
+---
+
+## 7. UWP / 商店应用支持（原 §5 的缺口已补上）
+
+### 为什么必须走 shell 枚举
+
+实测确认 Win11 上「设置」「计算器」「画图」「照片」**都没有可执行文件**
+（`System32\SystemSettings.exe` 与 `mspaint.exe` 都不存在）。它们既不能用文件路径取图标，
+也不能用文件路径启动 —— 唯一标识是 AppUserModelId，只能从 `shell:AppsFolder` 枚举出来。
+
+### 实现上规避的一个风险
+
+`IShellItem2::GetString` 能直接读属性，但它的方法很多，而 **COM 接口的方法顺序一旦写错
+不会报错，只会静默读到垃圾数据甚至崩溃**。我没有可靠的一手依据记住 IShellItem2 vtable 的
+尾部顺序，所以只用 `IShellItem`（5 个方法，顺序确定），靠 `GetDisplayName` 的不同
+`SIGDN` 取值去拿 AUMID，先用探针把各种取值都打出来实测确认，而不是凭记忆猜。
+
+结果：**枚举到 339 个条目，其中 28 个是 UWP**。AUMID 形如
+`Microsoft.WindowsCalculator_8wekyb3d8bbwe!App`，传统桌面程序的"AUMID"则是它的完整文件路径
+（例如 `C:\MentorGraphics\...\LMTOOLS.EXE`），两者都能作为启动目标。
+
+### 按 AUMID 而不是显示名定位
+
+默认菜单用 **AUMID 前缀**查找内置应用：
+
+```
+Microsoft.WindowsTerminal_   Microsoft.WindowsCalculator_   Microsoft.Paint_
+Microsoft.Windows.Photos_    windows.immersivecontrolpanel_（设置）
+```
+
+原因：**AUMID 与系统语言无关**（中文系统与英文系统下都是同一串），而显示名会变
+（中文叫「计算器」、英文叫「Calculator」）。显示名交给 shell 提供，自动跟随系统语言。
+找不到就跳过该项 —— 用户没装某个商店应用时，菜单里出现点不动的死项比少一项更糟。
+
+### 验证
+
+| 项 | 结果 |
+|---|---|
+| 枚举 | 339 条目 / 28 个 UWP |
+| UWP 图标 | 走 `shell:AppsFolder\<AUMID>` 取到 96×96 |
+| **UWP 启动** | **端到端验证通过**：计算器进程 0 → 1 出现，随后自动关闭不留窗口 |
+| 默认菜单 | 8 项（顶层固定 8，符合 CHI'93 的错误率拐点），其中 5 项是 UWP |
+| 默认菜单图标 | 8/8 全部取到 |
+
+顶层固定 8 项是有依据的：CHI'93 实测 8 扇区是错误率拐点，Kando 官方经验值也是 8、
+绝不超过 12。8 的另一个好处是「上 / 右上 / 右 / …」的钟面直觉成立，
+而奇数个扇区会让每项的角度都变得不好记。
+
+### 顺带修掉的验证工具缺陷
+
+图标核对原本只按**饱和度**判定，结果对 Windows Terminal 报出"无彩色（占位或无内容）"——
+它的图标是黑底白字的**单色**图标，饱和度天然为 0。这是假阴性。
+
+改为以**内容像素数**为主判据（检测图标区域有多少像素偏离扇区填充色），
+饱和度降为辅助信息：
+
+```
+位置 1  角度 45°  内容像素 519  最大饱和度  0%  -> 有内容但无彩色 —— 单色图标
+位置 7  角度 315° 内容像素 109  最大饱和度  0%  -> 占位图（内容像素数也明显更小）
+```
+
+「几乎无内容」才是能确定问题的信号，它对应的正是"图形对象建好了但没挂到视觉树"
+那个真 bug。单色图标不该被判成故障。
+
+### 新增诊断命令
+
+```
+WinQuick.exe --apps-probe            枚举 shell:AppsFolder，核对 AUMID 与图标
+WinQuick.exe --action-probe --uwp    实际启动一个 UWP 应用并自动关闭（默认不做，会弹窗）
 ```

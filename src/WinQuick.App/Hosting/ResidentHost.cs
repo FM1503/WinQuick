@@ -37,8 +37,9 @@ public sealed class ResidentHost : IDisposable
     public ResidentHost()
     {
         _hotkeys = new HotkeyManager();
-        // M3 用内置默认菜单把动作执行打通；M4 换成从 menus.json 读取。
-        _menu = MenuSpec.BuiltInDefault;
+        // M4 之前先用装配出来的默认菜单；配置系统完成后换成从 menus.json 读取。
+        // 装配包含 UWP 应用的 shell 枚举，所以放在 App 层（Core 不依赖 Win32）。
+        _menu = DefaultMenu.Build();
         _overlay = new OverlayController(_menu);
         _session = new SessionWatcher();
         _tray = new TrayHost(_overlay);

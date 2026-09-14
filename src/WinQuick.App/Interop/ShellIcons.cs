@@ -33,7 +33,11 @@ public static class ShellIcons
     private static readonly Dictionary<string, BitmapSource?> MemoryCache = new(StringComparer.OrdinalIgnoreCase);
     private static readonly object Gate = new();
 
-    /// <summary>取不到图标时返回 null，由调用方画占位图 —— 不该因为一个图标失败就整项不显示。</summary>
+    /// <summary>
+    /// 取图标。<paramref name="path"/> 可以是文件路径，也可以是 shell 命名空间路径
+    /// （<c>shell:AppsFolder\&lt;AUMID&gt;</c>）—— UWP 应用只能用后者。
+    /// 取不到时返回 null，由调用方画占位图；不该因为一个图标失败就整项不显示。
+    /// </summary>
     public static BitmapSource? Get(string? path)
     {
         if (string.IsNullOrWhiteSpace(path)) return null;
@@ -109,11 +113,12 @@ public static class ShellIcons
 
     private static BitmapSource? ExtractFromShell(string path)
     {
-        if (!File.Exists(path))
-        {
-            // 目录也能取图标（shell 会返回文件夹图标），但路径必须存在。
-            if (!Directory.Exists(path)) return null;
-        }
+        // shell 命名空间路径（shell:AppsFolder\<AUMID>）不是文件系统路径，
+        // 直接交给 shell 去解析 —— UWP 应用的图标只能这么取。
+        // 传统文件路径则先做存在性检查，避免把"写错了路径"和"shell 解析失败"混为一谈。
+        var isShellPath = path.StartsWith("shell:", StringComparison.OrdinalIgnoreCase);
+
+        if (!isShellPath && !File.Exists(path) && !Directory.Exists(path)) return null;
 
         IntPtr hBitmap = IntPtr.Zero;
         try

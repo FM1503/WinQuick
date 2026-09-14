@@ -66,6 +66,8 @@ WinQuick.exe --mem-probe --hold=20    分阶段内存回归（--hold 保持存�
 WinQuick.exe --overlay-probe          覆盖层：窗口真实可见性、位置钳制、焦点还原、点击检测
 WinQuick.exe --overlay-probe --hold=30        显示轮盘供肉眼查看
 WinQuick.exe --action-probe           动作执行链路
+WinQuick.exe --action-probe --uwp     同上，且实际启动一个 UWP 应用并自动关闭
+WinQuick.exe --apps-probe             枚举 shell:AppsFolder，核对 AUMID 与图标
 WinQuick.exe --render-preview         离屏渲染成 PNG（--state=hover / --stress-labels）
 tools/env-report.ps1                  环境报告（PowerShell 版）
 tools/analyze-render.ps1 -Path <png>  对渲染结果做极坐标数值验证
@@ -106,9 +108,8 @@ dotnet test          # 73 条单测：几何、命中测试、视觉规格约束
 1. **前台是管理员权限窗口时热键不响应** —— UIPI 隔离，设计使然。
    PowerToys Run / Flow Launcher / Wox 都有同样的限制。
 2. **独占全屏游戏下覆盖层不可见** —— DWM 不参与合成，无解，需游戏切无边框窗口。
-3. **UWP / 商店应用暂不支持** —— Win11 的「设置」「计算器」「画图」都没有可执行文件，
-   既不能用路径取图标也不能用路径启动，需要走 `shell:AppsFolder\<AppUserModelId>`。
-   动作类型已就绪，但获取 AUMID 的枚举还没做。
+3. **UWP / 商店应用已支持**（枚举 `shell:AppsFolder` 取 AppUserModelId，
+   图标与启动都走 shell 路径，已端到端验证）。
 4. **多显示器与混合 DPI 未经验证** —— 开发机是单屏 3072×1920 @ 175%。
    定位代码按物理像素 + 每屏钳制写，但没有在真实多屏环境跑过。
 5. **未做真 3D** —— WPF 的 3D 管线无自定义着色器、无后处理，2008 年后冻结。

@@ -173,8 +173,16 @@ Write-Output ""
 Write-Output "=== 图标渲染核对（按扇区中心角采样图标区域）==="
 Write-Output ""
 
-function Test-AnyColorful([double]$deg, [int]$radius, [int]$box) {
+# 采样图标区域，返回两个数：
+#   MaxSat   最大饱和度 —— 用来确认"确实是彩色图标"（但不是必须的，单色图标也正常）
+#   Content  非扇区填充色的像素数 —— 用来确认"那里确实画了东西"
+#
+# 为什么不能只看饱和度：Windows Terminal 的图标是黑底白字的**单色**图标，
+# 饱和度天然为 0，只按饱和度判会得出"没渲染"的错误结论（踩过这个假阴性）。
+# 「有没有画东西」才是对应"元素建好但没接进视觉树"那个真 bug 的判据。
+function Test-IconArea([double]$deg, [int]$radius, [int]$box) {
     $maxSat = 0
+    $content = 0
     for ($dy = -$box; $dy -le $box; $dy++) {
         for ($dx = -$box; $dx -le $box; $dx++) {
             $rad = $deg * [math]::PI / 180.0
@@ -182,19 +190,26 @@ function Test-AnyColorful([double]$deg, [int]$radius, [int]$box) {
             $cy = [int][math]::Round($CenterY - $radius * [math]::Cos($rad)) + $dy
             $p = Get-PixelAt $cx $cy
             if ($null -eq $p -or $p.A -lt 32) { continue }
+
             $mx = [math]::Max($p.R, [math]::Max($p.G, $p.B))
             $mn = [math]::Min($p.R, [math]::Min($p.G, $p.B))
             if ($mx -gt 0) {
                 $sat = [int](100 * ($mx - $mn) / $mx)
                 if ($sat -gt $maxSat) { $maxSat = $sat }
             }
+
+            # 扇区填充是 #1F1F1F（约 31,31,31）。偏离它超过 24 就算"有内容"。
+            # 阈值取得较宽，是为了容忍抗锯齿与轻微的色彩偏移。
+            $dr = [math]::Abs($p.R - 31); $dg = [math]::Abs($p.G - 31); $db = [math]::Abs($p.B - 31)
+            if ($dr -gt 24 -or $dg -gt 24 -or $db -gt 24) { $content++ }
         }
     }
-    return $maxSat
+    return @{ MaxSat = $maxSat; Content = $content }
 }
 
 $colorful = 0
 $grayOnly = 0
+$missing = 0
 $IconAngles = @()
 if ($IconAngleList.Trim().Length -gt 0) {
     foreach ($token in $IconAngleList.Split(',')) {
@@ -208,16 +223,35 @@ if ($IconAngles.Count -eq 0) {
 
 for ($i = 0; $i -lt $IconAngles.Count; $i++) {
     $centerDeg = $IconAngles[$i]
-    $sat = Test-AnyColorful $centerDeg $IconRadius 18
-    # 阈值 12%：足以把彩色图标和灰度占位/纯扇区分开，又不会把浅色图标判成灰色。
-    $verdict = if ($sat -ge 12) { "彩色（真图标）"; $colorful++ } else { "无彩色（占位或无内容）"; $grayOnly++ }
-    Write-Output ("  位置 {0}  角度 {1,6}°  最大饱和度 {2,3}%  -> {3}" -f $i, ("{0:0.#}" -f $centerDeg), $sat, $verdict)
+    $probe = Test-IconArea $centerDeg $IconRadius 18
+
+    if ($probe.Content -lt 20) {
+        $verdict = "几乎无内容 —— 图标可能没被渲染（检查是否漏挂到视觉树）"
+        $missing++
+    }
+    elseif ($probe.MaxSat -ge 12) {
+        $verdict = "有内容且彩色 —— 真图标"
+        $colorful++
+    }
+    else {
+        $verdict = "有内容但无彩色 —— 单色图标，或退化为首字占位"
+        $grayOnly++
+    }
+
+    Write-Output ("  位置 {0}  角度 {1,6}°  内容像素 {2,4}  最大饱和度 {3,3}%  -> {4}" -f `
+        $i, ("{0:0.#}" -f $centerDeg), $probe.Content, $probe.MaxSat, $verdict)
 }
+
 Write-Output ""
-Write-Output ("  彩色 {0} / {1}，无彩色 {2}" -f $colorful, $IconAngles.Count, $grayOnly)
-Write-Output "  应用启动时会打印「成功取到图标的项 N/M」，两个数字应当一致。"
-Write-Output "  注意：这里只检查"有没有彩色像素"。若某处本该有图标却是灰度，"
-Write-Output "        可能是取不到图标而退化为首字占位（灰度圆 + 文字），不是渲染问题。"
+Write-Output ("  有内容 {0} / {1}（其中彩色 {2}、单色或无彩色 {3}），几乎无内容 {4}" -f `
+    ($colorful + $grayOnly), $IconAngles.Count, $colorful, $grayOnly, $missing)
+Write-Output ""
+Write-Output "  怎么读这张表："
+Write-Output "    · 「几乎无内容」= 那里没画东西。这是唯一能确定的问题信号，"
+Write-Output "      通常意味着图形对象建好了但没挂到视觉树（本项目出现过两次）。"
+Write-Output "    · 「有内容但无彩色」不能判定为故障 —— 单色图标（例如 Windows Terminal）"
+Write-Output "      饱和度天然为 0。要判断是真图标还是首字占位，请对照应用内报告"
+Write-Output "      「成功取到图标的项 N/M」，两个数字应当一致。"
 
 # ---------------------------------------------------------------- 径向剖面
 Write-Output ""

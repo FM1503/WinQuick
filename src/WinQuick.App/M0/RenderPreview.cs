@@ -32,7 +32,9 @@ public static class RenderPreview
         var outPath = cli.GetString("out",
             IoPath.Combine(Paths.RepoRoot, "artifacts", "m2", "preview.png"));
         var state = cli.GetString("state", "default");
-        var menu = MenuSpec.BuiltInDefault;
+        // 用装配后的菜单（含 UWP 应用），而不是 Core 里那份纯文件型的 ——
+        // 否则渲染验证覆盖不到 UWP 项的图标。
+        var menu = Hosting.DefaultMenu.Build();
         var count = Math.Min(cli.GetInt("sectors", menu.Items.Count), menu.Items.Count);
 
         // 只取前 N 项，便于渲染 4/6/8 扇区等不同几何做验证。

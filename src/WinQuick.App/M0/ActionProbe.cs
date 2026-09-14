@@ -1,6 +1,7 @@
 using System.IO;
 using WinQuick.App.Actions;
 using WinQuick.App.Diagnostics;
+using WinQuick.App.Interop;
 using WinQuick.Core.Config;
 
 namespace WinQuick.App.M0;
@@ -66,6 +67,15 @@ public static class ActionProbe
             ProbeOutput.Kv("结果", captured?.Message ?? "(无)");
             ProbeOutput.Kv("是否明确报错", captured is { Success: false } ? "是（好：不会静默无事发生）" : "否");
 
+            // UWP 启动会真的弹出窗口，所以默认不做，要显式加 --uwp。
+            if (cli.Has("uwp")) await ProbeUwpLaunchAsync(results);
+            else
+            {
+                ProbeOutput.Section("UWP / 商店应用的启动");
+                ProbeOutput.Line("  加 --uwp 才会实际启动（会弹出真窗口并自动关闭）。");
+                ProbeOutput.Line("  此处不做，避免打扰。");
+            }
+
             Report(results);
         }
         catch (Exception ex)
@@ -122,6 +132,106 @@ public static class ActionProbe
                          "等待子进程产出痕迹的时间，不是阻塞时间 —— 覆盖层的关闭路径不会被它拖住。");
 
         return (item.Label, ok, content);
+    }
+
+    /// <summary>
+    /// 验证 UWP / 商店应用的启动路径。
+    ///
+    /// 走的是 explorer.exe shell:AppsFolder\&lt;AUMID&gt; —— UWP 应用没有可执行文件，
+    /// 不能像普通程序那样直接 Process.Start。实测确认 Win11 上
+    /// System32\SystemSettings.exe 与 mspaint.exe 都不存在。
+    ///
+    /// 会真的把计算器打开再关掉，所以只在 --uwp 时执行。
+    /// </summary>
+    private static async Task ProbeUwpLaunchAsync(List<(string, bool, string)> results)
+    {
+        ProbeOutput.Section("UWP / 商店应用的启动");
+
+        var entry = AppsFolder.FindByAumid("Microsoft.WindowsCalculator_");
+        if (entry is null)
+        {
+            ProbeOutput.Line("  本机没有注册 Windows 计算器，跳过。");
+            results.Add(("UWP 启动", false, "计算器未注册"));
+            return;
+        }
+
+        ProbeOutput.Kv("显示名", entry.DisplayName);
+        ProbeOutput.Kv("AUMID", entry.AppUserModelId);
+        ProbeOutput.Kv("shell 路径", entry.ShellPath);
+        ProbeOutput.Kv("图标可取", ShellIcons.Get(entry.ShellPath) is not null ? "是" : "否");
+
+        var before = CountCalculatorProcesses();
+        ProbeOutput.Kv("启动前相关进程数", before);
+
+        ActionResult? result = null;
+        void Handler(MenuItemSpec _, ActionResult r) => result = r;
+        ActionExecutor.Completed += Handler;
+
+        var item = new MenuItemSpec
+        {
+            Label = entry.DisplayName,
+            IconPath = entry.ShellPath,
+            Action = MenuAction.Uwp(entry.AppUserModelId),
+        };
+        ActionExecutor.Execute(item);
+
+        var appeared = false;
+        for (var i = 0; i < 50; i++)
+        {
+            await Task.Delay(100);
+            if (CountCalculatorProcesses() > before) { appeared = true; break; }
+        }
+
+        ActionExecutor.Completed -= Handler;
+
+        ProbeOutput.Kv("执行回调", result is null ? "未收到" : (result.Success ? "成功" : "失败: " + result.Message));
+        ProbeOutput.Kv("相关进程出现", appeared ? "是" : "否");
+
+        // 收尾：把刚打开的计算器关掉，不留窗口给用户。
+        var closed = 0;
+        if (appeared)
+        {
+            foreach (var process in System.Diagnostics.Process.GetProcesses())
+            {
+                if (!IsCalculatorProcess(process)) continue;
+                try { process.Kill(); closed++; } catch { /* 权限或已退出，忽略 */ }
+                finally { process.Dispose(); }
+            }
+        }
+        ProbeOutput.Kv("已关闭的进程数", closed);
+
+        ProbeOutput.Line();
+        ProbeOutput.Line(appeared
+            ? "  >>> UWP 启动路径可用：shell:AppsFolder 前缀加 AUMID 成功拉起应用。"
+            : "  >>> UWP 未启动成功。可能是包已卸载但仍在 AppsFolder 里（残留项），也可能是 shell 解析失败。");
+
+        results.Add(("UWP 启动", appeared, entry.AppUserModelId));
+    }
+
+    private static int CountCalculatorProcesses()
+    {
+        var count = 0;
+        foreach (var process in System.Diagnostics.Process.GetProcesses())
+        {
+            if (!IsCalculatorProcess(process)) continue;
+            count++;
+            process.Dispose();
+        }
+        return count;
+    }
+
+    private static bool IsCalculatorProcess(System.Diagnostics.Process process)
+    {
+        try
+        {
+            // 商店版计算器的进程名形如 Calculator.exe / WindowsCalculator.exe，
+            // 不同版本略有差异，所以按包含匹配而不是精确匹配。
+            return process.ProcessName.Contains("alculator", StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;   // 进程可能已退出，取名字会抛
+        }
     }
 
     private static void Report(List<(string Name, bool Success, string Detail)> results)

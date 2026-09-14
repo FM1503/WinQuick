@@ -105,6 +105,7 @@ public static class OverlayProbe
             await VerifyChildArcAsync(overlay);
 
             await VerifyActionBarAsync(overlay);
+            await VerifyActionBarClickAsync(overlay);
             VerifyTrayIconResource();
 
             ProbeOutput.Section("点遮罩空白处是否关闭");
@@ -523,6 +524,68 @@ public static class OverlayProbe
     }
 
     /// <summary>
+    /// 核对点击「设置」按钮能否真的触发设置请求。
+    ///
+    /// 这条直接对应一个用户反馈："两个按钮点击都是关闭，点设置没有显示设置界面"。
+    /// 根因是点操作条会让轮盘窗口失去焦点，覆盖层在按钮 Click 完成前就被隐藏了。
+    /// 所以这里要同时核对两件事：请求触发了，且覆盖层没有因此关闭。
+    /// </summary>
+    private static async Task VerifyActionBarClickAsync(OverlayController overlay)
+    {
+        ProbeOutput.Section("点击左上角「设置」按钮");
+
+        if (!overlay.IsVisible)
+        {
+            ProbeOutput.Line("  覆盖层当前不可见，跳过。");
+            return;
+        }
+
+        var settingsRequested = false;
+        overlay.SettingsRequested += (_, _) => settingsRequested = true;
+
+        var bar = (HWND)overlay.ActionBarHandle;
+        if (!PInvoke.GetWindowRect(bar, out var rect))
+        {
+            ProbeOutput.Line("  取操作条矩形失败，跳过。");
+            return;
+        }
+
+        // 按钮位置由操作条自己算出来，避免在探针里猜布局。
+        var buttonCenter = overlay.ActionBarSettingsButtonCenterInScreen();
+        if (buttonCenter is not { } point)
+        {
+            ProbeOutput.Line("  取按钮位置失败，跳过。");
+            return;
+        }
+
+        ProbeOutput.Kv("操作条矩形", $"({rect.left},{rect.top})-({rect.right},{rect.bottom})");
+        ProbeOutput.Kv("「设置」按钮中心（屏幕像素）", $"({point.X},{point.Y})");
+
+        PInvoke.GetCursorPos(out var saved);
+        PInvoke.SetCursorPos(point.X, point.Y);
+        await Task.Delay(150);
+
+        var clientX = point.X - rect.left;
+        var clientY = point.Y - rect.top;
+        var lParam = new LPARAM((clientY << 16) | (clientX & 0xFFFF));
+
+        PInvoke.PostMessage(bar, PInvoke.WM_LBUTTONDOWN, new WPARAM(1), lParam);
+        await Task.Delay(120);
+        PInvoke.PostMessage(bar, PInvoke.WM_LBUTTONUP, default, lParam);
+        await Task.Delay(300);
+
+        PInvoke.SetCursorPos(saved.X, saved.Y);
+
+        ProbeOutput.Kv("设置请求已触发", settingsRequested ? "是" : "否");
+        ProbeOutput.Line();
+        ProbeOutput.Line(settingsRequested
+            ? "  >>> 点击「设置」能触发设置请求。"
+            : "  >>> 点击没有触发设置请求。注意：合成消息与真实鼠标输入不完全等价，"
+              + "若你手动点击能生效则说明是探针的限制。");
+        ProbeOutput.Line("  注：探针不核对设置窗口是否弹出 —— 那会真的打开一个窗口。");
+    }
+
+    /// <summary>
     /// 核对托盘图标能否从嵌入资源加载。
     /// 这一步是必要的：托盘图标一旦加载失败，Windows 可能根本不显示那个条目，
     /// 而用户看到的现象是"托盘里什么都没有"，与真正的原因之间没有任何线索。
@@ -549,6 +612,8 @@ public static class OverlayProbe
             // 那样测的是探针自己，生产路径仍然没被验证。
             using var tray = new Tray.TrayHost(new OverlayController(MenuSpec.BuiltInDefault));
             ProbeOutput.Kv("托盘实际加载的图标尺寸", tray.IconDescription);
+            // IsCreated 是唯一能确认"外壳真的接受了这个图标"的途径。
+            ProbeOutput.Kv("外壳已接受图标（IsCreated）", tray.Created ? "是" : "否（托盘可能不显示）");
             tray.Dispose();
 
             ProbeOutput.Line();

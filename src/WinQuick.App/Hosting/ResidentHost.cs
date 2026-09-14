@@ -230,6 +230,15 @@ public sealed class ResidentHost : IDisposable
 
         _settings.Closed += (_, _) => _settings = null;
         _settings.Show();
+
+        // 显式把设置窗口提到前台。
+        //
+        // 为什么不能指望 Show() 自己搞定：用户可能是点左上角操作条打开设置的，
+        // 而操作条是 WS_EX_NOACTIVATE 的 —— 点它不改变前台窗口，我们进程也就没有
+        // 获得前台权限，此时 SetForegroundWindow 会被系统拒绝，设置窗口可能开在别的窗口后面。
+        // AttachTo 里有 AttachThreadInput 兜底。
+        Interop.ForegroundFocus.AttachTo(_settings);
+        _settings.Activate();
     }
 
     /// <summary>

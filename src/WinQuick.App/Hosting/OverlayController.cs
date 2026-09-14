@@ -72,6 +72,7 @@ public sealed class OverlayController : IDisposable
         var window = new RadialWindow(menu);
         window.DismissRequested += (_, _) => Hide();
         window.ItemActivated += (_, selection) => ItemActivated?.Invoke(this, selection);
+        window.FocusLost += (_, _) => OnRadialFocusLost();
         return window;
     }
 
@@ -261,11 +262,50 @@ public sealed class OverlayController : IDisposable
         _focus.Restore();
     }
 
+    /// <summary>
+    /// 轮盘失去焦点。
+    ///
+    /// 只有当焦点落到了**别人的窗口**上才关闭。焦点若落在我们自己的窗口上
+    /// （左上角操作条就是这种情况），说明用户仍在操作覆盖层，不该关。
+    /// 不判这一下的话，点操作条上的按钮会在 Click 完成前就把覆盖层隐藏掉，
+    /// 表现是"按钮点了没反应、只是关闭" —— 这正是用户反馈的现象。
+    /// </summary>
+    private void OnRadialFocusLost()
+    {
+        if (!IsVisible) return;
+
+        var foreground = PInvoke.GetForegroundWindow();
+        if (IsOwnWindow(foreground)) return;
+
+        Hide();
+    }
+
+    private bool IsOwnWindow(HWND hwnd)
+    {
+        if (hwnd == default) return false;
+        if (hwnd == (HWND)_radial.HandleValue) return true;
+        if (hwnd == (HWND)_actionBar.HandleValue) return true;
+        return _dims.Any(d => hwnd == (HWND)d.HandleValue);
+    }
+
     /// <summary>诊断用：操作条句柄。</summary>
     internal nint ActionBarHandle => _actionBar.HandleValue;
 
     /// <summary>诊断用：操作条是否可见。</summary>
     internal bool IsActionBarVisible => _actionBar.IsVisible;
+
+    /// <summary>诊断用：「设置」按钮中心在屏幕上的物理像素坐标。</summary>
+    internal (int X, int Y)? ActionBarSettingsButtonCenterInScreen()
+    {
+        if (_actionBar.SettingsButtonCenter is not { } center) return null;
+
+        var handle = (HWND)_actionBar.HandleValue;
+        if (!PInvoke.GetWindowRect(handle, out var rect)) return null;
+
+        var scale = MonitorLayout.AtCursor().Scale;
+        return (rect.left + (int)Math.Round(center.X * scale),
+                rect.top + (int)Math.Round(center.Y * scale));
+    }
 
     /// <summary>真正把轮盘窗口隐藏并重置动画状态。</summary>
     private void FinishHide()
@@ -357,9 +397,9 @@ public sealed class OverlayController : IDisposable
                 break;
 
             case PInvoke.WM_KILLFOCUS:
-                // 轮盘失去键盘焦点（用户点了别处）。窗口的 Deactivated 事件覆盖不到
-                // 所有路径，这里作为兜底。
-                if (IsVisible) Hide();
+                // 窗口的 Deactivated 事件覆盖不到所有路径，这里作为兜底。
+                // 同样要判"是不是自己人抢的焦点"。
+                OnRadialFocusLost();
                 break;
         }
         return IntPtr.Zero;

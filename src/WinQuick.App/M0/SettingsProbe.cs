@@ -4,6 +4,8 @@ using WinQuick.App.Config;
 using WinQuick.App.Diagnostics;
 using WinQuick.App.Settings;
 using WinQuick.Core.Config;
+using Windows.Win32;
+using Windows.Win32.Foundation;
 using WinQuick.Core.Hotkey;
 
 namespace WinQuick.App.M0;
@@ -79,6 +81,13 @@ public static class SettingsProbe
                 ProbeOutput.Kv("显示成功", shown ? "是" : "否");
                 ProbeOutput.Kv("窗口句柄已创建", handleCreated ? "是" : "否");
                 ProbeOutput.Kv("窗口尺寸", $"{window.ActualWidth:0} x {window.ActualHeight:0}");
+
+                // 前台状态很重要：设置窗口若开在别的窗口后面，用户会以为"点了没反应"。
+                ProbeOutput.Kv("是否已激活（前台）", window.IsActive ? "是" : "否");
+                PInvoke.GetForegroundWindow();
+                var fg = PInvoke.GetForegroundWindow();
+                var self = (HWND)new WindowInteropHelper(window).Handle;
+                ProbeOutput.Kv("前台窗口就是设置窗口", fg == self ? "是" : $"否（前台是 {fg}）");
             }
             catch (Exception ex)
             {

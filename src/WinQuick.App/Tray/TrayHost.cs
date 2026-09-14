@@ -32,15 +32,45 @@ public sealed class TrayHost : IDisposable
         _icon = new TaskbarIcon
         {
             ToolTipText = "WinQuick —— 按热键唤出快捷轮盘",
-            Visibility = Visibility.Visible,
             ContextMenu = BuildMenu(),
         };
 
         _icon.TrayLeftMouseUp += (_, _) => _overlay.Show();
         _icon.TrayMouseDoubleClick += (_, _) => _overlay.Show();
 
+        // 顺序很重要：**先设图标，再设可见**。
+        // 反过来的话，外壳图标先以"没有图标"的状态被创建、之后再更新 ——
+        // 那是一条更脆弱、更依赖库内部实现的路径。
         LoadIcon();
+
+        _icon.Visibility = Visibility.Visible;
+
+        // 显式强制创建，并核对结果。
+        // IsCreated 是唯一能确认"外壳真的接受了这个图标"的途径 ——
+        // 之前既没核对它、也没在失败时报错，所以"托盘里什么都没有"这件事
+        // 一直是个没有线索的黑盒。
+        try
+        {
+            _icon.ForceCreate();
+        }
+        catch (Exception ex)
+        {
+            CrashLog.Write("托盘图标 ForceCreate 失败", ex);
+        }
+
+        Created = _icon.IsCreated;
+
+        if (!Created)
+        {
+            CrashLog.Write("托盘图标未创建成功",
+                new InvalidOperationException(
+                    "TaskbarIcon.IsCreated 为 false —— 外壳没有接受这个图标，" +
+                    "后果是托盘里看不到 WinQuick。"));
+        }
     }
+
+    /// <summary>诊断用：外壳是否真的接受了这个托盘图标。</summary>
+    internal bool Created { get; private set; }
 
     /// <summary>
     /// 加载托盘图标。

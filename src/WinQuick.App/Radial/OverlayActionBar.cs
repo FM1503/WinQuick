@@ -60,6 +60,22 @@ public sealed class OverlayActionBar : Window
 
     internal nint HandleValue => new WindowInteropHelper(this).Handle;
 
+    /// <summary>
+    /// 诊断用：「设置」按钮中心在窗口内的位置（DIP）。
+    /// 探针需要它才能把点击投到正确的坐标 —— 直接猜布局太脆。
+    /// </summary>
+    internal Point? SettingsButtonCenter
+    {
+        get
+        {
+            if (Content is not Border { Child: StackPanel panel }) return null;
+            if (panel.Children.Count == 0 || panel.Children[0] is not Button button) return null;
+
+            var center = new Point(button.ActualWidth / 2, button.ActualHeight / 2);
+            return button.TranslatePoint(center, this);
+        }
+    }
+
     private UIElement BuildContent()
     {
         var panel = new StackPanel
@@ -121,7 +137,19 @@ public sealed class OverlayActionBar : Window
             Template = BuildFlatTemplate(),
         };
 
-        button.Click += (_, _) => onClick();
+        // 刻意**不用 Button.Click**：它依赖"按下时捕获鼠标、抬起时判断落点"这套逻辑，
+        // 而官方明确写着只有前台窗口才能捕获鼠标。操作条是 WS_EX_NOACTIVATE 的
+        // （为了不把焦点从轮盘抢走），永远不是前台窗口，于是 Click 永远不会完成 ——
+        // 表现就是"按钮点了没反应"。
+        //
+        // 改在鼠标按下的**隧道**路径上处理：PreviewMouseLeftButtonDown 在捕获逻辑之前触发，
+        // 不依赖捕获，NOACTIVATE 窗口照样收得到（原生遮罩窗口的 WM_LBUTTONDOWN 也是这么工作的）。
+        button.PreviewMouseLeftButtonDown += (_, e) =>
+        {
+            e.Handled = true;
+            onClick();
+        };
+
         return button;
     }
 
@@ -162,7 +190,11 @@ public sealed class OverlayActionBar : Window
 
         var hwnd = (HWND)new WindowInteropHelper(this).Handle;
         var ex = (WINDOW_EX_STYLE)(uint)PInvoke.GetWindowLong(hwnd, WINDOW_LONG_PTR_INDEX.GWL_EXSTYLE);
-        ex |= WINDOW_EX_STYLE.WS_EX_TOOLWINDOW;
+        // WS_EX_NOACTIVATE 是关键：点操作条时**不能把焦点从轮盘窗口抢走**。
+        // 抢走的话轮盘会立刻触发"失去焦点 → 关闭"，整个覆盖层（含操作条本身）
+        // 会在按钮的 Click 完成之前被隐藏 —— 表现就是"两个按钮点了都只是关闭"。
+        // 这个 bug 是用户反馈的，我当时没想到焦点链这一层。
+        ex |= WINDOW_EX_STYLE.WS_EX_TOOLWINDOW | WINDOW_EX_STYLE.WS_EX_NOACTIVATE;
         PInvoke.SetWindowLong(hwnd, WINDOW_LONG_PTR_INDEX.GWL_EXSTYLE, (int)(uint)ex);
     }
 

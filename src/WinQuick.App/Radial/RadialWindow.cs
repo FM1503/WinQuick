@@ -79,11 +79,16 @@ public sealed class RadialWindow : Window
         MouseLeftButtonDown += OnMouseDown;
         MouseRightButtonDown += OnMouseDown;
         KeyDown += OnKeyDown;
-        Deactivated += (_, _) => DismissRequested?.Invoke(this, EventArgs.Empty);
+        // 失去焦点时不直接关闭，而是交给覆盖层判断：新前台窗口如果是我们自己的窗口
+        // （比如左上角操作条），就不该关 —— 用户是在用覆盖层，不是在离开它。
+        Deactivated += (_, _) => FocusLost?.Invoke(this, EventArgs.Empty);
     }
 
-    /// <summary>要求关闭覆盖层（Esc / 点圆盘外 / 失去焦点）。</summary>
+    /// <summary>要求关闭覆盖层（Esc / 点圆盘外）。</summary>
     public event EventHandler? DismissRequested;
+
+    /// <summary>轮盘失去键盘焦点。是否真的关闭由覆盖层决定。</summary>
+    public event EventHandler? FocusLost;
 
     /// <summary>
     /// 某个叶子项被点击选中。

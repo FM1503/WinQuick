@@ -6,6 +6,10 @@
 .vs/
 *.binlog
 
+# 发布产物
+publish/
+publish-*/
+
 # 探针输出：由 --env / --mem-probe / --hook-probe / --overlay-probe /
 # --action-probe / --render-preview 随时重新生成。
 # 不提交的原因不是"不重要"，而是每次跑探针都会让工作树变脏 ——

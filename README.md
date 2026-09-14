@@ -111,6 +111,27 @@ UWP / 商店应用没有可执行文件，`icon` 与 `action.target` 写
 `shell:AppsFolder\<AppUserModelId>`（例如 `Microsoft.WindowsCalculator_8wekyb3d8bbwe!App`），
 `action.type` 用 `shell`。
 
+## 打包
+
+```powershell
+tools/publish.ps1                     # 自包含单文件 -> publish/WinQuick.exe（约 125 MB）
+tools/publish.ps1 -FrameworkDependent # 框架依赖，需目标机有 .NET 桌面运行时 10
+```
+
+**不要开 `EnableCompressionInSingleFile`。** 实测四种方案的常驻内存（静置 12 秒后取
+任务管理器口径）：
+
+| 方案 | 磁盘 | 内存 |
+|---|---|---|
+| 自包含单文件 **+ 压缩** | 59 MB | **128.5 MB** |
+| 自包含单文件 不压缩 | 125 MB | 66.4 MB |
+| 自包含散装目录 | 133 MB | 65.4 MB |
+| 框架依赖 | ~1 MB | 67.2 MB |
+
+压缩后的程序集**无法被内存映射**，运行时必须解压到私有内存，于是私有工作集大涨。
+它花 62 MB 常驻内存换 66 MB 磁盘 —— 对常驻程序是完全错误的取舍，
+而本项目的内存目标就在 60 MB 量级，开压缩直接翻倍。
+
 ## 设计约束（不是审美偏好，是实测反推的）
 
 **窗口边长 ≤ 740 DIP。** 实测内存 ≈ 47 MB 固定底 + 24 字节/DIP²，

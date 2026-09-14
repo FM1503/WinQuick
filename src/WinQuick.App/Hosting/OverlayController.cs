@@ -144,37 +144,19 @@ public sealed class OverlayController : IDisposable
     /// <summary>
     /// 换用另一份菜单。
     ///
-    /// 必须重建轮盘窗口，因为视觉树是用菜单在构造时建立的 —— 与其让视图支持
-    /// 就地重建（要小心处理子弧、悬停状态、动画器等一堆状态），
-    /// 不如整体替换来得干净。菜单变更本来就是低频的用户主动操作。
-    /// 替换后立刻预热，所以随后的首次唤出仍然不慢。
+    /// **就地替换视觉树，不重建窗口。** 早先这里是"销毁窗口 + 新建 + Show"，
+    /// 效果等于把整个覆盖层重开一次：轮盘消失、再播一遍入场动画长出来，
+    /// 用户每改一次快捷选项都要看一次这个。
+    ///
+    /// 就地替换省掉的不只是动画：窗口句柄不变 → 不重新插入 topmost band、
+    /// 不重新抢焦点、不必重新定位，也就没有"重建过程里顺序错了导致点不到"的机会。
+    /// 位置保留不再需要显式处理 —— 窗口压根没动过。
     /// </summary>
     public void RebuildForMenu(MenuSpec menu)
     {
         if (_disposed) return;
 
-        var wasVisible = IsVisible;
-
-        // 重建前记下轮盘当前的位置。菜单内容变了确实该重建（要画出新项），
-        // 但**不该挪动位置** —— 否则用户点「添加程序」时，光标正停在设置面板上，
-        // 轮盘会跳到光标处、正好压住他正在操作的面板。
-        var keepBounds = _radial.CurrentPhysicalBounds;
-
-        ForceHideAndRebuild();
-
-        _radialSource?.RemoveHook(OnRadialMessage);
-        var previous = _radial;
-        _radial = CreateRadialWindow(menu);
-        _radialSource = null;
-
-        try { previous.Close(); } catch { /* 已关闭则忽略 */ }
-
-        Prewarm();
-
-        if (wasVisible)
-        {
-            Show(preserveRadialPosition: keepBounds);
-        }
+        _radial.ApplyMenu(menu, editMode: IsSettingsOpen);
     }
 
     /// <summary>
@@ -274,6 +256,12 @@ public sealed class OverlayController : IDisposable
 
     /// <summary>诊断用：收起编辑面板。</summary>
     internal void DismissSectorEditForProbe() => _radial.DismissSectorEditForProbe();
+
+    /// <summary>诊断用：直接切换编辑态（正式路径由打开/关闭设置面板驱动）。</summary>
+    internal void SetEditModeForProbe(bool editMode) => _radial.SetEditMode(editMode);
+
+    /// <summary>诊断用：把某个扇区置为悬停，制造一次进行中的形变动画。</summary>
+    internal void HoverForProbe(int index) => _radial.HoverForProbe(index);
 
     /// <summary>诊断用：面板当前编辑的是哪一项。</summary>
     internal (int RootIndex, int ChildIndex) EditTargetForProbe => _radial.EditTargetForProbe;
@@ -415,6 +403,11 @@ public sealed class OverlayController : IDisposable
             ForegroundFocus.AttachTo(_settingsPanel);
         }
 
+        // 编辑态对齐到"面板是不是开着"。**必须放在上面恢复面板之后** ——
+        // 放在之前算出来的 IsSettingsOpen 是过时的（Hide 时把面板藏了），
+        // 结果就是"面板是开着的，轮盘上却没有「＋」"。
+        _radial.SetEditMode(IsSettingsOpen);
+
         IsVisible = true;
         _topmostTimer.Start();
     }
@@ -513,6 +506,10 @@ public sealed class OverlayController : IDisposable
         _settingsPanel.UpdateLayout();
         PositionSettingsPanel();
 
+        // 进设置态才把「＋」扇区放出来：日常使用时轮盘里只该有用户自己的项。
+        // 面板是开在覆盖层旁边的，所以"打开面板 → 轮盘上出现「＋」"是同一个视野里的变化。
+        _radial.SetEditMode(true);
+
         _settingsPanel.PlayEntrance();
 
         // 面板需要键盘输入（热键录制、文本框），所以它会夺走轮盘的焦点。
@@ -526,6 +523,9 @@ public sealed class OverlayController : IDisposable
         if (_settingsPanel is not { IsVisible: true }) return;
 
         _settingsPanel.Hide();
+
+        // 退出设置态就收回「＋」，同时把子弧重新展开（索引没变，用户看到的是同一份菜单）。
+        _radial.SetEditMode(false);
         ForegroundFocus.AttachTo(_radial);
         SettingsClosed?.Invoke(this, EventArgs.Empty);
     }

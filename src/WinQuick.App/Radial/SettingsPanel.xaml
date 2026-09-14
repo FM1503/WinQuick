@@ -223,8 +223,14 @@
                 只留下直接改文件这个入口，给需要批量编辑的场合。
             -->
             <TextBlock Text="菜单" Style="{StaticResource Section}" />
+            <!-- 这两行是「＋」与右键的**唯一说明处**：它们只在设置态出现，
+                 而编辑态又没有工具栏，所以这里必须把话说清楚，否则用户找不到入口。 -->
             <TextBlock Style="{StaticResource Hint}"
-                       Text="加一项：把鼠标移到轮盘上，点外圈末尾那个「＋」。删除或改名：在扇区上点右键。改动立刻生效。" />
+                       Text="加一项：点旁边轮盘上外圈末尾那个「＋」，选中程序即加入。" />
+            <TextBlock Style="{StaticResource Hint}"
+                       Text="改名或移除：在轮盘的扇区上点右键。子环里的「＋」会把程序加进该子菜单。" />
+            <TextBlock Style="{StaticResource Hint}"
+                       Text="改动立刻生效，覆盖层不会关闭 —— 加完就能看见新扇区长出来。" />
             <Button Style="{StaticResource FlatButton}" HorizontalAlignment="Left" Margin="0,8,0,0"
                     Content="打开 menus.json" Click="OnOpenMenuFileClick" />
             <TextBlock Style="{StaticResource Hint}"

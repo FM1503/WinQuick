@@ -67,6 +67,7 @@ internal sealed class ChildArcAnimator
         if (_running) return;
         _running = true;
         CompositionTarget.Rendering += OnRendering;
+        Interlocked.Increment(ref _activeHooks);
     }
 
     private void OnRendering(object? sender, EventArgs e)
@@ -90,7 +91,13 @@ internal sealed class ChildArcAnimator
         if (!_running) return;
         _running = false;
         CompositionTarget.Rendering -= OnRendering;
+        Interlocked.Decrement(ref _activeHooks);
     }
+
+    /// <summary>当前挂着的逐帧回调数。理由见 <see cref="SectorBulgeAnimator.ActiveHookCount"/>。</summary>
+    public static int ActiveHookCount => Volatile.Read(ref _activeHooks);
+
+    private static int _activeHooks;
 
     /// <summary>停止并复位。覆盖层隐藏时必须调用，否则回调会在窗口不可见时继续跑。</summary>
     public void Reset()

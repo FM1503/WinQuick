@@ -2,6 +2,7 @@ using System.Windows;
 using WinQuick.App.Diagnostics;
 using WinQuick.App.Design;
 using WinQuick.App.Hosting;
+using WinQuick.App.Radial;
 using WinQuick.Core.Config;
 using WinQuick.Core.Design;
 using WinQuick.Core.Geometry;
@@ -55,13 +56,59 @@ public static class AddSectorProbe
             overlay.Show();
             await Task.Delay(600);
 
-            ProbeOutput.Section("第一层环");
             var tokens = TokenStore.Current;
-            var rootAdd = overlay.AddSectorIndexForProbe;
 
+            // ---- 日常态：不该有「＋」 ----------------------------------------
+            // 编辑入口属于设置场景。日常使用时轮盘里只该有用户自己的项，
+            // 否则每次唤出都多一个一直在那儿的"编辑"按钮。
+            ProbeOutput.Section("日常态（未进设置）");
+            ProbeOutput.Kv("「＋」扇区索引", overlay.AddSectorIndexForProbe.ToString());
+            results.Add(("日常态下不显示「＋」扇区",
+                overlay.AddSectorIndexForProbe == -1,
+                $"索引 {overlay.AddSectorIndexForProbe}"));
+
+            var normalMid = (tokens.Radius.DeadZone + tokens.Radius.Ring1Outer) / 2.0;
+            var normalSpans = RadialLayout.Distribute(menu.Items.Count);
+            var lastItemPoint = ToLocal(
+                Vec2.FromPolar(normalMid, normalSpans[^1].CenterDeg), tokens.Radius.WindowSize);
+            var normalHit = overlay.HitTestForProbe(lastItemPoint.X, lastItemPoint.Y);
+            ProbeOutput.Kv("最后一项中心（应命中该项而不是「＋」）",
+                $"{normalHit.Zone}/{normalHit.Index}");
+            results.Add(("日常态下最后一项占满整个扇区",
+                normalHit.Zone == HitZone.Sector && normalHit.Index == menu.Items.Count - 1,
+                $"{normalHit.Zone}/{normalHit.Index}"));
+
+            // ---- 编辑态由"设置面板是否打开"驱动 ------------------------------
+            // 这一段走的是**正式路径**（overlay.OpenSettings），不是探针后门：
+            // 用户要求的正是"点左上角设置或从托盘进设置后，「＋」才在轮盘上出现"。
+            ProbeOutput.Section("打开设置后（正式路径）");
+            overlay.OpenSettings();
+            await Task.Delay(700);
+
+            ProbeOutput.Kv("设置面板已打开", overlay.IsSettingsOpen ? "是" : "否");
+            ProbeOutput.Kv("「＋」扇区索引", overlay.AddSectorIndexForProbe.ToString());
+            results.Add(("打开设置后轮盘上出现「＋」",
+                overlay.IsSettingsOpen && overlay.AddSectorIndexForProbe == menu.Items.Count,
+                $"面板={overlay.IsSettingsOpen}，索引={overlay.AddSectorIndexForProbe}"));
+
+            // 关掉面板，「＋」应当收回 —— 日常态的轮盘里不该留着编辑入口。
+            overlay.CloseSettings();
+            await Task.Delay(500);
+            ProbeOutput.Kv("关闭设置后的「＋」索引", overlay.AddSectorIndexForProbe.ToString());
+            results.Add(("关闭设置后「＋」被收回",
+                !overlay.IsSettingsOpen && overlay.AddSectorIndexForProbe == -1,
+                $"面板={overlay.IsSettingsOpen}，索引={overlay.AddSectorIndexForProbe}"));
+
+            // 后面的命中与分派核对需要编辑态，用探针后门直接按上 ——
+            // 正式路径已经被上面两段验过了。
+            ProbeOutput.Section("编辑态");
+            overlay.SetEditModeForProbe(true);
+            await Task.Delay(300);
+
+            var rootAdd = overlay.AddSectorIndexForProbe;
             ProbeOutput.Kv("菜单项数", menu.Items.Count);
             ProbeOutput.Kv("「＋」扇区索引", rootAdd);
-            results.Add(("第一层末尾有「＋」扇区",
+            results.Add(("编辑态下第一层末尾有「＋」扇区",
                 rootAdd == menu.Items.Count,
                 $"索引 {rootAdd}，期望 {menu.Items.Count}"));
 
@@ -227,10 +274,15 @@ public static class AddSectorProbe
                 !overlay.IsEditPanelOpen && activated is null && addRequested is null,
                 $"open={overlay.IsEditPanelOpen}，activated={activated?.ToString() ?? "无"}"));
 
-            // ---- 加一项之后：位置不跳、落点仍然正确 --------------------------
-            ProbeOutput.Section("加一项之后（模拟写盘后重建）");
+            // ---- 加一项之后：窗口本身不动 ------------------------------------
+            // 这一节对应用户报的"每次修改快捷选项工具都要重新打开一次"。
+            // 判据用**窗口句柄**：句柄不变就证明窗口没有被销毁重建。
+            // 这比"看起来没闪"可靠得多 —— 后者取决于机器快慢，换台机器就未必成立。
+            ProbeOutput.Section("加一项之后（就地刷新，不重开窗口）");
             var beforeBounds = overlay.RadialPhysicalBounds;
-            ProbeOutput.Kv("重建前轮盘矩形", beforeBounds?.ToString() ?? "(不可见)");
+            var beforeHandle = overlay.RadialHandle;
+            ProbeOutput.Kv("刷新前轮盘矩形", beforeBounds?.ToString() ?? "(不可见)");
+            ProbeOutput.Kv("刷新前窗口句柄", $"0x{beforeHandle:X}");
 
             var grown = menu with
             {
@@ -242,11 +294,24 @@ public static class AddSectorProbe
             };
 
             overlay.RebuildForMenu(grown);
+            // 正式路径里这次重建会把编辑态对齐到"设置面板是不是开着"，探针没开面板，
+            // 所以要自己再按上 —— 这就是"面板开着"在探针里的等价物。
+            overlay.SetEditModeForProbe(true);
             await Task.Delay(700);
 
             var afterBounds = overlay.RadialPhysicalBounds;
-            ProbeOutput.Kv("重建后轮盘矩形", afterBounds?.ToString() ?? "(不可见)");
+            var afterHandle = overlay.RadialHandle;
+            ProbeOutput.Kv("刷新后轮盘矩形", afterBounds?.ToString() ?? "(不可见)");
+            ProbeOutput.Kv("刷新后窗口句柄", $"0x{afterHandle:X}");
+            ProbeOutput.Kv("覆盖层是否仍然可见", overlay.IsVisible ? "是" : "否（异常）");
             ProbeOutput.Kv("新「＋」索引", overlay.AddSectorIndexForProbe.ToString());
+
+            // 句柄不变 = 窗口没被销毁重建 = 没有重开、没有重播入场动画。
+            results.Add(("刷新菜单不重开窗口（句柄不变）",
+                beforeHandle == afterHandle && beforeHandle != 0,
+                $"0x{beforeHandle:X} → 0x{afterHandle:X}"));
+
+            results.Add(("刷新菜单期间覆盖层始终可见", overlay.IsVisible, ""));
 
             results.Add(("加项后轮盘位置不变",
                 beforeBounds is { } b && afterBounds is { } a
@@ -274,6 +339,30 @@ public static class AddSectorProbe
                     $"WindowFromPoint → 0x{(nint)hitWindow:X}，轮盘 → 0x{radialHandle:X}"));
             }
 
+            // ---- 换树时逐帧回调不残留 ----------------------------------------
+            // CompositionTarget.Rendering 是静态事件：旧视觉树上的动画器若在动画进行中
+            // 就被丢掉，它的订阅会一直留着，整棵旧树既不回收、还每帧都在跑。
+            // 换菜单恰恰发生在用户正在操作轮盘的时候，所以这条必须核。
+            ProbeOutput.Section("换树时的逐帧回调");
+            ProbeOutput.Kv("换树前活跃回调数", AnimatorHeadroom());
+
+            // 先制造一次进行中的形变动画，再立刻换树。
+            overlay.HoverForProbe(2);
+            await Task.Delay(30);                       // 形变动画约 130ms，这里还在播
+            ProbeOutput.Kv("悬停后活跃回调数", AnimatorHeadroom());
+
+            var duringHover = SectorBulgeAnimator.ActiveHookCount + ChildArcAnimator.ActiveHookCount;
+
+            overlay.RebuildForMenu(grown);
+
+            var afterSwap = SectorBulgeAnimator.ActiveHookCount + ChildArcAnimator.ActiveHookCount;
+            ProbeOutput.Kv("换树后活跃回调数", afterSwap.ToString());
+            ProbeOutput.Kv("　（换树时确实有动画在播）", duringHover > 0 ? "是" : "否（本次没抓到）");
+
+            results.Add(("换树后没有残留的逐帧回调",
+                duringHover > 0 && afterSwap == 0,
+                $"动画中 {duringHover} → 换树后 {afterSwap}"));
+
             // ---- 满 12 项时不再显示「＋」 ------------------------------------
             ProbeOutput.Section("满 12 项时");
             var full = menu with
@@ -288,6 +377,7 @@ public static class AddSectorProbe
             };
 
             overlay.RebuildForMenu(full);
+            overlay.SetEditModeForProbe(true);
             await Task.Delay(700);
 
             ProbeOutput.Kv("12 项时的「＋」索引", overlay.AddSectorIndexForProbe.ToString());
@@ -319,6 +409,7 @@ public static class AddSectorProbe
             // 第一版就踩了这个坑：探针报"右键「＋」弹了面板"，看代码怎么看都该拦住，
             // 实际是探针自己在测一个不存在的「＋」。
             overlay.RebuildForMenu(menu);
+            overlay.SetEditModeForProbe(true);
             await Task.Delay(700);
             ProbeOutput.Kv("恢复 8 项菜单后的「＋」索引", overlay.AddSectorIndexForProbe.ToString());
             results.Add(("恢复菜单后「＋」重新出现",
@@ -364,6 +455,10 @@ public static class AddSectorProbe
 
         ProbeOutput.Flush();
     }
+
+    /// <summary>当前两个动画器挂着的逐帧回调数，拼成一行便于打印。</summary>
+    private static string AnimatorHeadroom() =>
+        $"形变 {SectorBulgeAnimator.ActiveHookCount} + 子弧 {ChildArcAnimator.ActiveHookCount}";
 
     /// <summary>把相对圆心的极坐标偏移换算成窗口内坐标。</summary>
     private static Point ToLocal(Vec2 offset, int windowSize) =>

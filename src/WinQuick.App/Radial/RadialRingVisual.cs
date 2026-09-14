@@ -166,7 +166,12 @@ public sealed partial class RadialRingView
 
     // ---------------------------------------------------------------- 构造
 
-    public static RadialRingView Build(MenuSpec menu, double? sizeOverride = null)
+    /// <param name="editMode">
+    /// 编辑态。只在编辑态下于环末尾画出「＋」扇区 ——
+    /// 日常使用时轮盘里应当只有用户自己的项，编辑入口属于设置场景。
+    /// 传 false 时即使有空位也不画「＋」，各扇区的角度随之回到完整等分。
+    /// </param>
+    public static RadialRingView Build(MenuSpec menu, double? sizeOverride = null, bool editMode = false)
     {
         var tokens = TokenStore.Current;
         var radius = tokens.Radius;
@@ -190,7 +195,7 @@ public sealed partial class RadialRingView
         // 为什么是"排在末尾"而不是"固定在某个角度"：角度分配只有一套规则（均匀分布），
         // 引入一个固定位置的特殊扇区就等于有了两套角度映射，用户更难预判。
         var itemCount = menu.Items.Count;
-        var addIndex = itemCount < RadialLayout.MaxSectors ? itemCount : -1;
+        var addIndex = editMode && itemCount < RadialLayout.MaxSectors ? itemCount : -1;
         var count = addIndex >= 0 ? itemCount + 1 : itemCount;
 
         var spans = RadialLayout.Distribute(count);
@@ -275,6 +280,7 @@ public sealed partial class RadialRingView
             root, tokens, center, spans, sectors, labels, icons, childMarkers, bulge, menu)
         {
             AddSectorIndex = addIndex,
+            EditMode = editMode,
         };
     }
 
@@ -314,6 +320,12 @@ public sealed partial class RadialRingView
 
     /// <summary>「＋」扇区的文字。命中它时按这个报给上层。</summary>
     public const string AddSectorLabel = "添加";
+
+    /// <summary>这一份视图是否处于编辑态（决定「＋」扇区画不画）。</summary>
+    public bool EditMode { get; private init; }
+
+    /// <summary>菜单里的项数。重建时用它判断索引有没有整体移位。</summary>
+    public int MenuItemCount => _menu.Items.Count;
 
     /// <summary>第一层某项是否有子菜单。状态机需要它来决定"悬停是否应展开"。</summary>
     public bool RootItemHasChildren(int index) =>

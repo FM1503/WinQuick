@@ -113,11 +113,25 @@ internal sealed class SectorBulgeAnimator
 
     private static double NowMs() => Environment.TickCount64;
 
+    /// <summary>
+    /// 当前挂着的逐帧回调数。
+    ///
+    /// 为什么需要它：<c>CompositionTarget.Rendering</c> 是**静态**事件，
+    /// 一旦哪个动画器在动画进行中就被丢弃（换菜单会整棵换掉视觉树），
+    /// 它的订阅会一直留在静态事件上 —— 于是这个动画器、它引用的扇区、
+    /// 乃至整棵旧视觉树都不会被回收，而且每一帧都还在跑。
+    /// 这种泄漏在性能劣化到肉眼可见之前完全没有症状，只能靠计数抓。
+    /// </summary>
+    public static int ActiveHookCount => Volatile.Read(ref _activeHooks);
+
+    private static int _activeHooks;
+
     private void Start()
     {
         if (_running) return;
         _running = true;
         CompositionTarget.Rendering += OnRendering;
+        Interlocked.Increment(ref _activeHooks);
     }
 
     private void Stop()
@@ -125,6 +139,7 @@ internal sealed class SectorBulgeAnimator
         if (!_running) return;
         _running = false;
         CompositionTarget.Rendering -= OnRendering;
+        Interlocked.Decrement(ref _activeHooks);
     }
 
     private void OnRendering(object? sender, EventArgs e)

@@ -30,8 +30,18 @@ namespace WinQuick.App.Radial;
 public sealed class RadialWindow : Window
 {
     private readonly DesignTokens _tokens;
-    private readonly RadialRingView _view;
     private readonly ScaleTransform _scale = new(1, 1);
+
+    /// <summary>当前视觉树。换菜单/切编辑态时**就地替换它**，窗口本身不动。</summary>
+    private RadialRingView _view;
+
+    /// <summary>用户改过的高亮色。换视觉树时要重新应用 —— 它存在视图上，不在窗口上。</summary>
+    private string? _accentHex;
+
+    private bool _editMode;
+
+    /// <summary>当前这份菜单。就地换树时要用它作为"菜单没变、只切编辑态"的那一份。</summary>
+    private MenuSpec _menu;
     private readonly SubmenuHoverMachine _hoverMachine;
     private readonly DispatcherTimer _pointerPoll;
     private Point? _lastPointer;
@@ -53,7 +63,8 @@ public sealed class RadialWindow : Window
         Width = _tokens.Radius.WindowSize;
         Height = _tokens.Radius.WindowSize;
 
-        _view = RadialRingView.Build(menu);
+        _menu = menu;
+        _view = RadialRingView.Build(menu, editMode: _editMode);
         Content = _view.Root;
 
         // 入场缩放挂在以圆心为原点的 ScaleTransform 上。
@@ -72,7 +83,7 @@ public sealed class RadialWindow : Window
         };
         _pointerPoll.Tick += (_, _) => EvaluateHover();
 
-        _view.SectorEditRequested += (_, request) => SectorEditRequested?.Invoke(this, request);
+        _view.SectorEditRequested += OnSectorEditRequested;
 
         SourceInitialized += (_, _) => ApplyExtendedStyles();
 
@@ -206,8 +217,87 @@ public sealed class RadialWindow : Window
         _view.SetHover(-1);
     }
 
+    /// <summary>
+    /// 换成另一份菜单，或切换编辑态：**就地替换视觉树，窗口本身不重建**。
+    ///
+    /// 之前这里走的是"销毁窗口 + 新建 + Show"，也就是把整个覆盖层重开一次 ——
+    /// 用户看到的是轮盘消失、再播一遍入场动画长出来。改一项菜单的代价不该是重开。
+    /// 就地换视觉树的差别很实在：窗口句柄不变（不重新插入 topmost band、
+    /// 不重新抢焦点、不必重新定位），也没有入场动画要重播。
+    ///
+    /// 子弧按需保留：只有在开关编辑态、或增删子项这类**不改变项数**的变动后才重新展开。
+    /// 增删第一层的项会让所有索引整体移位，那时继续按旧索引展开会张开一个
+    /// 用户没在看的子菜单，不如收起来。
+    /// </summary>
+    public void ApplyMenu(MenuSpec menu, bool? editMode = null)
+    {
+        var previousItemCount = _view.MenuItemCount;
+        var previousOpenParent = _view.ChildArcParent;
+
+        if (editMode is { } mode) _editMode = mode;
+        _menu = menu;
+
+        // **丢树之前必须先把旧树上的逐帧回调摘掉。**
+        // CompositionTarget.Rendering 是静态事件，残留的订阅会让整个旧视觉树
+        // 既不被回收、又每帧都在跑 —— 而换菜单恰恰发生在用户正在操作轮盘的时候，
+        // 形变/子弧动画很可能正在播。这条由 --add-sector-probe 的回调计数核对锁住。
+        // **丢树之前必须先把旧树上的逐帧回调摘掉。**
+        // CompositionTarget.Rendering 是静态事件，残留的订阅会让整个旧视觉树
+        // 既不被回收、又每帧都在跑 —— 而换菜单恰恰发生在用户正在操作轮盘的时候，
+        // 形变/子弧动画很可能正在播。这条由 --add-sector-probe 的回调计数核对锁住
+        // （把这一行删掉，那条核对就会红）。
+        _view.ResetInteraction();
+
+        var fresh = RadialRingView.Build(menu, editMode: _editMode);
+
+        // 先把动画状态归零再挂新树：退场动画的 HoldEnd 值会留在 _scale 上，
+        // 不清掉的话新内容会从"上次退场结束时的缩放"开始。
+        ResetAnimationState();
+
+        fresh.Root.RenderTransformOrigin = new Point(0.5, 0.5);
+        fresh.Root.RenderTransform = _scale;
+
+        _view.SectorEditRequested -= OnSectorEditRequested;
+        _view = fresh;
+        _view.SectorEditRequested += OnSectorEditRequested;
+
+        Content = _view.Root;
+        _view.SetAccentOverride(_accentHex);
+
+        // 状态机里存的是旧索引，换树后一律重置 —— 索引可能已经移位。
+        _hoverMachine.Reset();
+        _lastPointer = null;
+
+        if (previousOpenParent >= 0
+            && previousItemCount == _view.MenuItemCount
+            && _view.RootItemHasChildren(previousOpenParent))
+        {
+            ReopenChildArc(previousOpenParent);
+        }
+    }
+
+    /// <summary>
+    /// 进入/退出编辑态（决定了环末尾画不画「＋」扇区）。
+    ///
+    /// 状态没变时直接返回：每次 Show 都会调它来对齐状态，不判一下就变成
+    /// "每按一次热键都重建一遍视觉树" —— 白白重置悬停状态，还多付一次建树成本。
+    /// </summary>
+    public void SetEditMode(bool editMode)
+    {
+        if (_editMode == editMode) return;
+        ApplyMenu(_menu, editMode);
+    }
+
+    private void OnSectorEditRequested(
+        object? sender, (int RootIndex, int ChildIndex, SectorEditAction Action, string? Label) request) =>
+        SectorEditRequested?.Invoke(this, request);
+
     /// <summary>实时更新高亮色。设置面板改色后立刻可见。</summary>
-    public void ApplyAccent(string? hex) => _view.SetAccentOverride(hex);
+    public void ApplyAccent(string? hex)
+    {
+        _accentHex = hex;
+        _view.SetAccentOverride(hex);
+    }
 
     /// <summary>实时更新悬停延迟。</summary>
     public void ApplyHoverDelays(int? openMs, int? closeMs) =>
@@ -276,6 +366,9 @@ public sealed class RadialWindow : Window
 
     /// <summary>诊断用：走一遍 Esc 的处理路径。</summary>
     internal void EscapeForProbe() => HandleEscape();
+
+    /// <summary>诊断用：把某个扇区置为悬停（会启动形变动画，用于核对换树时回调是否残留）。</summary>
+    internal void HoverForProbe(int index) => _view.SetHover(index);
 
     /// <summary>诊断用：按真实命中结果走一遍左键分派（含"面板开着时先收面板"）。</summary>
     internal HitResult LeftClickForProbe(Point localPoint)

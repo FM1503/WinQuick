@@ -76,7 +76,27 @@ public partial class SettingsPanel : Window
     /// <summary>用户要求关闭设置（点 ✕ 或按 Esc）。</summary>
     public event EventHandler? CloseRequested;
 
+    /// <summary>
+    /// 即将弹出一个模态系统对话框 / 对话框已关闭。
+    ///
+    /// 为什么要通知外面：对话框创建时并不知道我们的窗口是置顶的，
+    /// 需要外部把 z 序重申的频率临时调高，否则它会先被遮罩盖住最多一个重申周期
+    /// （默认 800ms）—— 用户看到的就是"对话框闪一下才出来"。
+    /// </summary>
+    public event EventHandler? ModalDialogOpening;
+    public event EventHandler? ModalDialogClosed;
+
     internal nint HandleValue => new WindowInteropHelper(this).Handle;
+
+    /// <summary>
+    /// 恢复显示前的占位。真正的定位由 OverlayController 负责（它知道光标在哪块屏），
+    /// 这里只保证窗口不会先出现在屏幕角落再跳过去。
+    /// </summary>
+    public void PlaceAtMonitorCornerIfNeeded()
+    {
+        // 刻意留空：定位交给 OverlayController.PositionSettingsPanel，
+        // 它会把面板放在光标所在屏的另一侧并钳制在屏内。
+    }
 
     /// <summary>
     /// 把面板重新插回 topmost band 最前。
@@ -88,11 +108,7 @@ public partial class SettingsPanel : Window
         if (!IsVisible) return;
 
         var hwnd = (HWND)HandleValue;
-        PInvoke.SetWindowPos(hwnd, default, 0, 0, 0, 0,
-            SET_WINDOW_POS_FLAGS.SWP_NOMOVE |
-            SET_WINDOW_POS_FLAGS.SWP_NOSIZE |
-            SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE |
-            SET_WINDOW_POS_FLAGS.SWP_NOOWNERZORDER);
+        ZOrderManager.BringToTopmostFront(hwnd);
     }
 
     // ---------------------------------------------------------------- 初始化
@@ -470,7 +486,22 @@ public partial class SettingsPanel : Window
         };
 
         // 以面板为所有者：面板是置顶的，有所有者的对话框会跟着置顶，不会被遮罩挡住。
-        if (dialog.ShowDialog(this) != true) return;
+        //
+        // 但"跟着置顶"不会自动发生 —— 官方语义是「一个窗口**变成** topmost 时
+        // 其被拥有窗口才连带」，而面板早就是 topmost 了。所以对话框仍是非置顶的，
+        // 需要外部的 z 序重申把它补上去。这里通知外部临时提高重申频率。
+        ModalDialogOpening?.Invoke(this, EventArgs.Empty);
+        bool? accepted;
+        try
+        {
+            accepted = dialog.ShowDialog(this);
+        }
+        finally
+        {
+            ModalDialogClosed?.Invoke(this, EventArgs.Empty);
+        }
+
+        if (accepted != true) return;
 
         AddProgram(dialog.FileName);
     }
@@ -661,4 +692,8 @@ public partial class SettingsPanel : Window
     internal void AddProgramForTest(string path) => AddProgram(path);
 
     internal void RemoveItemForTest(int index) => OnRemoveItemClick(index);
+
+    /// <summary>打开"添加程序"的文件对话框。探针用它验证对话框的层级。</summary>
+    internal void OpenAddProgramDialogForTest() =>
+        OnAddProgramClick(this, new RoutedEventArgs());
 }

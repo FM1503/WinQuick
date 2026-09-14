@@ -224,10 +224,6 @@ public sealed class OverlayActionBar : Window
     {
         if (!IsVisible) return;
         var hwnd = (HWND)new WindowInteropHelper(this).Handle;
-        PInvoke.SetWindowPos(hwnd, default, 0, 0, 0, 0,
-            SET_WINDOW_POS_FLAGS.SWP_NOMOVE |
-            SET_WINDOW_POS_FLAGS.SWP_NOSIZE |
-            SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE |
-            SET_WINDOW_POS_FLAGS.SWP_NOOWNERZORDER);
+        ZOrderManager.BringToTopmostFront(hwnd);
     }
 }

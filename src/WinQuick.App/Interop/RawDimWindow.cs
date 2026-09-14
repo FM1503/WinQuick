@@ -169,15 +169,14 @@ public sealed class RawDimWindow : IDisposable
             : SHOW_WINDOW_CMD.SW_HIDE);
     }
 
-    /// <summary>把窗口重新插回 topmost band 最前。事件驱动 + 定时兜底都用它。</summary>
+    /// <summary>
+    /// 把窗口重新插回 topmost band 最前。
+    /// 走 <see cref="ZOrderManager"/> —— 之前这里手写的调用带了 SWP_NOZORDER，是空操作。
+    /// </summary>
     public void ReassertTopmost()
     {
         if (!IsValid) return;
-        PInvoke.SetWindowPos(_hwnd, default, 0, 0, 0, 0,
-            SET_WINDOW_POS_FLAGS.SWP_NOMOVE |
-            SET_WINDOW_POS_FLAGS.SWP_NOSIZE |
-            SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE |
-            SET_WINDOW_POS_FLAGS.SWP_NOOWNERZORDER);
+        ZOrderManager.BringToTopmostFront(_hwnd);
     }
 
     public void Dispose()

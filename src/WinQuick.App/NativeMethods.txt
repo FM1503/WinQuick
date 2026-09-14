@@ -49,6 +49,7 @@ WS_EX_TOPMOST
 LWA_ALPHA
 GWL_EXSTYLE
 HWND_TOPMOST
+HWND_NOTOPMOST
 SWP_NOACTIVATE
 SWP_NOMOVE
 SWP_NOSIZE
@@ -138,3 +139,15 @@ NOTIFY_FOR_THIS_SESSION
 WM_KILLFOCUS
 WM_ACTIVATEAPP
 WM_NCACTIVATE
+// --- z 序与落点核对（探针用） ---
+// GetWindow(GW_HWNDNEXT
+GW_OWNER) 沿顶层窗口链遍历可读出真实 z 序；
+// WindowFromPoint 直接回答"这个坐标上的点击会被哪个窗口拿走"——
+// 这是"看得见却点不动"这类问题唯一可靠的判据。
+GetTopWindow
+GetWindow
+GetAncestor
+WindowFromPoint
+GA_ROOT
+GW_HWNDNEXT
+GW_HWNDPREV

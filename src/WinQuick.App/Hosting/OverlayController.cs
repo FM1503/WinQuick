@@ -29,6 +29,27 @@ public sealed class OverlayController : IDisposable
     /// </summary>
     private static readonly TimeSpan TopmostReassertInterval = TimeSpan.FromMilliseconds(800);
 
+    /// <summary>
+    /// 系统对话框弹出期间用的重申周期。
+    /// 对话框的 topmost 只能靠事后补样式得到，越早补上越好。
+    /// </summary>
+    private static readonly TimeSpan FastTopmostReassertInterval = TimeSpan.FromMilliseconds(100);
+
+    private void SetTopmostInterval(TimeSpan interval)
+    {
+        _topmostTimer.Interval = interval;
+
+        // 时钟在跑时改 Interval 不会立刻重新计时，重启一次让新周期立即生效。
+        if (_topmostTimer.IsEnabled)
+        {
+            _topmostTimer.Stop();
+            _topmostTimer.Start();
+        }
+
+        // 立刻重申一次，不必等新周期。
+        ReassertTopmost();
+    }
+
     private readonly List<RawDimWindow> _dims = [];
     private RadialWindow _radial;   // 菜单热重载时会整体替换，所以不是 readonly
     private readonly OverlayActionBar _actionBar = new();
@@ -36,6 +57,20 @@ public sealed class OverlayController : IDisposable
     // 设置面板按需创建：设置是低频操作，为它常驻一个窗口不值得。
     // 首次打开后保留，避免反复创建。
     private SettingsPanel? _settingsPanel;
+
+    /// <summary>Hide/Show 往返之前设置面板是否打开着，用于恢复。</summary>
+    private bool _settingsWasOpen;
+
+    /// <summary>
+    /// 我们自己的窗口层级栈。定义一次，之后所有置顶重申都走它。
+    ///
+    /// 之前是每个窗口各自调一个 ReassertTopmost，而那些实现都是空操作
+    /// （传了 SWP_NOZORDER，让插入位置被忽略）。集中定义还有一个好处：
+    /// 层级关系变成一处可读、可验证的声明，而不是散在四个文件里的隐式约定。
+    ///
+    /// 从上到下声明；重申时自动反序执行，保证栈顶最后插入、确实在最前。
+    /// </summary>
+    private readonly ZOrderManager _zOrder = new();
     private readonly ForegroundFocus _focus = new();
     private readonly DispatcherTimer _topmostTimer;
 
@@ -54,6 +89,20 @@ public sealed class OverlayController : IDisposable
             Interval = TopmostReassertInterval,
         };
         _topmostTimer.Tick += (_, _) => ReassertTopmost();
+
+        // 系统对话框必须在最顶层参与重申。
+        //
+        // 为什么不是"给对话框加个 topmost 就完事"：我们的 800ms 置顶重申会把
+        // 自己的窗口逐个插到 topmost 层最前面，那样反而会把对话框挤到我们后面。
+        // 让它成为层级栈的顶层，重申结束时它才确实在最前面。
+        _zOrder.AddLayer("系统对话框", () => FindOwnedSystemDialog() is { } dialog ? [dialog] : []);
+
+        // 层级从上到下声明。注意这里**必须**与视觉预期一致：
+        // 设置面板盖住操作条，操作条盖住轮盘，轮盘盖住遮罩。
+        _zOrder.AddLayer("设置面板", () => _settingsPanel is { IsVisible: true } ? [_settingsPanel.HandleValue] : []);
+        _zOrder.AddLayer("操作条", () => _actionBar.IsVisible ? [_actionBar.HandleValue] : []);
+        _zOrder.AddLayer("轮盘", () => _radial.IsVisible ? [_radial.HandleValue] : []);
+        _zOrder.AddLayer("遮罩", () => _dims.Where(d => d.IsValid).Select(d => d.HandleValue).ToList());
 
         // 设置改为开在覆盖层会话里（面板与轮盘同时在场），所以这里不再收掉覆盖层 ——
         // 收掉的话"改动立刻看到效果"就无从谈起了。
@@ -122,12 +171,21 @@ public sealed class OverlayController : IDisposable
         if (DimOpacityOverride == opacity) return;
 
         DimOpacityOverride = opacity;
+
+        // 刻意**不**走 Hide()/Show() 往返。走过一次就踩了两个坑：
+        //  · Hide() 会启动退场动画计时器，167ms 后它执行 _radial.Hide() ——
+        //    而那时 Show() 早已把轮盘重新显示出来，于是轮盘又被藏了回去。
+        //  · Show() 不会恢复设置面板，而 Hide() 把它藏掉了 —— 往返一次面板就没了。
+        // 只重建遮罩、并让新窗口跟随当前的可见状态即可。
         var wasVisible = IsVisible;
-        if (wasVisible) Hide();
 
         RebuildDimWindows();
 
-        if (wasVisible) Show();
+        if (wasVisible)
+        {
+            foreach (var dim in _dims) dim.Show();
+            ReassertTopmost();
+        }
     }
 
     public bool IsVisible { get; private set; }
@@ -210,6 +268,10 @@ public sealed class OverlayController : IDisposable
     {
         if (_disposed || IsVisible) return;
 
+        // 停掉可能还在跑的退场计时器 —— 否则它会在 167ms 后把刚显示出来的轮盘又藏回去。
+        // （ApplyDimOpacity 与菜单重建都会在 Hide 之后紧接着 Show，这条路径很常见。）
+        _exitTimer.Stop();
+
         // 显示器数量变了就重建遮罩窗口池，否则会有屏没被遮住。
         if (_dims.Count != MonitorLayout.All().Count)
             RebuildDimWindows();
@@ -238,6 +300,16 @@ public sealed class OverlayController : IDisposable
         // 抢走焦点会打断输入。
         if (!IsSettingsOpen) ForegroundFocus.AttachTo(_radial);
 
+        // 恢复显隐往返之前打开着的设置面板。
+        if (_settingsWasOpen && _settingsPanel is not null)
+        {
+            _settingsPanel.PlaceAtMonitorCornerIfNeeded();
+            PositionSettingsPanel();
+            _settingsPanel.Show();
+            _settingsWasOpen = false;
+            ForegroundFocus.AttachTo(_settingsPanel);
+        }
+
         IsVisible = true;
         _topmostTimer.Start();
     }
@@ -259,6 +331,9 @@ public sealed class OverlayController : IDisposable
         _radial.StopInteraction();
         foreach (var dim in _dims) dim.Hide();
         _actionBar.Hide();
+        // 记住面板状态：显隐往返（改设置、重建菜单、显示器变化）之后要恢复它，
+        // 否则用户正在填的表单会毫无预兆地消失。
+        _settingsWasOpen = _settingsPanel is { IsVisible: true };
         _settingsPanel?.Hide();
 
         // 退场期间不再接受输入，否则用户在收缩过程中还能点到扇区。
@@ -355,6 +430,12 @@ public sealed class OverlayController : IDisposable
             applyMenu: menu => MenuChanged?.Invoke(this, menu));
 
         panel.CloseRequested += (_, _) => CloseSettings();
+
+        // 弹出系统对话框期间把置顶重申的频率调高：
+        // 对话框补上 topmost 只能靠重申，800ms 的默认周期会让它先被遮罩盖住一闪。
+        panel.ModalDialogOpening += (_, _) => SetTopmostInterval(FastTopmostReassertInterval);
+        panel.ModalDialogClosed += (_, _) => SetTopmostInterval(TopmostReassertInterval);
+
         return panel;
     }
 
@@ -438,6 +519,7 @@ public sealed class OverlayController : IDisposable
     }
 
     /// <summary>诊断用：操作条句柄。</summary>
+
     internal nint ActionBarHandle => _actionBar.HandleValue;
 
     /// <summary>诊断用：操作条是否可见。</summary>
@@ -445,6 +527,12 @@ public sealed class OverlayController : IDisposable
 
     /// <summary>诊断用：设置面板句柄。</summary>
     internal nint SettingsPanelHandle => _settingsPanel?.HandleValue ?? 0;
+
+    /// <summary>诊断用：设置面板实例（探针需要它来触发对话框）。</summary>
+    internal SettingsPanel? SettingsPanelForProbe => _settingsPanel;
+
+    /// <summary>诊断用：操作条「设置」按钮中心的屏幕物理像素坐标。</summary>
+    internal (int X, int Y)? ActionBarSettingsButtonScreenPoint() => ActionBarSettingsButtonCenterInScreen();
 
     /// <summary>诊断用：「设置」按钮中心在屏幕上的物理像素坐标。</summary>
     internal (int X, int Y)? ActionBarSettingsButtonCenterInScreen()
@@ -462,6 +550,9 @@ public sealed class OverlayController : IDisposable
     /// <summary>真正把轮盘窗口隐藏并重置动画状态。</summary>
     private void FinishHide()
     {
+        // 期间若已被重新显示（Hide 之后紧接着 Show），这次的收尾就作废。
+        if (IsVisible) return;
+
         _radial.Hide();
         _radial.ResetAnimationState();
         _radial.ResetInteraction();
@@ -522,6 +613,14 @@ public sealed class OverlayController : IDisposable
             dim.DismissRequested += OnDimDismiss;
             _dims.Add(dim);
         }
+
+        // 重建之后必须立刻重申 z 序。
+        //
+        // 这是本轮那个 bug 的发生点：新建的窗口会被插到 topmost 层**最前面**，
+        // 于是重建出来的遮罩压在轮盘与设置面板之上 —— 它们仍然可见（遮罩只有 40% 不透明），
+        // 但点击会被遮罩全部吃掉，用户看到的就是「看得见却点不动」。
+        // 而这个重建每次改设置都会走（拖遮罩深浅 → 保存 → 热重载 → 重建）。
+        ReassertTopmost();
     }
 
     private void OnDimDismiss()
@@ -530,12 +629,44 @@ public sealed class OverlayController : IDisposable
         Hide();
     }
 
-    private void ReassertTopmost()
+    /// <summary>
+    /// 按层级栈重申整个 z 序，从下往上插入，保证结果确定等于栈的顺序。
+    /// </summary>
+    private void ReassertTopmost() => _zOrder.Reassert();
+
+    /// <summary>
+    /// 找出当前由我们某个窗口拥有的系统对话框（文件选择、消息框等）。
+    ///
+    /// 判据用**owner 关系**而不是窗口类名：`ShowDialog(owner)` 会把 owner 设成调用方，
+    /// 而窗口类名 `#32770` 是通用对话框类，全系统都在用 —— 按类名判会误伤别人的对话框。
+    ///
+    /// 找到之后要**主动**把它置顶：走的是系统对话框自己的窗口，我们改不了它的创建参数，
+    /// 只能事后补样式。这也是为什么必须由重申逻辑兜着 —— 补一次不够，
+    /// 我们自己的窗口每次重申都可能把它挤下去。
+    /// </summary>
+    private nint FindOwnedSystemDialog()
     {
-        foreach (var dim in _dims) dim.ReassertTopmost();
-        _radial.ReassertTopmost();
-        _actionBar.ReassertTopmost();
-        _settingsPanel?.ReassertTopmost();
+        var foreground = PInvoke.GetForegroundWindow();
+        if (foreground == default) return 0;
+        if (IsOwnWindow(foreground)) return 0;
+        if (!PInvoke.IsWindowVisible(foreground)) return 0;
+
+        if (!IsOwnedByUs(foreground)) return 0;
+
+        // 补上 topmost：对话框创建时并不知道我们的窗口是置顶的，
+        // 而官方语义是「一个窗口**变成** topmost 时其被拥有窗口才连带变 topmost」——
+        // 我们的面板早就是 topmost 了，这个转变从未发生，所以对话框一直是非置顶的。
+        ZOrderManager.BringToTopmostFront(foreground);
+        return (IntPtr)foreground;
+    }
+
+    /// <summary>这个窗口是不是由我们的某个窗口拥有的。</summary>
+    private bool IsOwnedByUs(HWND hwnd)
+    {
+        var owner = PInvoke.GetWindow(hwnd, GET_WINDOW_CMD.GW_OWNER);
+        if (owner == default) return false;
+
+        return IsOwnWindow(owner);
     }
 
     private IntPtr OnRadialMessage(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)

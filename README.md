@@ -23,6 +23,7 @@ Windows 10/11 的快捷访问轮盘：按热键唤出全屏遮罩 + 圆形轮盘
 - [M2 状态](docs/M2-status.md) —— 视觉规格与图标
 - [M3 进展](docs/M3-status.md) —— 动作执行、文字处理、环 2 子菜单、UWP 支持
 - [M4 进展](docs/M4-status.md) —— 配置系统：两份配置的分工与热重载
+- [窗口层级与焦点架构](docs/z-order-architecture.md) —— 多个置顶窗口的层级栈、根因排查与验证手段
 
 ---
 

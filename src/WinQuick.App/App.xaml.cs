@@ -48,6 +48,11 @@ public partial class App : Application
                 RunDetached(() => M0.HookProbe.RunAsync(cli));
                 break;
 
+            case "--zorder-probe":
+                // 需要消息循环与真实的窗口创建/显示。
+                RunDetached(() => M0.ZOrderProbe.RunAsync(cli));
+                break;
+
             case "--settings-probe":
                 // 需要消息循环：要真的把窗口显示出来核对。
                 RunDetached(() => M0.SettingsProbe.RunAsync(cli));

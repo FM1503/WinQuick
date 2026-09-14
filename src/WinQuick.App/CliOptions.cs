@@ -21,6 +21,7 @@ public sealed class CliOptions
           --hook-probe              热键实测：RegisterHotKey 可用性 + LL 钩子能否截获
               --inject              用 SendInput 注入 Win+W 观察钩子是否看到
               --interactive=秒      等待用户物理按键，默认 0（不等待）
+          --zorder-probe            核对真实 z 序与落点（WindowFromPoint），诊断"看得见却点不动"
           --settings-probe          设置界面：XAML 加载、保存路径、留空语义、非法输入反馈
           --config-probe            配置系统：默认文件创建、非法配置的容错、合法配置生效
           --apps-probe              枚举 shell:AppsFolder，核对 UWP 应用的 AUMID 与图标

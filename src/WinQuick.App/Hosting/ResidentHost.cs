@@ -98,6 +98,10 @@ public sealed class ResidentHost : IDisposable
 
         _overlay.Prewarm();
 
+        // 事件驱动地重申置顶：只在「别人抢到前台」时动手，平时一次 SetWindowPos 都不发。
+        // 无条件定时重申会让分层窗口持续重新合成 —— 那是闪烁的来源。
+        _overlay.StartZOrderWatching();
+
         var hotkey = ResolveHotkey();
         var result = _hotkeys.Apply(hotkey, _config.Config.AllowHookFallback);
         WarnIfHotkeyDegraded(result);

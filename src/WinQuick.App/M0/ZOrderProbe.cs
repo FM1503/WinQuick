@@ -1,3 +1,4 @@
+using System.IO;
 using System.Text;
 using WinQuick.App.Diagnostics;
 using WinQuick.App.Hosting;
@@ -41,6 +42,7 @@ public static class ZOrderProbe
             overlay.SetSettingsSource(new AppConfig());
 
             overlay.Prewarm();
+            overlay.StartZOrderWatching();
 
             ProbeOutput.Section("覆盖层未打开时");
             ReportWindows(overlay, "未打开");
@@ -70,6 +72,52 @@ public static class ZOrderProbe
             ProbeOutput.Section("设置面板打开后的落点核对");
             ReportHitTests(overlay);
 
+            // 静置核对：设置面板开着时，z 序重申与 SetWindowPos 应当几乎不发生。
+            // 无条件反复重申会让分层窗口持续重新合成 —— 那正是用户报的"一直闪烁"。
+            ProbeOutput.Section("静置 3 秒：是否还在反复重申 z 序");
+            var beforeCount = overlay.ZOrder.ReassertCount;
+            var beforeSkipped = overlay.ZOrder.SkippedCount;
+            await Task.Delay(3000);
+            var ranDuringIdle = overlay.ZOrder.ReassertCount - beforeCount;
+            var skippedDuringIdle = overlay.ZOrder.SkippedCount - beforeSkipped;
+
+            ProbeOutput.Kv("静置期间实际重申次数", ranDuringIdle.ToString());
+            ProbeOutput.Kv("静置期间判定无需重申的次数", skippedDuringIdle.ToString());
+            ProbeOutput.Kv("定时器触发次数（约）", (3000 / 800.0).ToString("0"));
+            ProbeOutput.Line();
+            ProbeOutput.Line(ranDuringIdle == 0
+                ? "  >>> 静置期间没有重申 —— 分层窗口不会被反复重新合成，不再因此闪烁。"
+                : $"  >>> 静置期间仍重申了 {ranDuringIdle} 次，会造成持续闪烁。");
+
+            // 菜单变更后轮盘位置是否被保留
+            ProbeOutput.Section("菜单变更后轮盘位置是否保留");
+            var beforeBounds = overlay.RadialPhysicalBounds;
+            ProbeOutput.Kv("改前轮盘矩形", beforeBounds is { } b
+                ? $"({b.X},{b.Y}) {b.Width}x{b.Height}" : "(取不到)");
+
+            var panelForMenu = overlay.SettingsPanelForProbe;
+            if (panelForMenu is not null)
+            {
+                panelForMenu.AddProgramForTest(Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.Windows), "System32", "charmap.exe"));
+                await Task.Delay(700);
+            }
+
+            var afterBounds = overlay.RadialPhysicalBounds;
+            ProbeOutput.Kv("改后轮盘矩形", afterBounds is { } a
+                ? $"({a.X},{a.Y}) {a.Width}x{a.Height}" : "(取不到)");
+
+            ProbeOutput.Line();
+            ProbeOutput.Line(beforeBounds is not null && beforeBounds == afterBounds
+                ? "  >>> 轮盘位置被保留，没有跳到光标处。"
+                : "  >>> 轮盘位置变了 —— 菜单变更后它会跳到光标处、压住用户正在操作的面板。");
+
+            // 菜单变更是**真正会重建遮罩**的路径（RebuildForMenu → RebuildDimWindows），
+            // 也正是之前"重建出来的遮罩压住轮盘与面板"那个 bug 的触发点。必须守住这里。
+            ProbeOutput.Section("菜单变更后（真正会重建遮罩窗口）");
+            ReportZOrder(overlay);
+            ReportHitTests(overlay);
+
             if (cli.Has("dialog")) await VerifyFileDialogAsync(overlay);
             else
             {
@@ -77,23 +125,21 @@ public static class ZOrderProbe
                 ProbeOutput.Line("  加 --dialog 才会实际弹出文件对话框（会真的开一个窗口再自动关掉）。");
             }
 
-            // 关键场景：改设置会**重建遮罩窗口**，而新建的窗口会被插到 topmost 层最前面。
-            // 如果它们落在面板之上，面板就会被盖住 —— 怀疑这就是用户说的"争抢"。
-            ProbeOutput.Section("改设置后（会重建遮罩窗口）");
-            ProbeOutput.Line("  模拟拖动遮罩深浅滑块：ApplyDimOpacity 会销毁并重建遮罩窗口。");
+            // 拖动遮罩深浅：现在只就地改 alpha，**不重建窗口**。
+            // 之前是"销毁整屏遮罩 + 重建"，每次滑动都让屏幕闪一下（用户报的"一直闪烁"）。
+            ProbeOutput.Section("拖遮罩深浅（只改 alpha，不重建窗口）");
+            var handleBefore = overlay.DimHandles.FirstOrDefault();
+            ProbeOutput.Kv("改前遮罩句柄", $"0x{handleBefore:X}");
 
             overlay.ApplyDimOpacity(0.62);
-            await Task.Delay(500);
+            await Task.Delay(300);
 
-            ProbeOutput.Kv("重建后遮罩句柄", string.Join(", ",
-                overlay.DimHandles.Select(h => $"0x{h:X}")));
-
-            ReportZOrder(overlay);
-            ReportHitTests(overlay);
-
+            var handleAfter = overlay.DimHandles.FirstOrDefault();
+            ProbeOutput.Kv("改后遮罩句柄", $"0x{handleAfter:X}");
             ProbeOutput.Line();
-            ProbeOutput.Line("  这条路径每次都发生：拖遮罩滑块、改高亮色值都会触发保存 → 热重载 → 重建。");
-            ProbeOutput.Line("  如果重建出来的遮罩压在面板之上，用户看到的就是面板突然点不到。");
+            ProbeOutput.Line(handleBefore == handleAfter
+                ? "  >>> 遮罩窗口被复用（只更新了 alpha）—— 拖动滑块时不会整屏闪。"
+                : "  >>> 遮罩窗口被重建了 —— 拖动滑块时会让整屏闪一下。");
 
             ProbeOutput.Flush();
         }

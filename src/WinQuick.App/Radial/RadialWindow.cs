@@ -126,6 +126,39 @@ public sealed class RadialWindow : Window
     /// 之后的 Hide() 就成了空操作，窗口会留在屏幕上。
     /// （这个 bug 是被 --overlay-probe 查窗口真实状态抓到的。）
     /// </summary>
+    /// <summary>当前窗口的物理像素矩形，供"重建时保留位置"使用。</summary>
+    public (int X, int Y, int Width, int Height)? CurrentPhysicalBounds
+    {
+        get
+        {
+            var hwnd = new WindowInteropHelper(this).Handle;
+            if (hwnd == IntPtr.Zero) return null;
+            if (!PInvoke.GetWindowRect((HWND)hwnd, out var rect)) return null;
+            return (rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top);
+        }
+    }
+
+    /// <summary>
+    /// 按给定的物理像素矩形摆放，不改变可见性。
+    /// 重建窗口时用它保留原位 —— 否则轮盘会跳到光标处，正好压住用户正在操作的面板。
+    /// </summary>
+    public void PlaceAt(int x, int y, int width, int height)
+    {
+        ApplyExtendedStyles();
+
+        var monitor = MonitorLayout.AtCursor();
+        Left = x / monitor.Scale;
+        Top = y / monitor.Scale;
+
+        var hwnd = (HWND)new WindowInteropHelper(this).Handle;
+        PInvoke.SetWindowPos(hwnd, default, x, y, width, height,
+            SET_WINDOW_POS_FLAGS.SWP_NOZORDER |
+            SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE |
+            SET_WINDOW_POS_FLAGS.SWP_NOOWNERZORDER);
+
+        _view.SetHover(-1);
+    }
+
     public void PlaceAtCursor()
     {
         ApplyExtendedStyles();

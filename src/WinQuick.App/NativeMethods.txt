@@ -151,3 +151,10 @@ WindowFromPoint
 GA_ROOT
 GW_HWNDNEXT
 GW_HWNDPREV
+
+// --- 前台变更事件（事件驱动地重申置顶，而不是无条件定时重申） ---
+SetWinEventHook
+UnhookWinEvent
+EVENT_SYSTEM_FOREGROUND
+WINEVENT_OUTOFCONTEXT
+WINEVENT_SKIPOWNPROCESS

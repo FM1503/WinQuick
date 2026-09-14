@@ -61,6 +61,9 @@ public sealed class OverlayController : IDisposable
     /// <summary>Hide/Show 往返之前设置面板是否打开着，用于恢复。</summary>
     private bool _settingsWasOpen;
 
+    /// <summary>本次 Show 是否要保留轮盘原有位置（菜单重建时为真）。</summary>
+    private (int X, int Y, int Width, int Height)? _preserveRadialPosition;
+
     /// <summary>
     /// 我们自己的窗口层级栈。定义一次，之后所有置顶重申都走它。
     ///
@@ -88,7 +91,12 @@ public sealed class OverlayController : IDisposable
         {
             Interval = TopmostReassertInterval,
         };
-        _topmostTimer.Tick += (_, _) => ReassertTopmost();
+        // 定时器先做廉价检查，只在真的需要时才重申 —— 无条件重申会让分层窗口
+        // 持续重新合成，表现为闪烁（用户报的现象）。
+        _topmostTimer.Tick += (_, _) =>
+        {
+            if (_zOrder.NeedsReassert()) ReassertTopmost();
+        };
 
         // 系统对话框必须在最顶层参与重申。
         //
@@ -144,6 +152,12 @@ public sealed class OverlayController : IDisposable
         if (_disposed) return;
 
         var wasVisible = IsVisible;
+
+        // 重建前记下轮盘当前的位置。菜单内容变了确实该重建（要画出新项），
+        // 但**不该挪动位置** —— 否则用户点「添加程序」时，光标正停在设置面板上，
+        // 轮盘会跳到光标处、正好压住他正在操作的面板。
+        var keepBounds = _radial.CurrentPhysicalBounds;
+
         ForceHideAndRebuild();
 
         _radialSource?.RemoveHook(OnRadialMessage);
@@ -155,7 +169,10 @@ public sealed class OverlayController : IDisposable
 
         Prewarm();
 
-        if (wasVisible) Show();
+        if (wasVisible)
+        {
+            Show(preserveRadialPosition: keepBounds);
+        }
     }
 
     /// <summary>遮罩不透明度的用户覆盖值（0–1）。null 表示沿用设计基线。</summary>
@@ -172,21 +189,19 @@ public sealed class OverlayController : IDisposable
 
         DimOpacityOverride = opacity;
 
-        // 刻意**不**走 Hide()/Show() 往返。走过一次就踩了两个坑：
-        //  · Hide() 会启动退场动画计时器，167ms 后它执行 _radial.Hide() ——
-        //    而那时 Show() 早已把轮盘重新显示出来，于是轮盘又被藏了回去。
-        //  · Show() 不会恢复设置面板，而 Hide() 把它藏掉了 —— 往返一次面板就没了。
-        // 只重建遮罩、并让新窗口跟随当前的可见状态即可。
-        var wasVisible = IsVisible;
-
-        RebuildDimWindows();
-
-        if (wasVisible)
-        {
-            foreach (var dim in _dims) dim.Show();
-            ReassertTopmost();
-        }
+        // **就地更新 alpha，不重建窗口。**
+        //
+        // 之前这里是"销毁整屏遮罩窗口 + 重建"，每次滑动滑块都会让整个屏幕闪一下 ——
+        // 用户报的"设置界面一直在闪烁"里就有这一份。
+        // 改分层窗口的 alpha 只是个属性更新，系统重新合成一次即可，观感是连续变化的。
+        var alpha = ToAlpha(opacity);
+        foreach (var dim in _dims) dim.SetAlpha(alpha);
     }
+
+    private static byte ToAlpha(double? opacity) =>
+        opacity is { } value
+            ? (byte)Math.Clamp(Math.Round(value * 255), 0, 255)
+            : RawDimWindow.DefaultAlpha;
 
     public bool IsVisible { get; private set; }
 
@@ -264,9 +279,18 @@ public sealed class OverlayController : IDisposable
     /// **必须同步完成** —— 前台权限的豁免只在同一次输入事件的调用栈内有效，
     /// 一旦 await、切线程或 PostMessage 之后再设置前台窗口，权限就丢了。
     /// </summary>
-    public void Show()
+    public void Show() => Show(null);
+
+    /// <param name="preserveRadialPosition">
+    /// 非 null 时把轮盘摆在给定的物理像素矩形，而不是光标处。
+    /// 供"菜单变更后重建"使用 —— 那时用户的操作焦点在设置面板上，
+    /// 把轮盘挪到光标处会正好压住面板。
+    /// </param>
+    private void Show((int X, int Y, int Width, int Height)? preserveRadialPosition)
     {
         if (_disposed || IsVisible) return;
+
+        _preserveRadialPosition = preserveRadialPosition;
 
         // 停掉可能还在跑的退场计时器 —— 否则它会在 167ms 后把刚显示出来的轮盘又藏回去。
         // （ApplyDimOpacity 与菜单重建都会在 Hide 之后紧接着 Show，这条路径很常见。）
@@ -285,7 +309,9 @@ public sealed class OverlayController : IDisposable
         }
 
         // 先摆位置再让 WPF 显示 —— 顺序反了会先在旧位置闪一帧。
-        _radial.PlaceAtCursor();
+        if (_preserveRadialPosition is { } bounds) _radial.PlaceAt(bounds.X, bounds.Y, bounds.Width, bounds.Height);
+        else _radial.PlaceAtCursor();
+
         _radial.Show();
         _radial.ReassertTopmost();
         _radial.PlayEntrance();
@@ -528,6 +554,19 @@ public sealed class OverlayController : IDisposable
     /// <summary>诊断用：设置面板句柄。</summary>
     internal nint SettingsPanelHandle => _settingsPanel?.HandleValue ?? 0;
 
+    /// <summary>
+    /// 开始监听前台变更事件（事件驱动地重申置顶）。
+    /// 必须在显示覆盖层之前调用一次；与定时器互补 ——
+    /// 定时器只兜「置顶位被清 / 内部顺序被重建打乱」，事件兜「别人抢到前台」。
+    /// </summary>
+    public void StartZOrderWatching() => _zOrder.WatchForeground();
+
+    /// <summary>诊断用：轮盘当前的物理像素矩形。</summary>
+    internal (int X, int Y, int Width, int Height)? RadialPhysicalBounds => _radial.CurrentPhysicalBounds;
+
+    /// <summary>诊断用：z 序管理器（探针用它读取重申次数）。</summary>
+    internal ZOrderManager ZOrder => _zOrder;
+
     /// <summary>诊断用：设置面板实例（探针需要它来触发对话框）。</summary>
     internal SettingsPanel? SettingsPanelForProbe => _settingsPanel;
 
@@ -602,9 +641,7 @@ public sealed class OverlayController : IDisposable
         // 每屏一个遮罩窗口。一个 HWND 只能有一个 DPI，所以不能合并成一个横跨的窗口。
         // 遮罩用统一 alpha（40% 黑），原生窗口实测几乎零内存开销。
         // 透明度可以由用户配置覆盖；默认用设计基线里的值。
-        var alpha = DimOpacityOverride is { } opacity
-            ? (byte)Math.Clamp(Math.Round(opacity * 255), 0, 255)
-            : RawDimWindow.DefaultAlpha;
+        var alpha = ToAlpha(DimOpacityOverride);
 
         foreach (var monitor in MonitorLayout.All())
         {
@@ -696,6 +733,7 @@ public sealed class OverlayController : IDisposable
 
         _topmostTimer.Stop();
         _exitTimer.Stop();
+        _zOrder.StopWatching();
         _radialSource?.RemoveHook(OnRadialMessage);
 
         foreach (var dim in _dims)

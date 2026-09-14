@@ -1,4 +1,5 @@
 using WinQuick.App.Diagnostics;
+using Windows.Win32.UI.Accessibility;
 using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.UI.WindowsAndMessaging;
@@ -34,6 +35,12 @@ namespace WinQuick.App.Interop;
 /// </summary>
 public sealed class ZOrderManager
 {
+    /// <summary>实际执行重申的次数。用于核对"静置时是否还在反复重申"。</summary>
+    public int ReassertCount { get; private set; }
+
+    /// <summary>廉价检查判定"不需要重申"而跳过的次数。</summary>
+    public int SkippedCount { get; private set; }
+
     /// <summary>一层窗口。可以返回多个句柄（每屏一个遮罩）。</summary>
     public delegate IReadOnlyList<nint> LayerSource();
 
@@ -50,6 +57,130 @@ public sealed class ZOrderManager
     public IReadOnlyList<string> LayerNames => _layers.Select(l => l.Name).ToList();
 
     /// <summary>
+    /// 廉价检查「是否真的需要重申」。
+    ///
+    /// 只检查两件**真会发生**的事，不检查「有没有别人的 topmost 窗口压在我们上面」——
+    /// 后者在本机实测恒为真（任务栏、输入法、各种 shell 浮层都是 topmost，实测 42 个），
+    /// 拿它当判据等于每次都重申，也就是没有省 —— 而无条件重申会让分层窗口
+    /// 持续重新合成，观感上就是**持续闪烁**（用户报的现象）。
+    ///
+    /// 所以：
+    /// 1. **置顶位还在吗** —— 样式被系统清掉是真实发生过的情况（PowerToys 的
+    ///    AlwaysOnTop 模块专门为 issue #17332 / #19168 写了重设逻辑）。
+    /// 2. **我们内部的相对顺序还对吗** —— 这个工具自己的重建路径（改透明度、换菜单、
+    ///    显示器变化）会新建窗口、把新窗口插到 topmost 最前面，从而打乱内部顺序。
+    ///    这正是之前"轮盘与面板点不到"的根因，必须留住这条检查。
+    ///
+    /// 「别人压上来」改由前台变更事件驱动 —— 见 <see cref="WatchForeground"/>。
+    /// PowerToys 也是这么做的（`SetWinEventHook` + 「检测到 topmost 被清掉才重设」）。
+    /// </summary>
+    public bool NeedsReassert()
+    {
+        var layers = new List<IReadOnlyList<nint>>(_layers.Count);
+        foreach (var (_, source) in _layers) layers.Add(source());
+
+        var ours = new HashSet<nint>();
+        foreach (var layer in layers)
+            foreach (var hwnd in layer)
+                if (hwnd != 0) ours.Add(hwnd);
+
+        if (ours.Count == 0) return false;
+
+        // ① 置顶位还在吗
+        foreach (var hwnd in ours)
+        {
+            if (!PInvoke.IsWindow((HWND)hwnd)) continue;
+
+            var ex = (WINDOW_EX_STYLE)(uint)PInvoke.GetWindowLong(
+                (HWND)hwnd, WINDOW_LONG_PTR_INDEX.GWL_EXSTYLE);
+            if (!ex.HasFlag(WINDOW_EX_STYLE.WS_EX_TOPMOST)) return true;
+        }
+
+        // ② 我们内部的相对顺序还对吗
+        //    沿顶层窗口链走一遍，把我们各层窗口出现的位置记下来，
+        //    与层级栈声明的顺序比对（栈索引越小应当越靠上）。
+        var seen = new Dictionary<nint, int>();
+        var hwnd2 = PInvoke.GetTopWindow(default);
+        var guard = 0;
+        while (hwnd2 != default && guard++ < 5000)
+        {
+            if (ours.Contains((IntPtr)hwnd2)) seen[(IntPtr)hwnd2] = guard;
+
+            // 收齐了就提前退出，不必走完整条链。
+            if (seen.Count == ours.Count) break;
+
+            hwnd2 = PInvoke.GetWindow(hwnd2, GET_WINDOW_CMD.GW_HWNDNEXT);
+        }
+
+        var expected = new List<nint>();
+        for (var i = 0; i < layers.Count; i++)
+            foreach (var hwnd in layers[i])
+                if (hwnd != 0 && seen.ContainsKey(hwnd)) expected.Add(hwnd);
+
+        var actual = expected.OrderBy(h => seen[h]).ToList();
+
+        if (expected.SequenceEqual(actual))
+        {
+            SkippedCount++;
+            return false;
+        }
+
+        return true;
+    }
+
+    // ---------------------------------------------------------------- 前台变更监听
+
+    private WINEVENTPROC? _foregroundProc;
+    private UnhookWinEventSafeHandle? _foregroundHook;
+    private long _lastEventReassertMs;
+
+    /// <summary>
+    /// 订阅前台窗口变更事件，在「别人抢到前台」时重申一次置顶。
+    ///
+    /// 这是替代「无条件定时重申」的做法：只在真的可能发生时动手，
+    /// 平时一次 SetWindowPos 都不发。
+    /// 用 `(uint)(PInvoke.WINEVENT_OUTOFCONTEXT | PInvoke.WINEVENT_SKIPOWNPROCESS)` —— 不注入目标进程，
+    /// 且忽略我们自己进程的事件（否则会话切换/设置面板激活都会触发）。
+    /// </summary>
+    public void WatchForeground()
+    {
+        if (_foregroundHook is not null) return;
+
+        _foregroundProc = OnForegroundChanged;
+
+        _foregroundHook = PInvoke.SetWinEventHook(
+            PInvoke.EVENT_SYSTEM_FOREGROUND,
+            PInvoke.EVENT_SYSTEM_FOREGROUND,
+            default,
+            _foregroundProc,
+            0, 0,
+            PInvoke.WINEVENT_OUTOFCONTEXT | PInvoke.WINEVENT_SKIPOWNPROCESS);
+    }
+
+    private void OnForegroundChanged(
+        HWINEVENTHOOK hook, uint eventId, HWND hwnd,
+        int idObject, int idChild, uint threadId, uint time)
+    {
+        // 节流：切换前台时事件可能密集触发，没必要每次都重申。
+        var now = Environment.TickCount64;
+        if (now - _lastEventReassertMs < 250) return;
+        _lastEventReassertMs = now;
+
+        Reassert();
+    }
+
+    public void StopWatching()
+    {
+        if (_foregroundHook is null) return;
+
+        // 用 SafeHandle 自己的 Dispose 而不是 UnhookWinEvent —— CsWin32 为它生成了
+        // SafeHandle 包装，手动调用 API 反而会漏掉引用计数。
+        _foregroundHook.Dispose();
+        _foregroundHook = null;
+        _foregroundProc = null;
+    }
+
+    /// <summary>
     /// 重申整个层级栈。
     ///
     /// 从下往上逐个插到 topmost 最前 —— 这样最后一次插入的（栈顶）确实在最前面，
@@ -57,6 +188,8 @@ public sealed class ZOrderManager
     /// </summary>
     public void Reassert()
     {
+        ReassertCount++;
+
         for (var i = _layers.Count - 1; i >= 0; i--)
         {
             foreach (var hwnd in _layers[i].Source())

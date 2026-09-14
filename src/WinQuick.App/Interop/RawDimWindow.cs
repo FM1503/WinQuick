@@ -78,8 +78,22 @@ public sealed class RawDimWindow : IDisposable
             Instances[(IntPtr)hwnd] = this;
 
         // 统一 alpha：不需要逐像素合成，所以代价与窗口面积无关，全屏也几乎零成本。
+        SetAlpha(alpha);
+    }
+
+    /// <summary>
+    /// 就地更新遮罩透明度。
+    ///
+    /// 这是改透明度的正确做法 —— **不需要销毁重建窗口**。
+    /// 之前拖动"遮罩深浅"滑块时走的是"销毁整屏遮罩窗口 + 重建"，
+    /// 那会在每次滑动时让整个屏幕闪一下（用户报的"一直闪烁"就有这一份）。
+    /// 改 alpha 只是一个分层窗口属性，系统重新合成一次即可，观感上是连续变化的。
+    /// </summary>
+    public void SetAlpha(byte alpha)
+    {
+        if (!IsValid) return;
         PInvoke.SetLayeredWindowAttributes(
-            hwnd, default, alpha, LAYERED_WINDOW_ATTRIBUTES_FLAGS.LWA_ALPHA);
+            _hwnd, default, alpha, LAYERED_WINDOW_ATTRIBUTES_FLAGS.LWA_ALPHA);
     }
 
     internal nint HandleValue => _hwnd;

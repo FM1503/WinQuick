@@ -6,6 +6,7 @@ using WinQuick.App.Diagnostics;
 using WinQuick.App.Interop;
 using WinQuick.App.Radial;
 using WinQuick.Core.Config;
+using WinQuick.Core.Hotkey;
 using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.UI.WindowsAndMessaging;
@@ -31,6 +32,10 @@ public sealed class OverlayController : IDisposable
     private readonly List<RawDimWindow> _dims = [];
     private RadialWindow _radial;   // 菜单热重载时会整体替换，所以不是 readonly
     private readonly OverlayActionBar _actionBar = new();
+
+    // 设置面板按需创建：设置是低频操作，为它常驻一个窗口不值得。
+    // 首次打开后保留，避免反复创建。
+    private SettingsPanel? _settingsPanel;
     private readonly ForegroundFocus _focus = new();
     private readonly DispatcherTimer _topmostTimer;
 
@@ -50,11 +55,12 @@ public sealed class OverlayController : IDisposable
         };
         _topmostTimer.Tick += (_, _) => ReassertTopmost();
 
+        // 设置改为开在覆盖层会话里（面板与轮盘同时在场），所以这里不再收掉覆盖层 ——
+        // 收掉的话"改动立刻看到效果"就无从谈起了。
         _actionBar.SettingsRequested += (_, _) =>
         {
-            // 先收覆盖层再开设置界面，否则设置窗口会被置顶的覆盖层压住。
-            Hide();
-            SettingsRequested?.Invoke(this, EventArgs.Empty);
+            if (IsSettingsOpen) CloseSettings();
+            else OpenSettings();
         };
 
         _actionBar.ExitRequested += (_, _) => ExitRequested?.Invoke(this, EventArgs.Empty);
@@ -154,8 +160,14 @@ public sealed class OverlayController : IDisposable
     /// </summary>
     public event EventHandler<(int ParentIndex, int ChildIndex)>? ItemActivated;
 
-    /// <summary>用户在覆盖层左上角点了「设置」。</summary>
-    public event EventHandler? SettingsRequested;
+    /// <summary>设置面板正在显示。</summary>
+    public bool IsSettingsOpen => _settingsPanel is { IsVisible: true };
+
+    /// <summary>设置面板里的改动需要被应用与持久化。参数是组装好的新配置。</summary>
+    public event EventHandler<AppConfig>? SettingsChanged;
+
+    /// <summary>设置面板已关闭（用户点 ✕ 或按 Esc）。</summary>
+    public event EventHandler? SettingsClosed;
 
     /// <summary>用户在覆盖层左上角点了「退出」。</summary>
     public event EventHandler? ExitRequested;
@@ -242,6 +254,7 @@ public sealed class OverlayController : IDisposable
         _radial.StopInteraction();
         foreach (var dim in _dims) dim.Hide();
         _actionBar.Hide();
+        _settingsPanel?.Hide();
 
         // 退场期间不再接受输入，否则用户在收缩过程中还能点到扇区。
         _radial.IsHitTestVisible = false;
@@ -285,7 +298,104 @@ public sealed class OverlayController : IDisposable
         if (hwnd == default) return false;
         if (hwnd == (HWND)_radial.HandleValue) return true;
         if (hwnd == (HWND)_actionBar.HandleValue) return true;
+        if (_settingsPanel is not null && hwnd == (HWND)_settingsPanel.HandleValue) return true;
         return _dims.Any(d => hwnd == (HWND)d.HandleValue);
+    }
+
+    /// <summary>
+    /// 打开设置面板。面板与轮盘同时在场，所以拖滑块、改高亮色都能立刻在轮盘上看到效果。
+    /// </summary>
+    public void OpenSettings()
+    {
+        if (_disposed || !IsVisible) return;
+        if (IsSettingsOpen) return;
+
+        _settingsPanel ??= CreateSettingsPanel();
+
+        PositionSettingsPanel();
+        _settingsPanel.Show();
+        _settingsPanel.PlayEntrance();
+
+        // 面板需要键盘输入（热键录制、文本框），所以它会夺走轮盘的焦点。
+        // 这不影响覆盖层 —— OnRadialFocusLost 会认出"焦点落在自己人身上"。
+        ForegroundFocus.AttachTo(_settingsPanel);
+    }
+
+    /// <summary>关闭设置面板，把焦点还给轮盘（否则 Esc 就不再关闭覆盖层了）。</summary>
+    public void CloseSettings()
+    {
+        if (_settingsPanel is not { IsVisible: true }) return;
+
+        _settingsPanel.Hide();
+        ForegroundFocus.AttachTo(_radial);
+        SettingsClosed?.Invoke(this, EventArgs.Empty);
+    }
+
+    private SettingsPanel CreateSettingsPanel()
+    {
+        var panel = new SettingsPanel(
+            _settings,
+            probeHotkey: spec => _settingsPanelProbe(spec),
+            apply: config => SettingsChanged?.Invoke(this, config));
+
+        panel.CloseRequested += (_, _) => CloseSettings();
+        return panel;
+    }
+
+    /// <summary>由常驻装配注入的热键探测（会临时释放当前热键，见 HotkeyManager.ProbeTemporarily）。</summary>
+    private Func<Core.Hotkey.HotkeySpec, (bool Available, int ErrorCode)>? _settingsPanelProbe;
+
+    /// <summary>设置面板显示时所用的当前配置。</summary>
+    private AppConfig _settings = new();
+
+    /// <summary>告诉覆盖层"面板打开时应当以哪份配置为基准"。</summary>
+    public void SetSettingsSource(AppConfig config) => _settings = config;
+
+    /// <summary>注入热键探测函数。</summary>
+    public void SetHotkeyProbe(Func<Core.Hotkey.HotkeySpec, (bool Available, int ErrorCode)> probe) =>
+        _settingsPanelProbe = spec => probe(spec);
+
+    /// <summary>
+    /// 把设置面板摆在光标所在屏的**另一侧**，尽量避免压住轮盘
+    /// （轮盘跟着光标走，所以把面板放到光标的反方向最不容易重叠）。
+    /// </summary>
+    private void PositionSettingsPanel()
+    {
+        if (_settingsPanel is null) return;
+
+        var monitor = MonitorLayout.AtCursor();
+        var scale = monitor.Scale;
+        var panelWidth = (int)Math.Round(_settingsPanel.Width * scale);
+        var panelHeight = (int)Math.Round(_settingsPanel.ActualHeight * scale);
+        if (panelHeight <= 0) panelHeight = (int)Math.Round(620 * scale);
+
+        const int margin = 24;
+        var cursorOnLeftHalf = !MonitorLayout.TryGetCursorPosition(out var cx, out _)
+                               || cx < monitor.X + monitor.Width / 2;
+
+        var left = cursorOnLeftHalf
+            ? monitor.Right - panelWidth - (int)Math.Round(margin * scale)
+            : monitor.X + (int)Math.Round(margin * scale);
+
+        var top = monitor.Y + (monitor.Height - panelHeight) / 2;
+
+        var hwnd = (HWND)_settingsPanel.HandleValue;
+        PInvoke.SetWindowPos(hwnd, default, left, top, 0, 0,
+            SET_WINDOW_POS_FLAGS.SWP_NOSIZE |
+            SET_WINDOW_POS_FLAGS.SWP_NOZORDER |
+            SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE |
+            SET_WINDOW_POS_FLAGS.SWP_NOOWNERZORDER);
+    }
+
+    /// <summary>
+    /// 实时更新随设置变化的外观项。改动立刻生效，不等保存。
+    /// </summary>
+    public void ApplyRuntimeStyle(AppConfig config)
+    {
+        ApplyDimOpacity(config.Appearance.DimOpacity);
+        _radial.ApplyAccent(config.Appearance.AccentColor);
+        _radial.ApplyHoverDelays(config.Behavior.HoverOpenDelayMs, config.Behavior.HoverCloseDelayMs);
+        _radial.ApplyAnimations(config.Behavior.AnimationsEnabled);
     }
 
     /// <summary>诊断用：操作条句柄。</summary>
@@ -293,6 +403,9 @@ public sealed class OverlayController : IDisposable
 
     /// <summary>诊断用：操作条是否可见。</summary>
     internal bool IsActionBarVisible => _actionBar.IsVisible;
+
+    /// <summary>诊断用：设置面板句柄。</summary>
+    internal nint SettingsPanelHandle => _settingsPanel?.HandleValue ?? 0;
 
     /// <summary>诊断用：「设置」按钮中心在屏幕上的物理像素坐标。</summary>
     internal (int X, int Y)? ActionBarSettingsButtonCenterInScreen()
@@ -423,5 +536,6 @@ public sealed class OverlayController : IDisposable
 
         _radial.Close();
         _actionBar.Close();
+        _settingsPanel?.Close();
     }
 }

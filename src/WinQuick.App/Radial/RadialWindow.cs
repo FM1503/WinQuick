@@ -155,6 +155,20 @@ public sealed class RadialWindow : Window
         _view.SetHover(-1);
     }
 
+    /// <summary>实时更新高亮色。设置面板改色后立刻可见。</summary>
+    public void ApplyAccent(string? hex) => _view.SetAccentOverride(hex);
+
+    /// <summary>实时更新悬停延迟。</summary>
+    public void ApplyHoverDelays(int? openMs, int? closeMs) =>
+        _hoverMachine.UpdateDelays(openMs, closeMs);
+
+    /// <summary>
+    /// 实时更新动画开关。null = 跟随系统「在 Windows 中显示动画」的无障碍设置。
+    /// </summary>
+    public void ApplyAnimations(bool? enabled) => _animationsOverride = enabled;
+
+    private bool? _animationsOverride;
+
     /// <summary>诊断用：子弧是否可见。</summary>
     internal bool IsChildArcVisible => _view.IsChildArcVisible;
 
@@ -273,9 +287,14 @@ public sealed class RadialWindow : Window
         _view.Root.Opacity = 1.0;
     }
 
-    /// <summary>系统「在 Windows 中显示动画」的无障碍开关。</summary>
-    private static bool AnimationsEnabled()
+    /// <summary>
+    /// 是否播放动画。用户显式设了就用他的选择，否则跟随系统
+    /// 「在 Windows 中显示动画」的无障碍开关。
+    /// </summary>
+    private bool AnimationsEnabled()
     {
+        if (_animationsOverride is { } explicitValue) return explicitValue;
+
         try
         {
             return SystemParameters.ClientAreaAnimation;

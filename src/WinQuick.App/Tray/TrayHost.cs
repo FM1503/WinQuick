@@ -131,6 +131,8 @@ public sealed class TrayHost : IDisposable
         _autoStartItem.IsChecked = AutoStart.IsEnabled;
         menu.Items.Add(_autoStartItem);
 
+        // 设置开在覆盖层里（面板与轮盘同时在场，改动可即时预览），
+        // 所以这一项会先把轮盘唤出来。
         menu.Items.Add(MakeItem("设置…", () => OpenSettings?.Invoke()));
         menu.Items.Add(MakeItem("打开配置文件夹", OpenConfigFolder));
         menu.Items.Add(MakeItem("查看崩溃日志", OpenLogFolder));

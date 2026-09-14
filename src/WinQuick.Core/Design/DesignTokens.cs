@@ -293,8 +293,14 @@ public sealed record PerspectiveTokens
 
 public sealed record InteractionTokens
 {
-    public int HoverOpenDelayMs { get; init; } = 200;
-    public int HoverCloseDelayMs { get; init; } = 350;
+    /// <summary>展开延迟的设计基线。用户没在配置里指定时用它。</summary>
+    public const int DefaultOpenDelayMs = 200;
+
+    /// <summary>收起延迟的设计基线。</summary>
+    public const int DefaultCloseDelayMs = 350;
+
+    public int HoverOpenDelayMs { get; init; } = DefaultOpenDelayMs;
+    public int HoverCloseDelayMs { get; init; } = DefaultCloseDelayMs;
     public double ChildSpanDegrees { get; init; } = 90;
     public double ChildMinSectorDegrees { get; init; } = 25;
 }

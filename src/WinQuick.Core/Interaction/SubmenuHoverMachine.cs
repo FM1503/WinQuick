@@ -45,7 +45,7 @@ public enum HoverAction
 /// </summary>
 public sealed class SubmenuHoverMachine
 {
-    private readonly InteractionTokens _tokens;
+    private InteractionTokens _tokens;
 
     private int _openParent = -1;
     private int _pendingParent = -1;
@@ -57,6 +57,19 @@ public sealed class SubmenuHoverMachine
     public SubmenuHoverMachine(InteractionTokens tokens)
     {
         _tokens = tokens;
+    }
+
+    /// <summary>
+    /// 更新延迟配置。设置面板改完延迟要立刻生效，
+    /// 而重建状态机会丢掉"当前展开的是哪个子菜单"这个状态 —— 那会让预览断掉。
+    /// </summary>
+    public void UpdateDelays(int? openMs, int? closeMs)
+    {
+        _tokens = _tokens with
+        {
+            HoverOpenDelayMs = openMs ?? InteractionTokens.DefaultOpenDelayMs,
+            HoverCloseDelayMs = closeMs ?? InteractionTokens.DefaultCloseDelayMs,
+        };
     }
 
     /// <summary>当前已展开子弧的父扇区索引，-1 表示没有。</summary>

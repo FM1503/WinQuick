@@ -43,6 +43,32 @@ public sealed partial class RadialRingView
     private readonly MenuSpec _menu;
     private int _hover = -1;
 
+    /// <summary>
+    /// 高亮色的用户覆盖值（#RRGGBB）。null 表示用设计基线。
+    /// 设置面板改色时要立刻可见，所以这里必须能给视图一个新值，
+    /// 而不是等重建窗口 —— 重建会让"改动即预览"这件事断掉。
+    /// </summary>
+    private string? _accentOverride;
+
+    /// <summary>当前生效的高亮色画刷。</summary>
+    private Brush AccentFill =>
+        _accentOverride is null
+            ? TokenBrushes.Brush(_tokens.Color.HoverFill)
+            : TokenBrushes.Brush(_accentOverride);
+
+    /// <summary>更新高亮色并立即重绘当前悬停状态。</summary>
+    public void SetAccentOverride(string? hex)
+    {
+        if (string.Equals(_accentOverride, hex, StringComparison.OrdinalIgnoreCase)) return;
+
+        _accentOverride = hex;
+
+        var previous = _hover;
+        _hover = -2;              // 强制 SetHover 走一遍（它靠"索引没变就提前返回"）
+        SetHover(previous);
+        ApplyChildHover();
+    }
+
     internal RadialRingView(
         Canvas root, DesignTokens tokens, Point center, SectorSpan[] spans,
         ShapePath[] sectors, SectorLabel[] labels, Image[] icons, ShapePath?[] childMarkers,
@@ -94,10 +120,11 @@ public sealed partial class RadialRingView
         if (index == _hover) return;
         _hover = index;
 
+
         var colors = _tokens.Color;
         var normalFill = TokenBrushes.Brush(colors.SectorFill, colors.SectorFillAlpha);
         var normalStroke = TokenBrushes.Brush(colors.SectorStroke, colors.SectorStrokeAlpha);
-        var hoverFill = TokenBrushes.Brush(colors.HoverFill);
+        var hoverFill = AccentFill;
         var hoverStroke = TokenBrushes.Brush(colors.HoverStroke, colors.HoverStrokeAlpha);
 
         for (var i = 0; i < _sectors.Length; i++)

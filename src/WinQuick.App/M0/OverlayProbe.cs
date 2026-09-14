@@ -541,7 +541,9 @@ public static class OverlayProbe
         }
 
         var settingsRequested = false;
-        overlay.SettingsRequested += (_, _) => settingsRequested = true;
+        overlay.SettingsClosed += (_, _) => { };
+        // 面板改为开在覆盖层里：点击「设置」现在应当直接打开面板，而不是发一个事件出去。
+        var settingsOpenedBefore = overlay.IsSettingsOpen;
 
         var bar = (HWND)overlay.ActionBarHandle;
         if (!PInvoke.GetWindowRect(bar, out var rect))

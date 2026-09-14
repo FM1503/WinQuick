@@ -29,6 +29,13 @@ public sealed class ResidentHost : IDisposable
     private readonly SingleInstance _singleInstance = new();
     private readonly ConfigStore _config = new();
     private readonly ConfigReloadResult _initialLoad;
+
+    /// <summary>配置写盘的去抖计时器。设置面板每拖一格滑块都会触发一次改动，
+    /// 逐个写盘既无必要也伤磁盘。</summary>
+    private readonly DispatcherTimer _saveDebounce;
+
+    /// <summary>上一次已知的菜单内容签名，用来判断菜单是否**真的**变了。</summary>
+    private string _menuSignature = "";
     private MenuSpec _menu;
     private readonly HotkeyManager _hotkeys;
     private readonly OverlayController _overlay;
@@ -36,7 +43,6 @@ public sealed class ResidentHost : IDisposable
     private readonly TrayHost _tray;
     private readonly DispatcherTimer _hookHealthTimer;
 
-    private SettingsWindow? _settings;
     private bool _disposed;
 
     public ResidentHost()
@@ -54,8 +60,10 @@ public sealed class ResidentHost : IDisposable
 
         _hotkeys.Pressed += (_, _) => _overlay.Toggle();
         _overlay.ItemActivated += OnItemActivated;
-        _overlay.SettingsRequested += (_, _) => OpenSettings();
         _overlay.ExitRequested += (_, _) => Application.Current.Shutdown(0);
+        _overlay.SettingsChanged += (_, config) => OnSettingsChanged(config);
+        _overlay.SetHotkeyProbe(spec => _hotkeys.ProbeTemporarily(spec));
+        _overlay.SetSettingsSource(_config.Config);
         ActionExecutor.Completed += OnActionCompleted;
 
         _session.SessionLocked += (_, _) => _overlay.Hide();
@@ -66,6 +74,16 @@ public sealed class ResidentHost : IDisposable
             Interval = HookHealthInterval,
         };
         _hookHealthTimer.Tick += (_, _) => CheckHookHealth();
+
+        _saveDebounce = new DispatcherTimer(DispatcherPriority.Background)
+        {
+            Interval = TimeSpan.FromMilliseconds(500),
+        };
+        _saveDebounce.Tick += (_, _) =>
+        {
+            _saveDebounce.Stop();
+            PersistSettings();
+        };
     }
 
     /// <summary>本进程是否是首个实例。false 时调用方应当直接退出。</summary>
@@ -85,6 +103,8 @@ public sealed class ResidentHost : IDisposable
         // 开机自启只在首次运行时按配置写一次。之后注册表就是事实来源 ——
         // 每次启动都按配置覆盖的话，用户从托盘关掉自启后，下次启动又会被配置打开。
         if (_config.DefaultsWereCreated) AutoStart.SetEnabled(_config.Config.Startup.AutoStart);
+
+        _menuSignature = _config.SerializeMenu(_menu);
 
         _config.StartWatching();
         _config.Changed += OnConfigChanged;
@@ -185,14 +205,25 @@ public sealed class ResidentHost : IDisposable
     {
         var problems = _config.LastProblems;
 
-        // 菜单：仅在内容真的换了才重建窗口（重建有成本，且会丢掉预热状态）。
-        if (!ReferenceEquals(_config.Menu, _menu))
+        // 菜单：仅在**内容**真的换了才重建窗口。
+        //
+        // 不能比引用：配置热重载每次都会解析出一个新的 MenuSpec 实例，
+        // 而设置面板里的任何改动都会写一次配置、触发一次热重载 ——
+        // 按引用比较会导致"调一下遮罩深浅就重建整个轮盘窗口"，
+        // 预览被打断、还白付一次重建成本。
+        var signature = _config.SerializeMenu(_config.Menu);
+        if (!string.Equals(signature, _menuSignature, StringComparison.Ordinal))
         {
+            _menuSignature = signature;
             _menu = _config.Menu;
+
+            // 面板开着时重建轮盘会打断预览，所以先收面板。
+            if (_overlay.IsSettingsOpen) _overlay.CloseSettings();
             _overlay.RebuildForMenu(_menu);
         }
 
-        _overlay.ApplyDimOpacity(_config.Config.Appearance.DimOpacity);
+        // 设置面板改的东西也要能在别处（比如手动改 config.json）生效。
+        _overlay.ApplyRuntimeStyle(_config.Config);
 
         // 热键：仅在配置里的值变了才重新注册，避免无谓地注销再注册。
         var wanted = ResolveHotkey();
@@ -211,56 +242,52 @@ public sealed class ResidentHost : IDisposable
             result.Summary + "。已保留上一份有效配置，程序继续运行。");
     }
 
-    /// <summary>打开设置界面（托盘菜单与重复启动都会调用）。</summary>
+    /// <summary>
+    /// 打开设置（托盘菜单与重复启动都会调用）。
+    ///
+    /// 设置面板开在**覆盖层会话里**，所以先把覆盖层唤出来。
+    /// 这样面板与轮盘同时在场：拖遮罩滑块、改高亮色、调悬停延迟，
+    /// 都能立刻在旁边的轮盘上看到效果 —— 独立对话框做不到这一点。
+    /// </summary>
     public void OpenSettings()
     {
-        if (_settings is { IsLoaded: true })
-        {
-            if (_settings.WindowState == WindowState.Minimized)
-                _settings.WindowState = WindowState.Normal;
+        _overlay.SetSettingsSource(_config.Config);
 
-            _settings.Activate();
-            return;
-        }
-
-        _settings = new SettingsWindow(
-            _config.Config,
-            probeHotkey: spec => _hotkeys.ProbeTemporarily(spec),
-            save: SaveFromSettings);
-
-        _settings.Closed += (_, _) => _settings = null;
-        _settings.Show();
-
-        // 显式把设置窗口提到前台。
-        //
-        // 为什么不能指望 Show() 自己搞定：用户可能是点左上角操作条打开设置的，
-        // 而操作条是 WS_EX_NOACTIVATE 的 —— 点它不改变前台窗口，我们进程也就没有
-        // 获得前台权限，此时 SetForegroundWindow 会被系统拒绝，设置窗口可能开在别的窗口后面。
-        // AttachTo 里有 AttachThreadInput 兜底。
-        Interop.ForegroundFocus.AttachTo(_settings);
-        _settings.Activate();
+        if (!_overlay.IsVisible) _overlay.Show();
+        _overlay.OpenSettings();
     }
 
     /// <summary>
-    /// 设置界面点保存。返回是否成功与失败原因。
-    ///
-    /// 顺序：先写自启注册表（它可能因组策略失败，要能让用户知道），
-    /// 再写配置文件，最后把变化应用到运行中的组件（热键、遮罩透明度）。
+    /// 设置面板里的改动。先**立刻应用**外观（这是"改动即预览"的关键），
+    /// 再**去抖写盘** —— 拖一次滑块会触发很多次改动，逐个写盘既无必要也伤磁盘。
     /// </summary>
-    private (bool Ok, string? Error) SaveFromSettings(AppConfig config)
+    private void OnSettingsChanged(AppConfig config)
     {
+        _overlay.SetSettingsSource(config);
+        _overlay.ApplyRuntimeStyle(config);
+
+        _pendingSettings = config;
+        _saveDebounce.Stop();
+        _saveDebounce.Start();
+    }
+
+    private AppConfig? _pendingSettings;
+
+    private void PersistSettings()
+    {
+        if (_pendingSettings is not { } config) return;
+        _pendingSettings = null;
+
         var autoStartOk = AutoStart.SetEnabled(config.Startup.AutoStart);
 
         if (!_config.SaveConfig(config, out var error))
-            return (false, error);
+        {
+            _tray.ShowBalloon("WinQuick 无法保存设置", error ?? "未知原因");
+            return;
+        }
 
-        // SaveConfig 内部会 Reload，于是 OnConfigChanged 已经被触发、
-        // 热键与菜单都已按新配置重新应用。这里只需处理它覆盖不到的部分。
-        _overlay.ApplyDimOpacity(config.Appearance.DimOpacity);
-
-        return autoStartOk
-            ? (true, null)
-            : (true, "设置已保存，但开机自启写入注册表失败（可能被组策略或安全软件限制）。");
+        if (!autoStartOk)
+            _tray.ShowBalloon("WinQuick", "开机自启写入注册表失败（可能被组策略或安全软件限制）。");
     }
 
     private void CheckHookHealth()
@@ -288,7 +315,8 @@ public sealed class ResidentHost : IDisposable
         _disposed = true;
 
         _hookHealthTimer.Stop();
-        try { _settings?.Close(); } catch { /* 已关闭则忽略 */ }
+        _saveDebounce.Stop();
+        PersistSettings();
         _config.Changed -= OnConfigChanged;
         _config.Dispose();
         ActionExecutor.Completed -= OnActionCompleted;

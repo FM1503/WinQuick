@@ -24,6 +24,10 @@ public partial class App : Application
         AppDomain.CurrentDomain.UnhandledException += (_, args) =>
             CrashLog.Write("AppDomain.UnhandledException", args.ExceptionObject as Exception);
 
+        // 令牌资源必须在任何窗口创建之前装好：XAML 里用 DynamicResource 引用它们，
+        // 缺了会在创建窗口时抛异常。放在这里也保证了探针模式同样可用。
+        Design.TokenResources.Install();
+
         var cli = CliOptions.Parse(CommandLineArgs());
 
         switch (cli.Command)

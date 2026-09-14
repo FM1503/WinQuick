@@ -179,7 +179,7 @@ public sealed partial class RadialRingView
         var colors = tokens.Color;
         var normalFill = TokenBrushes.Brush(colors.SectorFill, colors.SectorFillAlpha);
         var normalStroke = TokenBrushes.Brush(colors.SectorStroke, colors.SectorStrokeAlpha);
-        var hoverFill = TokenBrushes.Brush(colors.HoverFill);
+        var hoverFill = AccentFill;
         var hoverStroke = TokenBrushes.Brush(colors.HoverStroke, colors.HoverStrokeAlpha);
 
         for (var i = 0; i < _childSectors.Count; i++)

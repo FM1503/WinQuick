@@ -104,6 +104,16 @@ public sealed partial class RadialRingView
         InvokePanelRowForProbe(0);      // 0 = 确定
     }
 
+    /// <summary>
+    /// 诊断用：面板在窗口内的矩形。
+    ///
+    /// 光验"挂进视觉树了"是不够的 —— 对象建好但接错位置照样看不见。
+    /// 这个矩形可以换算成屏幕坐标去问 WindowFromPoint：那里到底点不点得到。
+    /// </summary>
+    internal Rect? PanelBoundsForProbe => _panel is { } panel
+        ? new Rect(Canvas.GetLeft(panel), Canvas.GetTop(panel), panel.ActualWidth, panel.ActualHeight)
+        : null;
+
     /// <summary>诊断用：面板当前针对的是哪一项（第一层索引, 子项索引或 -1）。</summary>
     internal (int RootIndex, int ChildIndex) EditTargetForProbe => (_editRootIndex, _editChildIndex);
 
@@ -150,24 +160,33 @@ public sealed partial class RadialRingView
     }
 
     /// <summary>
-    /// 点「＋」时的选择面板。
+    /// 点「＋」时的选择面板。第一层与子环**都走这里**。
     ///
-    /// 原来这里直接弹文件浏览器，于是**没有任何途径新建带子项的项** —— 用户报的就是这条：
-    /// 想加一个像"开发工具"那样的分组，做不到。
+    /// 起初子环的「＋」是直接弹文件浏览器的（理由是"那里给不出两个选项"），
+    /// 但那样两个「＋」行为不一致：用户点了一个直接进文件浏览器、
+    /// 完全看不到"新建分组"，而它恰好在另一个「＋」上。用户报的就是这条。
     ///
-    /// 分组只在第一层建：子环里再放分组就是第三层，而当前只支持两层
+    /// 现在两边都先出一块面板 —— 这个症状从"取决于你点了哪个加号"变成不可能发生。
+    /// 子环那块只给一个按钮，但把"分组在哪里建"写清楚了：
+    /// 多一次点击，换掉一次困惑。
+    ///
+    /// 分组只建在第一层：子环里再放分组就是第三层，而当前只支持两层
     /// （方案第七节：8 扇区下超过 2 层错误率对专家都不可接受）。
-    /// 所以子环的「＋」不弹这块面板，直接进文件浏览器 —— 那也给不出两个选项。
     /// </summary>
-    public void ShowAddChoice(int addSectorIndex)
+    /// <param name="isChild">true 表示这是子环的「＋」（加到当前展开的父项下面）。</param>
+    public void ShowAddChoice(int addSectorIndex, bool isChild = false)
     {
-        // 「＋」扇区的索引是**伪索引**：它等于菜单项数，不是任何一项的位置。
-        // 报给上层时必须翻译成"第一层"的 -1 —— 直接透传的话，上层会拿到一个
-        // 越界的父项索引。（这条是被 --add-sector-probe 抓到的：它报 parent=8。）
-        var parentIndex = IsAddSector(addSectorIndex) ? -1 : addSectorIndex;
+        // 索引语义在这里翻译干净：
+        // - 子环的「＋」加到**当前展开的那个父项**下；
+        // - 第一层的「＋」索引是**伪索引**（等于菜单项数），不是任何一项的位置，
+        //   报给上层要变成"第一层"的 -1。直接透传会让上层拿到越界的父项索引
+        //   （这条是被 --add-sector-probe 抓到的：它报 parent=8）。
+        var parentIndex = isChild
+            ? _childArcParent
+            : IsAddSector(addSectorIndex) ? -1 : addSectorIndex;
 
-        _editRootIndex = addSectorIndex;
-        _editChildIndex = -1;
+        _editRootIndex = isChild ? _childArcParent : addSectorIndex;
+        _editChildIndex = isChild ? addSectorIndex : -1;
 
         var rows = new List<(string Glyph, string Text, Action OnClick)>
         {
@@ -177,7 +196,12 @@ public sealed partial class RadialRingView
                 AddItemRequested?.Invoke(this, parentIndex);
             }),
 
-            ("\uE8F4", "新建分组…", () => EnterTextMode(
+        };
+
+        // 「新建分组」只在第一层给：子环里再放分组就是第三层，当前不支持。
+        if (!isChild)
+        {
+            rows.Add(("\uE8F4", "新建分组…", () => EnterTextMode(
                 title: "分组名称",
                 initial: "新建分组",
                 hint: "下一步选一个程序作为它的第一项。之后把鼠标移到这个分组上，"
@@ -186,14 +210,20 @@ public sealed partial class RadialRingView
                 {
                     DismissPanel();
                     AddGroupRequested?.Invoke(this, (parentIndex, text));
-                })),
-        };
+                })));
+        }
 
         ShowPanel(
             kind: PanelKind.AddChoice,
-            anchorAngle: _spans[addSectorIndex].CenterDeg,
-            anchorRadius: TokenStore.Current.Radius.Ring1Outer + 26,
-            rows);
+            anchorAngle: isChild
+                ? _childSpans[addSectorIndex].CenterDeg
+                : _spans[addSectorIndex].CenterDeg,
+            anchorRadius: isChild ? TokenStore.Current.Radius.Ring2Outer + 26
+                                  : TokenStore.Current.Radius.Ring1Outer + 26,
+            rows,
+            hint: isChild
+                ? "这里加的是该子菜单的项。要新建分组，请点最外圈的「＋」。"
+                : null);
     }
 
     /// <summary>收起面板（不触发任何动作）。</summary>
@@ -215,7 +245,8 @@ public sealed partial class RadialRingView
     /// </summary>
     private void ShowPanel(
         PanelKind kind, double anchorAngle, double anchorRadius,
-        IReadOnlyList<(string Glyph, string Text, Action OnClick)> rows)
+        IReadOnlyList<(string Glyph, string Text, Action OnClick)> rows,
+        string? hint = null)
     {
         DismissPanel();
         _panelKind = kind;
@@ -223,6 +254,19 @@ public sealed partial class RadialRingView
         var content = new StackPanel();
         foreach (var (glyph, text, onClick) in rows)
             content.Children.Add(MakePanelButton(glyph, text, onClick));
+
+        if (hint is not null)
+        {
+            content.Children.Add(new TextBlock
+            {
+                Text = hint,
+                FontSize = 11,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(7, 5, 7, 3),
+                Foreground = new SolidColorBrush(Color.FromArgb(170, 255, 255, 255)),
+                FontFamily = new FontFamily(TokenStore.Current.Typography.LabelFontFamily),
+            });
+        }
 
         var panel = new Border
         {

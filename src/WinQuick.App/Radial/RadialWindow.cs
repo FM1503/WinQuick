@@ -405,6 +405,13 @@ public sealed class RadialWindow : Window
     /// <summary>诊断用：改输入框文字并确认。</summary>
     internal void ConfirmPanelTextForProbe(string text) => _view.ConfirmPanelTextForProbe(text);
 
+    /// <summary>诊断用：编辑态、当前菜单项数、以及「＋」扇区索引（三个一起看才判得清）。</summary>
+    internal (bool EditMode, int ItemCount, int AddSector) RadialStateForProbe =>
+        (_editMode, _menu.Items.Count, _view.AddSectorIndex);
+
+    /// <summary>诊断用：面板在窗口内的矩形。</summary>
+    internal Rect? PanelBoundsForProbe => _view.PanelBoundsForProbe;
+
     /// <summary>诊断用：面板当前编辑的是哪一项。</summary>
     internal (int RootIndex, int ChildIndex) EditTargetForProbe => _view.EditTargetForProbe;
 
@@ -748,7 +755,9 @@ public sealed class RadialWindow : Window
                 if (_view.ChildArcParent < 0) break;
 
                 if (_view.IsChildAddSector(hit.Index))
-                    AddItemRequested?.Invoke(this, _view.ChildArcParent);
+                    // 子环的「＋」也先出面板 —— 两个「＋」行为不一致正是用户困惑的来源：
+                    // 点了一个直接进文件浏览器，就完全看不到"新建分组"（它在另一个「＋」上）。
+                    _view.ShowAddChoice(hit.Index, isChild: true);
                 else
                     // 子项是叶子：执行它。父索引与子索引一起报上去，由上层解析成具体动作。
                     ItemActivated?.Invoke(this, (_view.ChildArcParent, hit.Index));

@@ -151,9 +151,12 @@ public static class AddSectorProbe
             var labels = overlay.PanelRowLabelsForProbe;
             var hasProgram = labels.Any(l => l.Contains("添加程序"));
             var hasGroup = labels.Any(l => l.Contains("新建分组"));
+            results.Add(("第一层「＋」先出面板、不直接进文件浏览器",
+                overlay.PanelKindForProbe == "AddChoice" && addRequested is null,
+                $"kind={overlay.PanelKindForProbe}，add={addRequested?.ToString() ?? "无"}"));
+
             results.Add(("「＋」面板同时给出加程序与建分组",
-                overlay.PanelKindForProbe == "AddChoice" && hasProgram && hasGroup && addRequested is null,
-                string.Join(" / ", labels)));
+                hasProgram && hasGroup, string.Join(" / ", labels)));
 
             // 选「添加程序…」→ 这时才发加项请求。
             var programRow = labels.ToList().FindIndex(l => l.Contains("添加程序"));
@@ -165,6 +168,85 @@ public static class AddSectorProbe
             results.Add(("选「添加程序…」后才请求加项",
                 addRequested == -1 && activated is null && !overlay.PanelAttached,
                 $"parent={addRequested?.ToString() ?? "无"}"));
+
+            // ---- 真实鼠标消息路径 ---------------------------------------------
+            // 上面那些「点 X」走的是把命中结果直接喂给分派函数（ClickForProbe）。
+            // 那能验"分派逻辑对不对"，但验不了"真实的一次鼠标按下会不会走到那里"——
+            // 用户报的恰恰是后者：点「＋」直接进了文件浏览器、没看到选择面板。
+            // 所以这一段改用 PostMessage(WM_LBUTTONDOWN) 打一次真实的鼠标按下。
+            ProbeOutput.Section("真实鼠标按下（WM_LBUTTONDOWN）");
+
+            var realBounds = overlay.RadialPhysicalBounds;
+            var realScale = MonitorLayout.AtCursor().Scale;
+            if (realBounds is { } rb)
+            {
+                // 「＋」扇区的中半径处，换算到屏幕物理像素。
+                var plusOffset = Vec2.FromPolar(midRadius * realScale, spans[rootAdd].CenterDeg);
+                var clickScreenX = (int)Math.Round(rb.X + rb.Width / 2.0 + plusOffset.X);
+                var clickScreenY = (int)Math.Round(rb.Y + rb.Height / 2.0 + plusOffset.Y);
+
+                var saved = new { X = 0, Y = 0 };
+                PInvoke.GetCursorPos(out var cursorBefore);
+                saved = new { X = cursorBefore.X, Y = cursorBefore.Y };
+
+                PInvoke.SetCursorPos(clickScreenX, clickScreenY);
+                await Task.Delay(250);
+
+                overlay.DismissPanelForProbe();
+                ResetRecorders();
+
+                var hwnd = (HWND)overlay.RadialHandle;
+                PInvoke.GetWindowRect(hwnd, out var windowRect);
+                var clientX = clickScreenX - windowRect.left;
+                var clientY = clickScreenY - windowRect.top;
+                var lParam = new LPARAM((clientY << 16) | (clientX & 0xFFFF));
+
+                PInvoke.PostMessage(hwnd, PInvoke.WM_LBUTTONDOWN, new WPARAM(1), lParam);
+                await Task.Delay(400);
+
+                ProbeOutput.Kv("按下位置（屏幕像素）", $"({clickScreenX},{clickScreenY})");
+                ProbeOutput.Kv("　按下后面板类型", overlay.PanelKindForProbe);
+                ProbeOutput.Kv("　面板给出的选项", string.Join(" / ", overlay.PanelRowLabelsForProbe));
+                ProbeOutput.Kv("　是否直接请求了加项", addRequested?.ToString() ?? "否");
+
+                results.Add(("真实鼠标按下「＋」弹出的是选择面板（而不是直接进文件浏览器）",
+                    overlay.PanelKindForProbe == "AddChoice" && addRequested is null,
+                    $"kind={overlay.PanelKindForProbe}，add={addRequested?.ToString() ?? "无"}"));
+
+                // 面板必须**看得见、点得到**：贴在扇区外缘，不能被裁掉或在窗口外。
+                if (overlay.PanelAttached)
+                {
+                    var panelRect = overlay.PanelBoundsForProbe;
+                    ProbeOutput.Kv("　面板在窗口内的位置", panelRect is { } pr
+                        ? $"({pr.Left:0},{pr.Top:0}) {pr.Width:0}x{pr.Height:0}"
+                        : "(取不到)");
+                    ProbeOutput.Kv("　窗口尺寸", $"{tokens.Radius.WindowSize} DIP");
+
+                    var inside = panelRect is { } r
+                        && r.Left >= 0 && r.Top >= 0
+                        && r.Right <= tokens.Radius.WindowSize
+                        && r.Bottom <= tokens.Radius.WindowSize;
+
+                    results.Add(("面板完整落在轮盘窗口内（不会被裁掉）", inside,
+                        panelRect?.ToString() ?? "无"));
+
+                    // 第一行按钮中心处的真实落点：必须还是轮盘窗口。
+                    // 落在别处就意味着"面板看得见但点不动"。
+                    if (panelRect is { } p2)
+                    {
+                        var rowX = (int)Math.Round(rb.X + (p2.Left + p2.Width / 2) * realScale);
+                        var rowY = (int)Math.Round(rb.Y + (p2.Top + 20) * realScale);
+                        var hitWindow = PInvoke.WindowFromPoint(new System.Drawing.Point(rowX, rowY));
+                        ProbeOutput.Kv("　面板第一行处的落点窗口",
+                            hitWindow == hwnd ? "轮盘窗口本身" : $"0x{(nint)hitWindow:X}（不是轮盘）");
+                        results.Add(("面板第一行点得到", hitWindow == hwnd,
+                            $"0x{(nint)hitWindow:X} vs 0x{(nint)hwnd:X}"));
+                    }
+                }
+
+                PInvoke.SetCursorPos(saved.X, saved.Y);
+                await Task.Delay(150);
+            }
 
             // 选「新建分组…」→ 转入命名输入，确认后发出建分组请求。
             var groupLabel = "探针分组";
@@ -266,9 +348,25 @@ public static class AddSectorProbe
                     ResetRecorders();
                     overlay.ClickForProbe(childAddPoint.X, childAddPoint.Y);
 
-                    ProbeOutput.Kv("点子弧「＋」→ AddItemRequested", addRequested?.ToString() ?? "(没有)");
+                    // 子环的「＋」必须**先出面板**，不能直接进文件浏览器。
+                    // 用户报的就是"点＋号直接打开文件浏览器、看不到新建分组" ——
+                    // 两个「＋」行为不一致正是那条的来源，所以这条核对要一直留着。
+                    ProbeOutput.Kv("点子弧「＋」弹出的面板", overlay.PanelKindForProbe);
+                    ProbeOutput.Kv("　面板给出的选项", string.Join(" / ", overlay.PanelRowLabelsForProbe));
+                    ProbeOutput.Kv("　是否直接请求了加项（应当还没）", addRequested?.ToString() ?? "没有（对）");
+
+                    results.Add(("点子环「＋」先出面板、不直接进文件浏览器",
+                        overlay.PanelKindForProbe == "AddChoice" && addRequested is null,
+                        $"kind={overlay.PanelKindForProbe}，add={addRequested?.ToString() ?? "无"}"));
+
+                    var childProgramRow = overlay.PanelRowLabelsForProbe.ToList()
+                        .FindIndex(l => l.Contains("添加程序"));
+                    overlay.InvokePanelRowForProbe(childProgramRow);
+
+                    ProbeOutput.Kv("　选「添加程序…」后 → AddItemRequested",
+                        addRequested?.ToString() ?? "(没有)");
                     ProbeOutput.Kv("　同时触发了 ItemActivated", activated is null ? "否" : $"是 {activated}");
-                    results.Add(("点子弧「＋」请求加进该父项",
+                    results.Add(("子环面板选「添加程序…」后请求加进该父项",
                         addRequested == parentIndex && activated is null,
                         $"parent={addRequested?.ToString() ?? "无"}，期望 {parentIndex}"));
                 }
@@ -529,9 +627,93 @@ public static class AddSectorProbe
 
             await Task.Delay(500);
             ProbeOutput.Kv("  覆盖层是否被关掉", overlay.IsVisible ? "否（异常）" : "是（当作取消）");
+
             results.Add(("右键「＋」不弹面板、按取消处理",
                 !overlay.IsPanelOpen && !overlay.IsVisible,
                 $"panel={overlay.IsPanelOpen}，visible={overlay.IsVisible}"));
+
+            // ---- 用户的实际路径：先开设置，再点「＋」 ------------------------
+            // 上面所有核对都用 SetEditModeForProbe 造出编辑态，而用户是按
+            // 左上角「设置」进编辑态的。这两者只差一件事：**设置面板开着**。
+            // 用户报的就是这条路径下点「＋」直接进了文件浏览器 ——
+            // 所以必须照着走一遍，而不是继续用探针后门。
+            ProbeOutput.Section("用户路径：打开设置后点「＋」");
+
+            // 这一段挪到了最后，而上面"右键「＋」按取消处理"那一条会把覆盖层关掉，
+            // 所以先重新显示 —— OpenSettings 在覆盖层不可见时是空操作。
+            overlay.Show();
+            await Task.Delay(700);
+
+            // 起点必须干净。上面几节可能把设置面板留在打开状态，而 OpenSettings
+            // 在"面板已开"时是空操作（也就不会去按编辑态）—— 那这一段就测了个寂寞。
+            if (overlay.IsSettingsOpen)
+            {
+                overlay.CloseSettings();
+                await Task.Delay(500);
+            }
+
+            ProbeOutput.Kv("起点：设置未开时的「＋」索引",
+                overlay.AddSectorIndexForProbe.ToString());
+            results.Add(("起点干净：设置未开时没有「＋」",
+                overlay.AddSectorIndexForProbe == -1,
+                overlay.AddSectorIndexForProbe.ToString()));
+
+            // 完全照用户的路径：点左上角「设置」。
+            overlay.OpenSettings();
+            await Task.Delay(800);
+
+            ProbeOutput.Kv("按「设置」后的面板状态", overlay.IsSettingsOpen ? "已打开" : "未打开");
+            ProbeOutput.Kv("　「＋」扇区索引", overlay.AddSectorIndexForProbe.ToString());
+            ProbeOutput.Kv("　（编辑态 / 菜单项数 / 「＋」索引）", overlay.RadialStateForProbe.ToString());
+            results.Add(("按「设置」后「＋」出现（用户路径的第一步）",
+                overlay.IsSettingsOpen && overlay.AddSectorIndexForProbe >= 0,
+                $"面板={overlay.IsSettingsOpen}，索引={overlay.AddSectorIndexForProbe}"));
+
+            if (overlay.PanelBoundsForProbe is { } settingsRect)
+                ProbeOutput.Kv("　（上一次的面板矩形，供对照）", settingsRect.ToString());
+
+            overlay.DismissPanelForProbe();
+            ResetRecorders();
+
+            var boundsAfterSettings = overlay.RadialPhysicalBounds;
+            var scaleAfterSettings = MonitorLayout.AtCursor().Scale;
+            if (boundsAfterSettings is { } sb)
+            {
+                var offset = Vec2.FromPolar(
+                    midRadius * scaleAfterSettings,
+                    RadialLayout.Distribute(menu.Items.Count + 1)[rootAdd].CenterDeg);
+
+                var sx = (int)Math.Round(sb.X + sb.Width / 2.0 + offset.X);
+                var sy = (int)Math.Round(sb.Y + sb.Height / 2.0 + offset.Y);
+
+                PInvoke.SetCursorPos(sx, sy);
+                await Task.Delay(250);
+
+                var hwnd2 = (HWND)overlay.RadialHandle;
+                PInvoke.GetWindowRect(hwnd2, out var wr2);
+
+                ProbeOutput.Kv("　「＋」中心处的落点窗口",
+                    PInvoke.WindowFromPoint(new System.Drawing.Point(sx, sy)) == hwnd2
+                        ? "轮盘窗口本身" : "被别人拿走");
+
+                var lp = new LPARAM(((sy - wr2.top) << 16) | ((sx - wr2.left) & 0xFFFF));
+                PInvoke.PostMessage(hwnd2, PInvoke.WM_LBUTTONDOWN, new WPARAM(1), lp);
+                await Task.Delay(500);
+
+                ProbeOutput.Kv("　按下后面板类型", overlay.PanelKindForProbe);
+                ProbeOutput.Kv("　面板给出的选项", string.Join(" / ", overlay.PanelRowLabelsForProbe));
+                ProbeOutput.Kv("　是否直接请求了加项", addRequested?.ToString() ?? "否");
+
+                results.Add(("开着设置面板时点「＋」也弹选择面板",
+                    overlay.PanelKindForProbe == "AddChoice" && addRequested is null,
+                    $"kind={overlay.PanelKindForProbe}，add={addRequested?.ToString() ?? "无"}"));
+            }
+
+            overlay.DismissPanelForProbe();
+            overlay.CloseSettings();
+            await Task.Delay(500);
+            overlay.SetEditModeForProbe(true);
+            await Task.Delay(300);
 
             overlay.Hide();
         }

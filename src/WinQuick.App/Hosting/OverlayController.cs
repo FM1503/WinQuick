@@ -273,6 +273,13 @@ public sealed class OverlayController : IDisposable
     /// <summary>诊断用：改输入框文字并确认。</summary>
     internal void ConfirmPanelTextForProbe(string text) => _radial.ConfirmPanelTextForProbe(text);
 
+    /// <summary>诊断用：编辑态、当前菜单项数、以及「＋」扇区索引。</summary>
+    internal (bool EditMode, int ItemCount, int AddSector) RadialStateForProbe =>
+        _radial.RadialStateForProbe;
+
+    /// <summary>诊断用：面板在窗口内的矩形。</summary>
+    internal System.Windows.Rect? PanelBoundsForProbe => _radial.PanelBoundsForProbe;
+
     /// <summary>诊断用：直接切换编辑态（正式路径由打开/关闭设置面板驱动）。</summary>
     internal void SetEditModeForProbe(bool editMode) => _radial.SetEditMode(editMode);
 

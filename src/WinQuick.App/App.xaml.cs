@@ -72,6 +72,16 @@ public partial class App : Application
                 RunDetached(() => M0.ActionProbe.RunAsync(cli));
                 break;
 
+            case "--label-probe":
+                // 需要消息循环与真实窗口：要核对悬停前后的排版属性。
+                RunDetached(() => M0.LabelProbe.RunAsync(cli));
+                break;
+
+            case "--perf-probe":
+                // 需要消息循环：帧间隔靠 CompositionTarget.Rendering 采。
+                RunDetached(() => M0.PerfProbe.RunAsync(cli));
+                break;
+
             case "--add-sector-probe":
                 // 需要消息循环与真实窗口：要真的显示覆盖层并走点击分派。
                 RunDetached(() => M0.AddSectorProbe.RunAsync(cli));

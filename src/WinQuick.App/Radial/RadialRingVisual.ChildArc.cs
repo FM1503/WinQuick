@@ -176,8 +176,9 @@ public sealed partial class RadialRingView
         if (_childArcParent < 0 || _childArcRemoving) return;
 
         _childArcRemoving = true;
+        ApplyChildSectorStyle(_hoveredChild, hovered: false);
         _hoveredChild = -1;
-        ApplyChildHover();
+        UpdateCenterReadout();
 
         if (_childAnimator is null) { CollapseChildArcImmediate(); return; }
         _childAnimator.Collapse();
@@ -229,11 +230,18 @@ public sealed partial class RadialRingView
     public void SetChildHover(int index)
     {
         if (index == _hoveredChild) return;
+
+        var previous = _hoveredChild;
         _hoveredChild = index;
-        ApplyChildHover();
+
+        // 只动变化过的那两个子项，理由同一级（见 RadialRingView.SetHover）。
+        ApplyChildSectorStyle(previous, hovered: false);
+        ApplyChildSectorStyle(index, hovered: true);
 
         // 形状与颜色分开：颜色是即时反馈，外扩是有形的位移，两者时长不同。
         _childBulge?.SetHover(index);
+
+        UpdateCenterReadout();
     }
 
     /// <summary>
@@ -246,25 +254,34 @@ public sealed partial class RadialRingView
         _childBulge?.SetHoverImmediate(index);
     }
 
-    private void ApplyChildHover()
+    /// <summary>
+    /// 高亮色被改（设置面板里换颜色）时重新涂一遍子弧。
+    /// 平时只有两个子项会被动到，所以这里也就只需要重涂那两个。
+    /// </summary>
+    private void RefreshChildHighlight()
     {
-        var tokens = TokenStore.Current;
-        var colors = tokens.Color;
-        var normalFill = TokenBrushes.Brush(colors.SectorFill, colors.SectorFillAlpha);
-        var normalStroke = TokenBrushes.Brush(colors.SectorStroke, colors.SectorStrokeAlpha);
-        var hoverFill = AccentFill;
-        var hoverStroke = TokenBrushes.Brush(colors.HoverStroke, colors.HoverStrokeAlpha);
+        ApplyChildSectorStyle(_hoveredChild, hovered: false);
+        ApplyChildSectorStyle(_hoveredChild, hovered: true);
+    }
 
-        for (var i = 0; i < _childSectors.Count; i++)
-        {
-            var hovered = i == _hoveredChild;
-            _childSectors[i].Fill = hovered ? hoverFill : normalFill;
-            _childSectors[i].Stroke = hovered ? hoverStroke : normalStroke;
-            _childLabels[i].SetHover(hovered);
-            _childIcons[i].Opacity = hovered ? 1.0 : 0.94;
-            if (_childChildMarkers[i] is { } marker)
-                marker.Stroke = hovered ? hoverStroke : normalStroke;
-        }
+    /// <summary>把某个子项涂成悬停或基准样式。理由同一级：只动变化过的那两个。</summary>
+    private void ApplyChildSectorStyle(int index, bool hovered)
+    {
+        if (index < 0 || index >= _childSectors.Count) return;
+
+        var colors = TokenStore.Current.Color;
+
+        _childSectors[index].Fill = hovered
+            ? AccentFill
+            : TokenBrushes.Brush(colors.SectorFill, colors.SectorFillAlpha);
+        _childSectors[index].Stroke = hovered
+            ? TokenBrushes.Brush(colors.HoverStroke, colors.HoverStrokeAlpha)
+            : TokenBrushes.Brush(colors.SectorStroke, colors.SectorStrokeAlpha);
+
+        _childLabels[index].SetHover(hovered);
+        _childIcons[index].Opacity = hovered ? 1.0 : 0.94;
+        if (_childChildMarkers[index] is { } marker)
+            marker.Stroke = _childSectors[index].Stroke;
     }
 
     private void OnChildArcProgress(double progress)

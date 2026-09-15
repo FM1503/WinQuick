@@ -1,36 +1,38 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
-using System.Windows.Media.Animation;
 
 namespace WinQuick.App.Radial;
 
 /// <summary>
 /// 扇区标签。处理「标签放不进扇区」这件事。
 ///
-/// 四级策略，从最可读到最不得已：
+/// 三级策略，从最可读到最不得已：
 /// 1. **折行显示** —— 折成最多两行。宽度直接减半，这是同时解决「长文本显示不全」
 ///    与「3 点/9 点方向文字压到图标」两个问题的关键。
-/// 2. **自动缩小字号** —— 缩到下限 11px 为止。缩到 11px 仍比滚动可读，
-///    因为滚动文字一眼看不完，而菜单是「看一眼就要点」的东西。
-/// 3. **悬停时滚动** —— 只有不可断行的长单词（例如超长英文名）才会走到这一级。
-/// 中文可以任意位置断行，所以中英混排的菜单基本用不到。
+/// 2. **自动缩小字号** —— 缩到下限 11px 为止。缩到 11px 仍比别的办法可读。
+/// 3. **省略号截断** —— 缩到下限仍放不下（不可断行的长词，例如超长英文名）时截断，
+///    完整文字**在中心显示**（见 RadialRingView 的中心读出）。
 ///
-/// 为什么不做成无条件滚动：饼菜单的节奏是「看准了立刻点」，滚动文字在那 200ms 里读不完。
-/// 而且静止状态下所有标签一起滚会很吵。滚动用**往返**而不是单向循环 ——
-/// 单向循环会让文字跳回起点，观感像闪烁。
+/// **这里曾经是"悬停时来回滚动"，已经去掉。** 两个问题都是它带来的：
+/// - 悬停时文字会持续左右移动。菜单的用法是「看一眼就要点」，动的字反而读不到；
+/// - 滚动要挂一条 Forever 的动画时钟，悬停期间每帧都要推进，而它换来的可读性为零。
+/// 换成"截断 + 中心显示完整文字"之后，静止的字一个像素都不动，而完整文字仍然拿得到。
+///
+/// 另外**悬停不再改字重**。原来悬停会把字重从 Normal 换成 SemiBold，而 SemiBold
+/// 更宽 —— 文字是按 Normal 的宽度居中的，换字重后没有重新测量，于是整段字会往右挪
+/// 一点点、右边还可能被裁掉。这正是用户报的"鼠标悬停时会发生位移"。
+/// 悬停的视觉反馈由扇区高亮与向外鼓出承担，已经足够明显，不需要再动文字。
 /// </summary>
 internal sealed class SectorLabel
 {
     private const double MinimumFontSize = 11.0;
 
-    /// <summary>滚动速度（像素/秒）。太快读不清，太慢要等。</summary>
-    private const double ScrollPixelsPerSecond = 28.0;
-
     private readonly Canvas _clipHost;
     private readonly TextBlock _text;
     private readonly double _availableWidth;
     private readonly double _availableHeight;
+    private readonly string _fullText;
     private double _overflow;
 
     public SectorLabel(
@@ -40,6 +42,7 @@ internal sealed class SectorLabel
     {
         _availableWidth = maxWidth;
         _availableHeight = maxHeight;
+        _fullText = text;
 
         _text = new TextBlock
         {
@@ -61,20 +64,34 @@ internal sealed class SectorLabel
             Measure();
         }
 
-        // 缩到下限仍然横向放不下 —— 说明遇到了不可断行的长词（中文不会走到这里，
-        // 因为 WPF 可以在任意汉字间断行）。
-        if (_text.DesiredSize.Width > maxWidth + 0.5)
+        // 缩到下限仍然放不下 —— 就在这里截断。
+        //
+        // **注意判据是 FitsWithinBox()，不是"宽度超了"。** 原来这里只查宽度，
+        // 于是"折行后行数超过两行"这种情况完全没被处理：宽度那一项因为 MaxWidth
+        // 的夹持永远"刚好合适"，于是代码以为放得下，而实际的第三行往后被下面的
+        // 裁剪框直接切掉了 —— 表现就是文字少了半截、还没有任何提示。
+        // 这正是用户报的"文本较长时会被裁剪"。
+        if (!FitsWithinBox())
         {
-            _text.TextWrapping = TextWrapping.NoWrap;
-            _text.MaxWidth = double.PositiveInfinity;
+            _text.Text = FitWithEllipsis(text, maxWidth, maxHeight, _text.FontSize);
             Measure();
-            _overflow = Math.Max(0, _text.DesiredSize.Width - maxWidth);
+
+            // 溢出量按像素记录（诊断用）：同一段文字在不折行的前提下有多宽。
+            var unconstrained = new TextBlock
+            {
+                Text = text,
+                FontSize = _text.FontSize,
+                FontFamily = _text.FontFamily,
+                TextWrapping = TextWrapping.NoWrap,
+            };
+            unconstrained.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            _overflow = Math.Max(0, unconstrained.DesiredSize.Width - maxWidth);
         }
 
         var boxWidth = _overflow > 0 ? maxWidth : Math.Min(maxWidth, _text.DesiredSize.Width);
         var boxHeight = Math.Min(maxHeight, _text.DesiredSize.Height);
 
-        // 裁剪容器：没有它，折行高度超限或滚动时文字会画到相邻扇区上。
+        // 裁剪容器：没有它，折行高度超限时文字会画到相邻扇区上。
         _clipHost = new Canvas
         {
             Width = boxWidth,
@@ -89,8 +106,18 @@ internal sealed class SectorLabel
         _ = lineHeightFactor;
     }
 
-    /// <summary>是否需要滚动才能看全。供验证用。</summary>
-    public bool NeedsScroll => _overflow > 0.5;
+    /// <summary>
+    /// 是否被省略号截断（完整文字需要去中心看）。
+    ///
+    /// 判据是"显示的文本与原始文本不同"，不是"溢出像素 > 0" ——
+    /// 后者只在"单个长词宽过扇区"时成立，而真正常见的是
+    /// "折行后行数超限"，那种情况溢出像素可以是 0。
+    /// 判据写错会让中心读出永远不触发，而这恰好是"文字被裁剪"的补救途径。
+    /// </summary>
+    public bool IsElided => !string.Equals(_text.Text, _fullText, StringComparison.Ordinal);
+
+    /// <summary>被省略掉的字符数。供验证用。</summary>
+    public int ElidedChars => Math.Max(0, _fullText.Length - _text.Text.Length);
 
     /// <summary>达到最小字号后仍然横向溢出的像素数。</summary>
     public double OverflowPixels => _overflow;
@@ -104,8 +131,26 @@ internal sealed class SectorLabel
     /// <summary>文字实际占的宽度，供验证。</summary>
     public double TextWidth => _text.DesiredSize.Width;
 
-    /// <summary>原始完整文字（未截断）。</summary>
+    /// <summary>当前**显示**的文字（可能已截断）。</summary>
     public string Text => _text.Text;
+
+    /// <summary>
+    /// 原始完整文字。中心读出必须用这个而不是 <see cref="Text"/> ——
+    /// 用后者的话，中心显示的是"被截断的那一段"，等于把同一个缺陷画了两遍。
+    /// （这个错第一版就犯了：中心读出显示 "VeryLongApplicationName…"。）
+    /// </summary>
+    public string FullText => _fullText;
+
+    /// <summary>
+    /// 影响排版的属性快照。悬停前后比一遍：只要有一个变了，文字就可能移动 ——
+    /// 这是"悬停不位移"这条能在程序里核对的前提。
+    /// </summary>
+    public (double Left, double FontSize, string Weight, bool Wrapping, double Width) LayoutSnapshot =>
+        (Canvas.GetLeft(_clipHost), _text.FontSize, _text.FontWeight.ToString(),
+         _text.TextWrapping == TextWrapping.Wrap, _text.DesiredSize.Width);
+
+    /// <summary>标签上是否挂着动画时钟（不该有：滚动已经去掉）。</summary>
+    public bool HasActiveAnimation => _text.HasAnimatedProperties;
 
     /// <summary>整体透明度。子弧展开时图标与文字要跟着扇区厚度一起淡入。</summary>
     public void SetOpacity(double opacity) => _clipHost.Opacity = opacity;
@@ -113,11 +158,51 @@ internal sealed class SectorLabel
     /// <summary>从视觉树上摘掉自己。子弧收起时必须调用，否则不可见的标签会参与渲染遍历。</summary>
     public void Detach()
     {
-        StopScroll();
         _clipHost.Children.Clear();
 
-        if (_clipHost.Parent is System.Windows.Controls.Panel panel)
+        if (_clipHost.Parent is Panel panel)
             panel.Children.Remove(_clipHost);
+    }
+
+    /// <summary>
+    /// 折行装不下时，找出"能装进这个框的最长前缀 + 省略号"。
+    ///
+    /// 用二分而不是逐字减：构建期最多 6 次文字测量，而逐字减在长文本上是几十次。
+    /// 只保留两行（不是退化成一行）—— 两行能容下的字比一行多一倍，
+    /// 而完整文字在中心还能读全，所以这里的目标是"尽量多露一点"。
+    /// </summary>
+    private string FitWithEllipsis(string full, double maxWidth, double maxHeight, double fontSize)
+    {
+        var probe = new TextBlock
+        {
+            FontSize = fontSize,
+            FontFamily = _text.FontFamily,
+            TextWrapping = TextWrapping.Wrap,
+            MaxWidth = maxWidth,
+        };
+
+        var low = 1;
+        var high = full.Length;
+        var best = 0;
+
+        while (low <= high)
+        {
+            var mid = (low + high) / 2;
+            probe.Text = string.Concat(full.AsSpan(0, mid), "…");
+            probe.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+
+            if (probe.DesiredSize.Height <= maxHeight + 0.5 && probe.DesiredSize.Width <= maxWidth + 0.5)
+            {
+                best = mid;
+                low = mid + 1;
+            }
+            else
+            {
+                high = mid - 1;
+            }
+        }
+
+        return best <= 0 ? "…" : string.Concat(full.AsSpan(0, best), "…");
     }
 
     private bool FitsWithinBox() =>
@@ -139,50 +224,11 @@ internal sealed class SectorLabel
     }
 
     /// <summary>
-    /// 悬停状态变化。只有真的放不下时才启动滚动，且只在悬停时滚 ——
-    /// 静止状态下所有标签一起滚动会很吵，也破坏了「扫一眼就能读」这个前提。
+    /// 悬停状态变化。
+    ///
+    /// **只动透明度，不动字号与字重。** 动字重会触发一次文字重排（WPF 要按新字重
+    /// 重新测量并重新居中），既让文字在悬停时挪位置，又给每次悬停加一笔不小的开销 ——
+    /// 而悬停是轮盘上最频繁的动作。
     /// </summary>
-    public void SetHover(bool hovered)
-    {
-        _text.FontWeight = hovered ? FontWeights.SemiBold : FontWeights.Normal;
-        _text.Opacity = hovered ? 1.0 : 0.92;
-
-        if (!NeedsScroll) return;
-
-        if (hovered) StartScroll();
-        else StopScroll();
-    }
-
-    private void StartScroll()
-    {
-        var scrollMs = _overflow / ScrollPixelsPerSecond * 1000.0;
-
-        // 往返滚动而不是单向循环：短溢出时往返更好读，
-        // 单向循环会让文字"跳"回起点，观感像闪烁。
-        var animation = new DoubleAnimationUsingKeyFrames
-        {
-            RepeatBehavior = RepeatBehavior.Forever,
-        };
-
-        void At(double ms, double value) =>
-            animation.KeyFrames.Add(new LinearDoubleKeyFrame(
-                value, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(ms))));
-
-        const double leadInMs = 500;
-        const double holdMs = 700;
-
-        At(0, 0);
-        At(leadInMs, 0);                          // 先停一下，让用户看清开头
-        At(leadInMs + scrollMs, -_overflow);      // 滚到露出结尾
-        At(leadInMs + scrollMs + holdMs, -_overflow);
-        At(leadInMs + scrollMs * 2 + holdMs, 0);  // 滚回开头
-
-        _text.BeginAnimation(Canvas.LeftProperty, animation);
-    }
-
-    private void StopScroll()
-    {
-        _text.BeginAnimation(Canvas.LeftProperty, null);
-        Canvas.SetLeft(_text, 0);
-    }
+    public void SetHover(bool hovered) => _text.Opacity = hovered ? 1.0 : 0.92;
 }

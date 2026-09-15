@@ -30,3 +30,4 @@ crash.log
 *.swp
 *~
 .idea/
+patch-*.py

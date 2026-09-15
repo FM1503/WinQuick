@@ -258,6 +258,31 @@ public sealed class OverlayController : IDisposable
     /// <summary>诊断用：收起面板。</summary>
     internal void DismissPanelForProbe() => _radial.DismissPanelForProbe();
 
+    /// <summary>诊断用：某个标签的排版快照。</summary>
+    internal (double Left, double FontSize, string Weight, bool Wrapping, double Width)
+        LabelLayoutSnapshotForProbe(int index) => _radial.LabelLayoutSnapshot(index);
+
+    /// <summary>诊断用：某个标签是否挂着动画时钟。</summary>
+    internal bool LabelHasAnimationForProbe(int index) => _radial.LabelHasAnimation(index);
+
+    /// <summary>诊断用：某个标签的完整文字。</summary>
+    internal string LabelTextForProbe(int index) => _radial.LabelText(index);
+
+    /// <summary>诊断用：被截断的标签数。</summary>
+    internal int ElidedLabelCountForProbe => _radial.ElidedLabelCount;
+
+    /// <summary>诊断用：最大标签溢出像素。</summary>
+    internal double MaxLabelOverflowForProbe => _radial.MaxLabelOverflow;
+
+    /// <summary>诊断用：中心读出是否可见。</summary>
+    internal bool IsCenterReadoutVisibleForProbe => _radial.IsCenterReadoutVisible;
+
+    /// <summary>诊断用：中心读出的文字。</summary>
+    internal string CenterReadoutTextForProbe => _radial.CenterReadoutText;
+
+    /// <summary>诊断用：把某个扇区立即置为悬停（不播放动画）。</summary>
+    internal void SetHoverImmediateForProbe(int index) => _radial.SetHoverImmediateForProbe(index);
+
     /// <summary>诊断用：被悬停子项当前的鼓出像素数。</summary>
     internal double CurrentChildBulgeForProbe => _radial.CurrentChildBulgeForProbe;
 
@@ -267,6 +292,9 @@ public sealed class OverlayController : IDisposable
     /// <summary>诊断用：立即把子环悬停形变落定（不播放动画）。</summary>
     internal void SetChildHoverImmediateForProbe(int index) =>
         _radial.SetChildHoverImmediateForProbe(index);
+
+    /// <summary>诊断用：设置子项悬停（播放动画）。</summary>
+    internal void SetChildHoverForProbe(int index) => _radial.SetChildHoverForProbe(index);
 
     /// <summary>诊断用：面板是否真的挂在视觉树上。</summary>
     internal bool PanelAttached => _radial.PanelAttached;

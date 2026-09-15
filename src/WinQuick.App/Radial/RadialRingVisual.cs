@@ -66,7 +66,9 @@ public sealed partial class RadialRingView
         var previous = _hover;
         _hover = -2;              // 强制 SetHover 走一遍（它靠"索引没变就提前返回"）
         SetHover(previous);
-        ApplyChildHover();
+
+        // 子弧里的高亮用的是同一个强调色，也要跟着换。
+        RefreshChildHighlight();
     }
 
     internal RadialRingView(
@@ -97,6 +99,19 @@ public sealed partial class RadialRingView
     /// 只数真实菜单项 —— 「＋」也是个 Image（画的是加号，不是 shell 图标），
     /// 把它算进去会让这个计数在探针里永远是 itemCount+1，失去核对意义。
     /// </summary>
+    /// <summary>诊断用：某个标签的排版快照。</summary>
+    internal (double Left, double FontSize, string Weight, bool Wrapping, double Width)
+        LabelLayoutSnapshot(int index) =>
+        index >= 0 && index < _labels.Length ? _labels[index].LayoutSnapshot : default;
+
+    /// <summary>诊断用：某个标签是否挂着动画时钟。</summary>
+    internal bool LabelHasAnimation(int index) =>
+        index >= 0 && index < _labels.Length && _labels[index].HasActiveAnimation;
+
+    /// <summary>诊断用：某个标签的完整文字。</summary>
+    internal string LabelText(int index) =>
+        index >= 0 && index < _labels.Length ? _labels[index].Text : "";
+
     public int RenderedIconCount
     {
         get
@@ -111,7 +126,7 @@ public sealed partial class RadialRingView
     public int ChildMarkerCount => _childMarkers.Count(m => m is not null);
 
     /// <summary>需要滚动才能看全的标签数 —— 供验证「长文本是否被妥善处理」。</summary>
-    public int ScrollNeededCount => _labels.Count(l => l.NeedsScroll);
+    public int ElidedLabelCount => _labels.Count(l => l.IsElided);
 
     /// <summary>被自动缩小过字号的标签数。</summary>
     public int ShrunkLabelCount => _labels.Count(l => l.FontSize < _tokens.Typography.LabelFontSize);
@@ -131,30 +146,46 @@ public sealed partial class RadialRingView
     public void SetHover(int index)
     {
         if (index == _hover) return;
+
+        var previous = _hover;
         _hover = index;
 
-
-        var colors = _tokens.Color;
-        var normalFill = TokenBrushes.Brush(colors.SectorFill, colors.SectorFillAlpha);
-        var normalStroke = TokenBrushes.Brush(colors.SectorStroke, colors.SectorStrokeAlpha);
-        var hoverFill = AccentFill;
-        var hoverStroke = TokenBrushes.Brush(colors.HoverStroke, colors.HoverStrokeAlpha);
-
-        for (var i = 0; i < _sectors.Length; i++)
-        {
-            var hovered = i == index;
-            _sectors[i].Fill = hovered ? hoverFill : normalFill;
-            _sectors[i].Stroke = hovered ? hoverStroke : normalStroke;
-            _labels[i].SetHover(hovered);
-            // 图标与子菜单标记跟着扇区明暗走，否则高亮时它们会像浮在错误的层上。
-            _icons[i].Opacity = hovered ? 1.0 : 0.94;
-            if (_childMarkers[i] is { } marker)
-                marker.Stroke = hovered ? hoverStroke : normalStroke;
-        }
+        // **只改变化过的那两个扇区**，不遍历全环。
+        //
+        // 原来这里是 for 循环扫一遍所有扇区、把所有属性重新赋一遍。属性值赋成相同的
+        // 值不会触发重绘，所以旧的写法"结果正确"，但每次悬停切换都要走 N 次
+        // 画刷查找与属性写入 —— 悬停是轮盘上最频繁的动作，这些白做的活会直接
+        // 变成掉帧。两个索引之外的扇区本来就处于基准样式，不需要被动。
+        ApplySectorStyle(previous, hovered: false);
+        ApplySectorStyle(index, hovered: true);
 
         // 几何形变交给逐帧动画器：颜色高亮是即时反馈，外扩是有形的位移，
         // 两者时长不同，所以分开处理。
         _bulge.SetHover(index);
+
+        UpdateCenterReadout();
+    }
+
+    /// <summary>把某个扇区涂成悬停或基准样式。越界索引会被忽略（-1 就是"没有悬停"）。</summary>
+    private void ApplySectorStyle(int index, bool hovered)
+    {
+        if (index < 0 || index >= _sectors.Length) return;
+
+        var colors = _tokens.Color;
+
+        _sectors[index].Fill = hovered
+            ? AccentFill
+            : TokenBrushes.Brush(colors.SectorFill, colors.SectorFillAlpha);
+        _sectors[index].Stroke = hovered
+            ? TokenBrushes.Brush(colors.HoverStroke, colors.HoverStrokeAlpha)
+            : TokenBrushes.Brush(colors.SectorStroke, colors.SectorStrokeAlpha);
+
+        _labels[index].SetHover(hovered);
+
+        // 图标与子菜单标记跟着扇区明暗走，否则高亮时它们会像浮在错误的层上。
+        _icons[index].Opacity = hovered ? 1.0 : 0.94;
+        if (_childMarkers[index] is { } marker)
+            marker.Stroke = _sectors[index].Stroke;
     }
 
     /// <summary>
@@ -268,8 +299,30 @@ public sealed partial class RadialRingView
         AddEllipse(root, center, radius.DeadZone - 4,
             TokenBrushes.Brush(colors.DeadZoneFill),
             TokenBrushes.Brush(colors.DeadZoneStroke, colors.DeadZoneStrokeAlpha), 1);
-        AddText(root, center, 0, 0, "Esc",
+        var centerHint = AddText(root, center, 0, 0, "Esc",
             TokenBrushes.Brush(colors.Hint, colors.HintAlpha), tokens.Typography.HintFontSize);
+
+        // 中心读出：悬停到被截断的项时，在这里显示完整文字。
+        //
+        // 死区是界面上唯一整块空着的地方，而它的语义正是"当前没指向任何项"——
+        // 用它显示"当前指向的那一项的完整名字"不占任何额外空间，
+        // 也让"文字被截断"这件事有了去处（原来靠悬停滚动，那个做法已去掉）。
+        var centerReadout = new TextBlock
+        {
+            TextAlignment = TextAlignment.Center,
+            TextWrapping = TextWrapping.Wrap,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            MaxWidth = (radius.DeadZone - 4) * 2 - 14,
+            MaxHeight = (radius.DeadZone - 4) * 2 - 14,
+            FontSize = tokens.Typography.HintFontSize,
+            FontFamily = new FontFamily(tokens.Typography.LabelFontFamily),
+            Foreground = TokenBrushes.Brush(colors.Label, 0.95),
+            Visibility = Visibility.Collapsed,
+        };
+        Canvas.SetLeft(centerReadout, center.X - ((radius.DeadZone - 4) * 2 - 14) / 2);
+        Canvas.SetTop(centerReadout, center.Y - ((radius.DeadZone - 4) * 2 - 14) / 2);
+        Canvas.SetZIndex(centerReadout, 1);
+        root.Children.Add(centerReadout);
 
         // 一级的鼓出几何写在这里：内缘（死区）不动，外缘向外扩 bulge 像素。
         // 鼓出接近 0 时直接用冻结的基准几何 —— 动画落定时走这条，
@@ -292,6 +345,8 @@ public sealed partial class RadialRingView
         {
             AddSectorIndex = addIndex,
             EditMode = editMode,
+            CenterHint = centerHint,
+            CenterReadout = centerReadout,
         };
     }
 
@@ -332,6 +387,52 @@ public sealed partial class RadialRingView
     /// <summary>「＋」扇区的文字。命中它时按这个报给上层。</summary>
     public const string AddSectorLabel = "添加";
 
+    /// <summary>中心的 "Esc" 提示。悬停到被截断的项时让位给完整文字。</summary>
+    private TextBlock CenterHint { get; init; } = null!;
+
+    /// <summary>中心读出：显示被截断项的完整文字。</summary>
+    private TextBlock CenterReadout { get; init; } = null!;
+
+    /// <summary>诊断用：中心是否正在显示完整文字。</summary>
+    public bool IsCenterReadoutVisible => CenterReadout.Visibility == Visibility.Visible;
+
+    /// <summary>诊断用：中心读出的文字。</summary>
+    public string CenterReadoutText => CenterReadout.Text;
+
+    /// <summary>
+    /// 按当前悬停项刷新中心读出。
+    ///
+    /// 只有**被截断**的项才占用中心：没被截断的标签在扇区里已经读全了，
+    /// 再在中心重复一遍是噪音，而且会把 "Esc" 这个唯一的取消提示挤掉。
+    /// </summary>
+    private void UpdateCenterReadout()
+    {
+        var (text, elided) = CurrentHoveredLabel();
+
+        if (!elided)
+        {
+            CenterReadout.Visibility = Visibility.Collapsed;
+            CenterHint.Visibility = Visibility.Visible;
+            return;
+        }
+
+        CenterReadout.Text = text;
+        CenterReadout.Visibility = Visibility.Visible;
+        CenterHint.Visibility = Visibility.Collapsed;
+    }
+
+    /// <summary>当前悬停项的完整文字，以及它是否被截断。</summary>
+    private (string Text, bool Elided) CurrentHoveredLabel()
+    {
+        if (_hoveredChild >= 0 && _hoveredChild < _childLabels.Count)
+            return (_childLabels[_hoveredChild].FullText, _childLabels[_hoveredChild].IsElided);
+
+        if (_hover >= 0 && _hover < _labels.Length)
+            return (_labels[_hover].FullText, _labels[_hover].IsElided);
+
+        return ("", false);
+    }
+
     /// <summary>这一份视图是否处于编辑态（决定「＋」扇区画不画）。</summary>
     public bool EditMode { get; private init; }
 
@@ -360,6 +461,9 @@ public sealed partial class RadialRingView
 
     /// <summary>子弧里的子项数量。</summary>
     public int ChildItemCount => _childSpans.Length;
+
+    /// <summary>诊断用：子弧里被截断的标签数。</summary>
+    public int ChildElidedLabelCount => _childLabels.Count(l => l.IsElided);
 
     /// <summary>被悬停子项当前的鼓出像素数 —— 供验证子环形变确实发生了。</summary>
     public double CurrentChildBulge => _childBulge?.CurrentBulgeOf(_hoveredChild) ?? 0;

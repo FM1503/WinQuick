@@ -146,7 +146,7 @@ public static class RenderPreview
             ProbeOutput.Kv("成功取到图标的项", $"{view.RenderedIconCount} / {count}");
             ProbeOutput.Kv("有子菜单的项（应画指示标记）", view.ChildMarkerCount);
             ProbeOutput.Kv("标签可用宽度", $"{AvailableWidthFor(tokens, count):0.#} DIP");
-            ProbeOutput.Kv("需要滚动才能看全的标签", view.ScrollNeededCount);
+            ProbeOutput.Kv("被截断（需去中心看全）的标签", view.ElidedLabelCount);
             ProbeOutput.Kv("被自动缩小过字号的标签", view.ShrunkLabelCount);
             ProbeOutput.Kv("发生折行的标签", view.WrappedLabelCount);
             ProbeOutput.Kv("悬停扇区外扩", $"{view.CurrentHoverBulge:0.#} px");

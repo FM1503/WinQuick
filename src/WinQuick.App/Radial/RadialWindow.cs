@@ -372,6 +372,31 @@ public sealed class RadialWindow : Window
     /// <summary>诊断用：根环「＋」的索引。</summary>
     internal int AddSectorIndex => _view.AddSectorIndex;
 
+    /// <summary>诊断用：某个标签的排版快照。</summary>
+    internal (double Left, double FontSize, string Weight, bool Wrapping, double Width)
+        LabelLayoutSnapshot(int index) => _view.LabelLayoutSnapshot(index);
+
+    /// <summary>诊断用：某个标签是否挂着动画时钟。</summary>
+    internal bool LabelHasAnimation(int index) => _view.LabelHasAnimation(index);
+
+    /// <summary>诊断用：某个标签的完整文字。</summary>
+    internal string LabelText(int index) => _view.LabelText(index);
+
+    /// <summary>诊断用：被截断的标签数。</summary>
+    internal int ElidedLabelCount => _view.ElidedLabelCount;
+
+    /// <summary>诊断用：最大标签溢出像素。</summary>
+    internal double MaxLabelOverflow => _view.MaxLabelOverflow;
+
+    /// <summary>诊断用：中心读出是否可见。</summary>
+    internal bool IsCenterReadoutVisible => _view.IsCenterReadoutVisible;
+
+    /// <summary>诊断用：中心读出的文字。</summary>
+    internal string CenterReadoutText => _view.CenterReadoutText;
+
+    /// <summary>诊断用：把某个扇区立即置为悬停（不播放动画）。</summary>
+    internal void SetHoverImmediateForProbe(int index) => _view.SetHoverImmediate(index);
+
     /// <summary>诊断用：被悬停子项当前的鼓出像素数。</summary>
     internal double CurrentChildBulgeForProbe => _view.CurrentChildBulge;
 
@@ -380,6 +405,9 @@ public sealed class RadialWindow : Window
 
     /// <summary>诊断用：立即把子环悬停形变落定（不播放动画）。</summary>
     internal void SetChildHoverImmediateForProbe(int index) => _view.SetChildHoverImmediate(index);
+
+    /// <summary>诊断用：设置子项悬停（播放动画）。</summary>
+    internal void SetChildHoverForProbe(int index) => _view.SetChildHover(index);
 
     /// <summary>诊断用：子弧「＋」的索引。</summary>
     internal int ChildAddSectorIndex => _view.ChildAddSectorIndex;

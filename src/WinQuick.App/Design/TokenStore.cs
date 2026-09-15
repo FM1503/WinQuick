@@ -64,11 +64,23 @@ public static class TokenBrushes
         return Color.FromArgb(a, r, g, b);
     }
 
-    /// <summary>冻结画刷：它们会被很多图形共享，冻结后 WPF 可跳过可变性检查。</summary>
+    /// <summary>
+    /// 冻结画刷：它们会被很多图形共享，冻结后 WPF 可跳过可变性检查。
+    ///
+    /// **按 (颜色, 透明度) 缓存。** 每次调用都新建一个的话，悬停切换一次就要造好几个
+    /// 画刷 —— 而悬停是轮盘上最频繁的动作，每次切换都在给 GC 送垃圾。
+    /// 画刷本身是冻结的、不可变的，共享完全安全。
+    /// </summary>
     public static SolidColorBrush Brush(string hex, double alpha = 1.0)
     {
+        var key = (hex, alpha);
+        if (Cache.TryGetValue(key, out var cached)) return cached;
+
         var brush = new SolidColorBrush(Parse(hex, alpha));
         brush.Freeze();
+        Cache[key] = brush;
         return brush;
     }
+
+    private static readonly Dictionary<(string Hex, double Alpha), SolidColorBrush> Cache = [];
 }

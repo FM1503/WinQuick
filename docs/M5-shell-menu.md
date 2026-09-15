@@ -1,0 +1,108 @@
+# M5：文件右键菜单集成
+
+右键任意文件或文件夹 → **WinQuick → 添加 → 添加到xxx**。
+
+## 1. 前提：入口只在旧版菜单里
+
+这是 Win11 的硬限制，不是实现取舍，所以写在最前面：
+
+**注册表方式注册的右键项只出现在旧版菜单**（`显示更多选项`，或按 `Shift+F10`）。
+
+新版那个紧凑菜单只接受**打包应用 + 原生 COM DLL 实现 `IExplorerCommand`**。证据是微软自己的文档与原话：
+
+> Use **Show more options** only to inspect legacy context-menu extensions.
+> — [Add a File Explorer context menu command to a packaged desktop app](https://learn.microsoft.com/en-us/windows/apps/desktop/modernize/integrate-packaged-app-with-file-explorer)
+
+> Unfortunately, the context menu in Windows 11 cannot be modified to add new items
+> through the registry. The registry can only affect the classic context menu.
+> — [Microsoft Q&A](https://learn.microsoft.com/en-nz/answers/questions/3894991/create-a-cascaded-menu-in-modern-windows-11-contex)
+
+同类工具的实际状况一致：PowerToys（[#35974](https://github.com/microsoft/PowerToys/issues/35974)）、
+Everything（[voidtools 论坛](https://voidtools.com/forum/viewtopic.php?p=77476)）、7-Zip 目前都只在旧版菜单里。
+
+**还有一条决定性的事实**：新版菜单**只支持一层子菜单**。也就是说即使付了"原生 DLL + 签名 MSIX + 放弃绿色单文件"的代价，
+`WinQuick → 添加 → 目的地` 这个结构在那里也做不出来，只能压平成 `WinQuick → 目的地`。
+
+综合下来选了注册表方式：零 DLL、零签名、不改绿色形态、结构完整，代价是多点一下。
+
+## 2. 结构
+
+```
+HKCU\Software\Classes\*\shell\WinQuick            ← 也写一份到 Directory\shell
+    MUIVerb      = "WinQuick"
+    Icon         = <exe 路径>
+    SubCommands  = ""            ← 空值才是「可展开」
+    （不能有 command 子键，也不能有 (Default)）
+  Shell\AddTo
+    MUIVerb      = "添加"
+    SubCommands  = ""
+    Shell\D_0    MUIVerb="添加到一级环"        MultiSelectModel=Single
+                 command\(Default) = "…\WinQuick.exe" --add-to="root" "%1"
+    Shell\D_1    MUIVerb="添加到「开发工具」"  MultiSelectModel=Single
+                 command\(Default) = "…" --add-to="group:开发工具" "%1"
+```
+
+几条不是随便定的：
+
+- **空 `SubCommands` 是"可展开"的关键。** 微软文档里没写这一点，是社区验证出来的；少了它级联可能整个不渲染，
+  而现象只是"菜单里没有这一项"。`--shell-probe` 专门核这一条。
+- **键名是 ASCII 序号 `D_0`、中文写在 `MUIVerb` 里**：分组改名时只改文案，键名不动。
+- **`%1` 和 exe 路径都带引号**：路径里有空格就会被 shell 拆成多个参数，而这个错误在路径短的时候完全看不出来。
+- **`MultiSelectModel=Single`**：多选时隐藏该项。旧版动词默认"每个选中文件起一个进程"，
+  而本功能一次只处理一个路径 —— 与其让用户以为会全部添加，不如多选时就不显示。
+- **目的地用分组名而不是索引**：索引会在增删项时移位，而注册表可能停留在上一轮写入的状态，
+  那时点击会加进错误的分组且没有任何报错。
+
+结构上刻意与 Windows 自己用的级联一致（本机可对照 `HKCR\*\shell\UpdateEncryptionSettingsWork`），不自创写法。
+
+## 3. 点击之后怎么生效
+
+```
+Explorer 启动 WinQuick.exe --add-to="…" "<文件路径>"
+      │
+      ├─ 已有常驻实例 → 把请求写进 %APPDATA%\WinQuick\request-add.json，安静退出
+      │                    常驻实例本来就在监视这个目录（400ms 防抖），自己拾取
+      └─ 没有实例在跑 → 自己常驻起来，启动流程顺带把这条请求应用掉
+```
+
+**只有常驻实例会改 menus.json。** 如果让第二个进程自己改，它就会和常驻实例的设置保存互相覆盖
+（最后写入者赢，用户刚在设置面板里做的改动会被悄悄回退）。
+
+计划里原本写的是命名管道。实现时换成了请求文件：常驻实例的配置目录监视器本来就存在，
+复用它比维护一个管道的生命周期（连接、超时、并发实例数）简单得多，
+而**保证完全一样** —— 仍然只有一个写入者，仍然有防抖，仍然原子（先写 `.tmp` 再改名）。
+
+## 4. 验证
+
+`--shell-probe`（28 项）：真的写 HKCU，然后**逐键读回**比对 ——
+`MUIVerb`、`Icon`、`SubCommands` 是否为空、父项有没有多余的 `(Default)`/`command`、
+每一条目的地的文案与命令行（含引号）、`MultiSelectModel`、含空格的分组名是否被引号包住、
+含引号的分组名是否被跳过、文件夹作用域是否也注册了，最后**核对注销后没有任何残留键**。
+
+还核了请求文件的往返：含中文与空格的路径原样取回、取走后文件被删（否则会重复应用）、
+重复取走返回空、**损坏的请求文件被清掉而不是卡住**（留着会让每次重载都失败一遍、永不自愈）。
+
+**一条核对确认过能失败**：把 `SubCommands` 的写入拿掉，探针就报
+`不通过 SubCommands 存在且为空（否则不展开）  缺失`。不能失败的核对等于没有核对。
+
+对照：探针会把 Windows 自带的同类级联（`HKCR\*\shell\UpdateEncryptionSettingsWork`，
+本机实测存在）读出来做形状对照，确认我们与系统自己的写法一致、不是自创。
+这一条是信息性的，不参与判定 —— 那些键在别的系统版本上可能不存在。
+
+## 5. 本探针证明不了的一件事
+
+**Explorer 实际渲染出来的样子，只有人点一次才知道。**
+注册表结构能逐值核对，但"菜单里长什么样、点下去是否真的加进去了"必须由你右键试一次。
+这是本功能唯一无法自动化的环节。
+
+## 6. 已知限制
+
+| 限制 | 说明 |
+|---|---|
+| 只在旧版菜单 | 见第 1 节。要进新版菜单得走打包 + 原生 DLL，而且只能两层 |
+| 不能多选批量添加 | 多选时该项隐藏（`MultiSelectModel=Single`） |
+| 覆盖文件与文件夹 | 不含文件夹空白处/桌面背景 —— 那里没有具体文件，语义不同 |
+| 超长路径 | `%1` 传递的路径可能被限制到 MAX_PATH 附近，未特别处理 |
+| 分组名含引号 | 该分组不会出现在右键菜单里（会破坏命令行引号），并在托盘说明 |
+| 从菜单点下去有启动延迟 | 每次新起一个进程读参数、落请求、退出（自包含单文件约 0.5–1s），随后由常驻实例应用 |
+| 右键项不随程序删除而消失 | 它指向 exe 路径；程序被移动时启动会重写，彻底移除要在设置里取消勾选 |

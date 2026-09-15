@@ -243,6 +243,10 @@
             <TextBlock Text="启动" Style="{StaticResource Section}" />
             <CheckBox x:Name="AutoStartBox" Style="{StaticResource Check}"
                       Content="开机自启" Click="OnAutoStartChanged" />
+            <CheckBox x:Name="ShellMenuBox" Style="{StaticResource Check}"
+                      Content="在文件右键菜单中显示「WinQuick → 添加」" Click="OnShellMenuChanged" />
+            <TextBlock Style="{StaticResource Hint}"
+                       Text="Win11 上它出现在右键菜单的「显示更多选项」里（或按 Shift+F10）—— 新版紧凑菜单不接受这种注册方式。" />
 
             <!-- ============ 底部 ============ -->
             <Grid Margin="0,16,0,0">

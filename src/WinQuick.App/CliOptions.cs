@@ -28,6 +28,9 @@ public sealed class CliOptions
           --action-probe            核对动作执行：Process.Start 是否成功、参数是否传对
           --overlay-probe           核对覆盖层：窗口真实可见性、位置钳制、前台焦点还原、点击扇区
               --hold=N              显示出轮盘并保持 N 秒供肉眼查看（Esc 可关闭）
+          --add-to=值 路径          由文件右键菜单调用：把该路径加进指定目的地
+                                      （值形如 root 或 group:分组名）
+          --shell-probe             右键菜单集成：注册→逐键核对→注销后无残留
           --label-probe             标签：超长文本的截断方式、悬停是否位移、中心读出完整文字
           --perf-probe              帧间隔分布：扫过扇区与子弧动画，测流畅度的可比值
               --ms=N                每个扇区停留毫秒，默认 90
@@ -48,6 +51,30 @@ public sealed class CliOptions
         // 静默退化到无参数分支。
         o.Command = args[0].ToLowerInvariant();
 
+        // 第一个参数里也允许带 = 值：`WinQuick.exe --add-to=root "文件"`。
+        // 不拆的话命令名会变成整串 `--add-to=root`，匹配不到任何 case、
+        // 静默落到"未知命令"分支 —— 表现是菜单项注册成功了、点下去什么都没发生。
+        // （右键菜单注册的命令行正是这个形状，它是这个问题唯一暴露出来的地方。）
+        var firstEq = o.Command.IndexOf('=');
+        if (firstEq > 0)
+        {
+            // 键名要去掉 -- 前缀，与下面那个选项循环保持一致 ——
+            // 否则存进去的是 "--add-to"、查的是 "add-to"，取不到值。
+            // （这正是探针用真实命令行核对时抓到的：命令对了、值是空的。）
+            var name = o.Command[..firstEq];
+            if (name.StartsWith("--", StringComparison.Ordinal)) name = name[2..];
+
+            o._values[name] = o.Command[(firstEq + 1)..];
+            o.Command = o.Command[..firstEq];
+        }
+
+        // 位置参数（不以 -- 开头）也要收下：右键菜单注册的命令行是
+        // `WinQuick.exe --add-to="root" "%1"`，那个文件路径就是个位置参数。
+        // 原来这里直接把它们丢掉 —— 那样命令看起来注册成功了、点下去却什么都不会发生。
+        for (var i = 1; i < args.Length; i++)
+            if (!args[i].StartsWith("--", StringComparison.Ordinal))
+                o.Positionals.Add(args[i]);
+
         foreach (var raw in args.Skip(1))
         {
             if (!raw.StartsWith("--", StringComparison.Ordinal)) continue;
@@ -59,6 +86,9 @@ public sealed class CliOptions
         }
         return o;
     }
+
+    /// <summary>位置参数（第一个参数之后、不以 -- 开头的那些）。</summary>
+    public List<string> Positionals { get; } = [];
 
     public bool Has(string name) => _values.ContainsKey(name);
 

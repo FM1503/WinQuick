@@ -134,6 +134,7 @@ public partial class SettingsPanel : Window
 
         // 自启的事实来源是注册表（托盘菜单也能改），所以读注册表而不是配置。
         AutoStartBox.IsChecked = AutoStart.IsEnabled;
+        ShellMenuBox.IsChecked = config.ShellMenu;
 
         _loading = false;
 
@@ -291,6 +292,18 @@ public partial class SettingsPanel : Window
         ApplyAndPersist();
     }
 
+    /// <summary>
+    /// 右键菜单开关。
+    ///
+    /// 这里只改配置；真正的注册/注销由常驻装配在配置生效后执行 ——
+    /// 注册表读写与失败提示都在那一层，面板不必知道注册表长什么样。
+    /// </summary>
+    private void OnShellMenuChanged(object sender, RoutedEventArgs e)
+    {
+        if (_loading) return;
+        ApplyAndPersist();
+    }
+
     private void OnAutoStartChanged(object sender, RoutedEventArgs e)
     {
         if (_loading) return;
@@ -430,6 +443,7 @@ public partial class SettingsPanel : Window
                 HideOnFocusLoss = HideOnFocusLossBox.IsChecked == true,
             },
             Startup = new StartupConfig { AutoStart = AutoStartBox.IsChecked == true },
+            ShellMenu = ShellMenuBox.IsChecked == true,
         };
     }
 

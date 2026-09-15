@@ -77,6 +77,18 @@ public partial class App : Application
                 RunDetached(() => M0.LabelProbe.RunAsync(cli));
                 break;
 
+            case "--shell-probe":
+                // 不需要消息循环：只读写注册表与文件。
+                M0.ShellProbe.Run(cli);
+                ExitSoon();
+                break;
+
+            case "--add-to":
+                // 文件右键菜单调用的入口。**不创建任何窗口、不弹东西** ——
+                // 用户只是想加一项，不该因此看到任何界面。
+                RunAddToRequest(cli);
+                break;
+
             case "--perf-probe":
                 // 需要消息循环：帧间隔靠 CompositionTarget.Rendering 采。
                 RunDetached(() => M0.PerfProbe.RunAsync(cli));
@@ -109,6 +121,52 @@ public partial class App : Application
                 ExitSoon();
                 break;
         }
+    }
+
+    /// <summary>
+    /// 把右键菜单的请求交给常驻实例。
+    ///
+    /// 本进程**不改 menus.json**：那样会和常驻实例的设置保存互相覆盖
+    /// （最后写入者赢，用户刚在设置面板里做的改动会被悄悄回退）。
+    /// 请求落在配置目录里，常驻实例本来就在监视那个目录（400ms 防抖），会自己拾取。
+    ///
+    /// 已有实例在跑 → 留下请求后安静退出；
+    /// 没有实例在跑 → 自己常驻起来，启动流程会把这条请求应用掉（否则它会一直躺着）。
+    /// </summary>
+    private void RunAddToRequest(CliOptions cli)
+    {
+        var value = cli.GetString("add-to", "");
+        var path = cli.Positionals.FirstOrDefault() ?? "";
+
+        if (string.IsNullOrWhiteSpace(value) || string.IsNullOrWhiteSpace(path))
+        {
+            CrashLog.Write("右键菜单请求不完整",
+                new InvalidOperationException($"add-to=「{value}」路径=「{path}」"));
+            Shutdown(0);
+            return;
+        }
+
+        var store = new Config.ConfigStore();
+        var written = store.TryWriteAddRequest(
+            new Core.Config.ShellAddRequest(value, path), out var error);
+
+        if (!written)
+        {
+            CrashLog.Write("右键菜单请求写盘失败",
+                new InvalidOperationException(error ?? "未知原因"));
+            Shutdown(0);
+            return;
+        }
+
+        // 刻意**不走** StartResident 的"唤醒已有实例"分支：那个信号会让常驻实例
+        // 弹出设置面板，而这里只需要它顺手读一下请求文件。
+        if (Hosting.SingleInstance.IsAnotherInstanceRunning())
+        {
+            Shutdown(0);
+            return;
+        }
+
+        StartResident();
     }
 
     /// <summary>

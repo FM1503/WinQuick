@@ -31,6 +31,14 @@ public sealed record AppConfig
     [JsonPropertyName("behavior")] public BehaviorConfig Behavior { get; init; } = new();
     [JsonPropertyName("startup")] public StartupConfig Startup { get; init; } = new();
 
+    /// <summary>
+    /// 是否把「WinQuick → 添加 → 目的地」写进文件/文件夹的右键菜单（HKCU，不需要管理员）。
+    ///
+    /// 默认开：这是用户要的功能。关掉时会把注册表项**彻底删掉**而不是留着不管 ——
+    /// 留着一个指向不存在程序的菜单项，比没有这个功能更糟。
+    /// </summary>
+    [JsonPropertyName("shellMenu")] public bool ShellMenu { get; init; } = true;
+
     /// <summary>启动时激活哪一份菜单。</summary>
     public string? ActiveMenu { get; init; }
 

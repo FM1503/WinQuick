@@ -1,3 +1,4 @@
+using System.IO;
 using System.Windows;
 using System.Windows.Threading;
 using WinQuick.App.Diagnostics;
@@ -114,6 +115,13 @@ public sealed class ResidentHost : IDisposable
         if (_config.DefaultsWereCreated) AutoStart.SetEnabled(_config.Config.Startup.AutoStart);
 
         _menuSignature = _config.SerializeMenu(_menu);
+
+        // 右键菜单项与当前菜单对齐。启动时做一次：程序可能被移动过，
+        // 而注册表里还留着指向旧路径的命令（那种菜单项点了毫无反应）。
+        SyncShellMenu();
+
+        // 启动我们的那次右键点击可能留下了请求（没有实例在跑时就是这条路径）。
+        ApplyPendingShellRequest();
 
         _config.StartWatching();
         _config.Changed += OnConfigChanged;
@@ -284,6 +292,116 @@ public sealed class ResidentHost : IDisposable
     /// <summary>重建轮盘之后要重新展开的子弧父项；-1 表示不用。</summary>
     private int _reopenChildArcAfterRebuild = -1;
 
+    /// <summary>上一次写进注册表时的"开关 + 程序路径"，用来判断要不要重写。</summary>
+    private string _shellMenuSignature = "";
+
+    /// <summary>
+    /// 把右键菜单项对齐到当前菜单。
+    ///
+    /// 注册表方式是**纯数据**，Explorer 不会替我们算目的地列表 ——
+    /// 所以菜单一变就得整棵重写。反过来这也是它的好处：没有常驻在 Explorer 里的代码，
+    /// 我们崩了也不会把资源管理器带崩。
+    /// </summary>
+    private void SyncShellMenu()
+    {
+        if (!_config.Config.ShellMenu)
+        {
+            var (removed, removeError) = Interop.ShellContextMenu.Uninstall();
+            if (!removed)
+                _tray.ShowBalloon("WinQuick 无法移除右键菜单项", removeError ?? "未知原因");
+            return;
+        }
+
+        var exe = Environment.ProcessPath;
+        if (string.IsNullOrWhiteSpace(exe)) return;
+
+        var (wasInstalled, registeredExe) = Interop.ShellContextMenu.Query();
+        var exeMoved = wasInstalled
+                       && !string.Equals(registeredExe, exe, StringComparison.OrdinalIgnoreCase);
+
+        var (ok, error, note) = Interop.ShellContextMenu.Install(_menu, exe);
+        if (!ok)
+        {
+            _tray.ShowBalloon("WinQuick 无法加入右键菜单", error ?? "未知原因");
+            return;
+        }
+
+        _shellMenuSignature = $"{_config.Config.ShellMenu}|{exe}";
+
+        if (note is not null) _tray.ShowBalloon("WinQuick 右键菜单", note);
+
+        // 只在"第一次出现"和"指向变了"这两种情况下提示 ——
+        // 每次启动都弹一遍的话，用户会把它当成噪音而不再读。
+        if (!wasInstalled)
+        {
+            _tray.ShowBalloon("WinQuick 已加入文件右键菜单",
+                "在右键菜单里找「WinQuick → 添加」。\n" +
+                "Win11 的紧凑菜单不接受这种注册方式，请点「显示更多选项」或按 Shift+F10。");
+        }
+        else if (exeMoved)
+        {
+            _tray.ShowBalloon("WinQuick 右键菜单已更新", "程序位置变了，菜单命令已指向新位置。");
+        }
+    }
+
+    /// <summary>
+    /// 消费一条待处理的右键菜单请求。
+    ///
+    /// 取走即删除，所以重入是安全的：本方法会经由"保存菜单 → 重载 → Changed"再次被调到，
+    /// 而那时文件已经不在了。不需要额外的重入标志。
+    /// </summary>
+    private void ApplyPendingShellRequest()
+    {
+        if (_config.TakeAddRequest() is not { } request) return;
+        AddPathToLevel(request.Path, request.Value);
+    }
+
+    /// <summary>
+    /// 把某个路径加进指定目的地。右键菜单与托盘都把落地动作收敛到这里 ——
+    /// 分成两份的话，"菜单满了怎么办""分组改名了怎么办"这类规则迟早会分叉。
+    /// </summary>
+    private void AddPathToLevel(string path, string targetValue)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            _tray.ShowBalloon("WinQuick 无法添加", "没有拿到文件路径。");
+            return;
+        }
+
+        // 文件夹也算：右键菜单对文件与文件夹都注册了。
+        if (!File.Exists(path) && !Directory.Exists(path))
+        {
+            _tray.ShowBalloon("WinQuick 无法添加", $"找不到「{path}」。");
+            return;
+        }
+
+        if (!ShellTargets.TryResolve(_menu, targetValue, out var parentIndex, out var resolveError))
+        {
+            _tray.ShowBalloon("WinQuick 无法添加", resolveError ?? "无法确定要加到哪里。");
+            return;
+        }
+
+        var item = new MenuItemSpec
+        {
+            Label = ShellNames.Get(path),
+            IconPath = path,
+            Action = MenuAction.Launch(path),
+        };
+
+        var (updated, error) = MenuEditor.Add(_menu, parentIndex, item);
+        if (error is not null)
+        {
+            _tray.ShowBalloon("WinQuick 无法添加", error);
+            return;
+        }
+
+        _reopenChildArcAfterRebuild = parentIndex;
+        PersistMenu(updated);
+
+        _tray.ShowBalloon("已添加到 WinQuick",
+            $"「{item.Label}」→ {ShellTargets.Describe(updated, parentIndex)}");
+    }
+
     /// <summary>
     /// 动作失败必须让用户看见。
     /// 静默失败会被当成"程序坏了"，而这恰恰是最容易发生的事（路径不存在、权限不足）。
@@ -315,6 +433,10 @@ public sealed class ResidentHost : IDisposable
     {
         var problems = _config.LastProblems;
 
+        // 请求也可能是**由这次重载带来的**：常驻实例在监视配置目录，
+        // 右键菜单那个短命进程把请求写进目录后，正是靠这次重载把它送进来。
+        ApplyPendingShellRequest();
+
         // 菜单：仅在**内容**真的换了才重建窗口。
         //
         // 不能比引用：配置热重载每次都会解析出一个新的 MenuSpec 实例，
@@ -337,6 +459,17 @@ public sealed class ResidentHost : IDisposable
                 if (_overlay.IsVisible) _overlay.ReopenChildArc(_reopenChildArcAfterRebuild);
                 _reopenChildArcAfterRebuild = -1;
             }
+
+            // 菜单变了，右键菜单里那串目的地也就过时了，重写一次。
+            SyncShellMenu();
+        }
+
+        // 开关或程序路径变了也要重写（后者关系到注册表里那条命令指向何处）。
+        var shellSignature = $"{_config.Config.ShellMenu}|{Environment.ProcessPath}";
+        if (shellSignature != _shellMenuSignature)
+        {
+            _shellMenuSignature = shellSignature;
+            SyncShellMenu();
         }
 
         // 设置面板改的东西也要能在别处（比如手动改 config.json）生效。

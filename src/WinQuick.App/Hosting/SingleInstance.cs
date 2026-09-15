@@ -52,6 +52,26 @@ public sealed class SingleInstance : IDisposable
         thread.Start();
     }
 
+    /// <summary>
+    /// 是否已有实例在跑 —— **不发任何信号**。
+    ///
+    /// 与 <see cref="SignalExistingInstance"/> 的区别很关键：那个信号会让常驻实例
+    /// 打开设置面板。从右键菜单加一项时弹设置面板是打扰，所以这条路径只判断、不唤醒。
+    /// </summary>
+    public static bool IsAnotherInstanceRunning()
+    {
+        try
+        {
+            using var existing = Mutex.OpenExisting(MutexName);
+            // 互斥体存在还不够：只有它**被持有**才说明进程还活着。
+            return !existing.WaitOne(0);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     /// <summary>通知已在运行的实例激活。返回是否成功投递。</summary>
     public static bool SignalExistingInstance()
     {

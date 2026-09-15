@@ -229,26 +229,55 @@ public sealed class ConfigStore : IDisposable
     }
 
     /// <summary>把当前菜单写成 menus.json（供设置界面导出用）。</summary>
-    public string SerializeMenu(MenuSpec menu)
+    public string SerializeMenu(MenuSpec menu) =>
+        JsonSerializer.Serialize(
+            new MenuConfigFile { Version = 1, Menus = [ToConfig(menu)] },
+            MenuJsonOptions);
+
+    /// <summary>
+    /// 写盘前的序列化：**只替换同名的那一份菜单，保留文件里其它菜单**。
+    ///
+    /// 原来这里与 <see cref="SerializeMenu"/> 一样只写当前这一份，于是
+    /// "menus.json 里有两份菜单"的用户在任何一次界面上的增删之后都会丢掉另一份 ——
+    /// 而且不会有任何提示。这是个既有的数据丢失路径，本功能会让它更常被走到
+    /// （右键菜单每加一项都要写一次盘）。
+    /// </summary>
+    private string SerializeMenuPreservingOthers(MenuSpec menu)
     {
-        var file = new MenuConfigFile
+        try
         {
-            Version = 1,
-            Menus = [ToConfig(menu)],
-        };
-        return JsonSerializer.Serialize(file, new JsonSerializerOptions
+            if (!File.Exists(MenusPath)) return SerializeMenu(menu);
+
+            var existing = MenuConfigFile.Parse(File.ReadAllText(MenusPath));
+            var others = existing.Menus
+                .Where(m => !string.Equals(m.Id, menu.Id, StringComparison.Ordinal))
+                .ToList();
+
+            if (others.Count == 0) return SerializeMenu(menu);
+
+            return JsonSerializer.Serialize(
+                new MenuConfigFile { Version = 1, Menus = [ToConfig(menu), .. others] },
+                MenuJsonOptions);
+        }
+        catch
         {
+            // 读不出来就按单份写 —— 不能因为"保留其它菜单"失败而让保存整个失败。
+            return SerializeMenu(menu);
+        }
+    }
+
+    private static readonly JsonSerializerOptions MenuJsonOptions = new()
+    {
             PropertyNameCaseInsensitive = true,
             // 生成的 menus.json 是给人手写/编辑的，键名风格必须和文档、和 config.json 一致。
             // 不加这一行会输出 PascalCase（Version / Menus / Label），虽然大小写不敏感
             // 仍然能读回来，但两份配置文件的风格不一致会让人以为它们是两种格式。
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
             WriteIndented = true,
-            // 不转义非 ASCII 字符：菜单里有中文标签，被转成 Unicode 转义序列之后
-            // 手写编辑会非常难受（满屏六位码点，看不出哪个是哪个字）。
-            Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
-        });
-    }
+        // 不转义非 ASCII 字符：菜单里有中文标签，被转成 Unicode 转义序列之后
+        // 手写编辑会非常难受（满屏六位码点，看不出哪个是哪个字）。
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
 
     private static MenuConfigMenu ToConfig(MenuSpec menu) => new()
     {
@@ -341,6 +370,8 @@ public sealed class ConfigStore : IDisposable
                 "hideOnFocusLoss": {{Bool(config.Behavior.HideOnFocusLoss)}}
               },
 
+              "shellMenu": true,
+
               "startup": {
                 // 是否开机自启。改这里不会立刻写入注册表 ——
                 // 自启开关以托盘菜单和设置界面里的那个为准，避免两处状态不一致。
@@ -357,6 +388,71 @@ public sealed class ConfigStore : IDisposable
     public static string DefaultConfigJson => RenderConfig(new AppConfig());
 
     /// <summary>
+    /// 右键菜单请求的落点。
+    ///
+    /// 刻意放在配置目录里：常驻实例本来就在监视这个目录的 *.json（400ms 防抖），
+    /// 所以"另一个进程留下请求 → 常驻实例拾取"这条通路不需要任何新的 IPC 机制，
+    /// 也不会多出一个需要维护生命周期的管道。
+    /// </summary>
+    public string AddRequestPath => Path.Combine(_directory, "request-add.json");
+
+    private string AddRequestTempPath => AddRequestPath + ".tmp";
+
+    /// <summary>
+    /// 写下一条"把某路径加进某一级"的请求（由右键菜单启动的那个短命进程调用）。
+    ///
+    /// 先写临时文件再改名：改名的瞬间文件才是完整的，监视方不会读到半个 JSON。
+    /// 临时文件后缀不是 .json，所以也不会额外触发一次目录变更事件。
+    /// </summary>
+    public bool TryWriteAddRequest(ShellAddRequest request, out string? error)
+    {
+        error = null;
+        try
+        {
+            // 必须写全 System.IO.Directory：本类型自己也叫 Directory（属性名），
+            // 只用 Directory 会被解析成那个字符串属性。
+            System.IO.Directory.CreateDirectory(_directory);
+            File.WriteAllText(AddRequestTempPath, JsonSerializer.Serialize(request), Utf8NoBom);
+            File.Move(AddRequestTempPath, AddRequestPath, overwrite: true);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            CrashLog.Write("写下右键菜单请求失败", ex);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 取走待处理的请求（读取并删除）。没有或读不出来时返回 null。
+    ///
+    /// 读不出来必须**删掉**：坏文件留在那儿会让每次配置重载都重试一遍而永远失败 ——
+    /// 那是一个不会自愈的死循环。
+    /// </summary>
+    public ShellAddRequest? TakeAddRequest()
+    {
+        try
+        {
+            if (!File.Exists(AddRequestPath)) return null;
+
+            var json = File.ReadAllText(AddRequestPath);
+            File.Delete(AddRequestPath);
+
+            return JsonSerializer.Deserialize<ShellAddRequest>(json, new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true,
+            });
+        }
+        catch (Exception ex)
+        {
+            CrashLog.Write("读取右键菜单请求失败", ex);
+            try { File.Delete(AddRequestPath); } catch { /* 删不掉也就算了，下次再试 */ }
+            return null;
+        }
+    }
+
+    /// <summary>
     /// 把菜单写回 menus.json 并重新加载。
     /// 设置面板里增删菜单项走这里 —— 用户不必再手改 JSON。
     /// </summary>
@@ -366,7 +462,7 @@ public sealed class ConfigStore : IDisposable
         try
         {
             System.IO.Directory.CreateDirectory(_directory);
-            File.WriteAllText(MenusPath, SerializeMenu(menu), Utf8NoBom);
+            File.WriteAllText(MenusPath, SerializeMenuPreservingOthers(menu), Utf8NoBom);
 
             var result = Reload();
             if (!result.MenuOk && result.Problems.Count > 0) error = result.Summary;

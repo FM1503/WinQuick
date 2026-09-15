@@ -31,3 +31,4 @@ crash.log
 *~
 .idea/
 patch-*.py
+point-shot.py

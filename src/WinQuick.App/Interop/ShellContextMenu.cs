@@ -17,8 +17,6 @@ namespace WinQuick.App.Interop;
 /// 代价是列表不能动态计算 —— 所以**菜单一变就整棵重写**。
 ///
 /// 全程 HKCU：不需要管理员，也不需要改动"绿色单文件"的形态。
-/// 结构上刻意与 Windows 自己用的级联一致（本机可对照
-/// <c>HKCR\*\shell\UpdateEncryptionSettingsWork</c>），不自创写法。
 /// </summary>
 internal static class ShellContextMenu
 {
@@ -26,12 +24,37 @@ internal static class ShellContextMenu
     private const string AddSubKeyName = "AddTo";
     private const string DestinationPrefix = "D_";
 
+    /// <summary>
+    /// 动词库的键名（相对 <c>HKEY_CLASSES_ROOT</c>）。
+    ///
+    /// 目的地放在这里、由 <c>ExtendedSubCommandsKey</c> 引用，而不是继续嵌一层
+    /// <c>Shell\</c> 子键 —— 后者能工作，但第三级弹出面板会被画上一圈**老式 3D 白边框**。
+    ///
+    /// 判断依据是"同机制不同结果"：第一级到第二级用的也是链式级联，那一级的面板没有边框，
+    /// 差别只在于目的地那一级是链式的**第二段**（WinQuick → Shell\AddTo → Shell\D_*）。
+    /// 而微软文档对"ExtendedSubCommandsKey 指向的键里能否再嵌套级联"始终没有验证 ——
+    /// 我原来的结构正好踩在这个未验证位置上。Windows 自己用的是 ExtendedSubCommandsKey
+    ///（本机实测 EFS 那条级联就是），于是照它的写法来。
+    /// </summary>
+    private const string LibraryKeyName = "WinQuick.AddTo";
+
+    private const string LibraryPath = @"Software\Classes\" + LibraryKeyName;
+
     /// <summary>文件与文件夹两个作用域。文件夹用 <c>Directory</c>（文件系统目录）。</summary>
-    private static readonly string[] Scopes =
+    private static readonly string[] VerbScopes =
     [
         @"Software\Classes\*\shell\" + VerbKeyName,
         @"Software\Classes\Directory\shell\" + VerbKeyName,
     ];
+
+    /// <summary>
+    /// 我们拥有的所有键。注销、备份、还原都遍历它 ——
+    /// 漏掉动词库就会留下一个孤儿键，探针的"无残留"核对会抓到。
+    /// </summary>
+    private static readonly string[] AllKeys = [.. VerbScopes, LibraryPath];
+
+    /// <summary>注册项里的一条值。</summary>
+    internal sealed record Entry(string SubKeyPath, string? ValueName, string Value);
 
     /// <summary>
     /// 安装/重建右键菜单项。
@@ -44,15 +67,17 @@ internal static class ShellContextMenu
             var targets = ShellTargets.Build(menu);
             var skipped = ShellTargets.Skipped(menu);
 
-            foreach (var scope in Scopes)
-            {
-                // 整棵子树先删后建。不做增量更新：目的地会随菜单增删，
-                // 增量逻辑要处理"上一轮有、这一轮没有"的键，出错就是残留一条
-                // 点了没反应的菜单项 —— 那种缺陷用户只会认为是程序坏了。
-                Registry.CurrentUser.DeleteSubKeyTree(scope, throwOnMissingSubKey: false);
+            // 整棵子树先删后建。不做增量更新：目的地会随菜单增删，
+            // 增量逻辑要处理"上一轮有、这一轮没有"的键，出错就是残留一条
+            // 点了没反应的菜单项 —— 那种缺陷用户只会认为是程序坏了。
+            foreach (var key in AllKeys)
+                Registry.CurrentUser.DeleteSubKeyTree(key, throwOnMissingSubKey: false);
 
-                WriteScope(scope, targets, executablePath);
-            }
+            // 动词库只写一份，两个作用域共用（微软文档明确支持这样做）。
+            WriteLibrary(targets, executablePath);
+
+            foreach (var scope in VerbScopes)
+                WriteScope(scope, executablePath);
 
             var note = skipped.Count > 0
                 ? $"以下分组名里有引号，无法写进右键菜单，已跳过：{string.Join("、", skipped)}"
@@ -67,8 +92,49 @@ internal static class ShellContextMenu
         }
     }
 
-    /// <summary>注册项里的一条值。</summary>
-    internal sealed record Entry(string SubKeyPath, string? ValueName, string Value);
+    /// <summary>彻底注销，不留任何键。</summary>
+    public static (bool Ok, string? Error) Uninstall()
+    {
+        try
+        {
+            foreach (var key in AllKeys)
+                Registry.CurrentUser.DeleteSubKeyTree(key, throwOnMissingSubKey: false);
+
+            return (true, null);
+        }
+        catch (Exception ex)
+        {
+            CrashLog.Write("注销右键菜单失败", ex);
+            return (false, ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// 已注册的 exe 路径。<c>Installed</c> 为 false 表示没装。
+    ///
+    /// 用途：程序被移动或改名之后，旧键会指向一个不存在的 exe，
+    /// 右键点下去毫无反应。启动时比对一次，不一致就重写。
+    /// </summary>
+    public static (bool Installed, string? RegisteredExecutable) Query()
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(VerbScopes[0]);
+            if (key?.GetValue("MUIVerb") is not string) return (false, null);
+            return (true, key.GetValue("Icon") as string);
+        }
+        catch
+        {
+            return (false, null);
+        }
+    }
+
+    /// <summary>注册表里实际写下去的目的地数量，供探针核对。</summary>
+    internal static int DestinationCount()
+    {
+        using var library = Registry.CurrentUser.OpenSubKey(LibraryPath + @"\shell");
+        return library?.GetSubKeyNames().Length ?? 0;
+    }
 
     /// <summary>
     /// 把当前注册项导出成一份可以原样写回的快照。
@@ -82,7 +148,7 @@ internal static class ShellContextMenu
     {
         var entries = new List<Entry>();
 
-        foreach (var scope in Scopes)
+        foreach (var scope in AllKeys)
         {
             try
             {
@@ -117,8 +183,8 @@ internal static class ShellContextMenu
     {
         if (entries.Count == 0) return;
 
-        foreach (var scope in Scopes)
-            Registry.CurrentUser.DeleteSubKeyTree(scope, throwOnMissingSubKey: false);
+        foreach (var key in AllKeys)
+            Registry.CurrentUser.DeleteSubKeyTree(key, throwOnMissingSubKey: false);
 
         foreach (var entry in entries)
         {
@@ -130,52 +196,11 @@ internal static class ShellContextMenu
     /// <summary>当前注册项里的值总数（供探针核对备份/还原是否完整）。</summary>
     internal static int ValueCount() => Export().Count;
 
-    /// <summary>彻底注销，不留任何键。</summary>
-    public static (bool Ok, string? Error) Uninstall()
-    {
-        try
-        {
-            foreach (var scope in Scopes)
-                Registry.CurrentUser.DeleteSubKeyTree(scope, throwOnMissingSubKey: false);
-
-            return (true, null);
-        }
-        catch (Exception ex)
-        {
-            CrashLog.Write("注销右键菜单失败", ex);
-            return (false, ex.Message);
-        }
-    }
-
     /// <summary>
-    /// 已注册的 exe 路径。<c>Ok</c> 为 false 表示没装。
-    ///
-    /// 用途：程序被移动或改名之后，旧键会指向一个不存在的 exe，
-    /// 右键点下去毫无反应。启动时比对一次，不一致就重写。
+    /// 写第一、二级：<c>WinQuick</c> 下挂一个 <c>Shell\AddTo</c>，
+    /// 后者用 <c>ExtendedSubCommandsKey</c> 指向动词库。
     /// </summary>
-    public static (bool Installed, string? RegisteredExecutable) Query()
-    {
-        try
-        {
-            using var key = Registry.CurrentUser.OpenSubKey(@"Software\Classes\*\shell\" + VerbKeyName);
-            if (key?.GetValue("MUIVerb") is not string) return (false, null);
-            return (true, key.GetValue("Icon") as string);
-        }
-        catch
-        {
-            return (false, null);
-        }
-    }
-
-    /// <summary>注册表里实际写下去的目的地数量，供探针核对。</summary>
-    internal static int DestinationCount()
-    {
-        using var addTo = Registry.CurrentUser.OpenSubKey(
-            @"Software\Classes\*\shell\" + VerbKeyName + @"\Shell\" + AddSubKeyName + @"\Shell");
-        return addTo?.GetSubKeyNames().Length ?? 0;
-    }
-
-    private static void WriteScope(string scope, IReadOnlyList<ShellTarget> targets, string executablePath)
+    private static void WriteScope(string scope, string executablePath)
     {
         using (var verb = Registry.CurrentUser.CreateSubKey(scope, writable: true)
                           ?? throw new InvalidOperationException($"无法创建注册表键 {scope}"))
@@ -192,17 +217,24 @@ internal static class ShellContextMenu
         }
 
         var addToPath = $@"{scope}\Shell\{AddSubKeyName}";
-        using (var addTo = Registry.CurrentUser.CreateSubKey(addToPath, writable: true)
-                           ?? throw new InvalidOperationException($"无法创建注册表键 {addToPath}"))
-        {
-            addTo.SetValue("MUIVerb", "添加", RegistryValueKind.String);
-            addTo.SetValue("SubCommands", "", RegistryValueKind.String);
-        }
+        using var addTo = Registry.CurrentUser.CreateSubKey(addToPath, writable: true)
+                          ?? throw new InvalidOperationException($"无法创建注册表键 {addToPath}");
 
+        addTo.SetValue("MUIVerb", "添加", RegistryValueKind.String);
+
+        // 引用动词库。**不写 SubCommands** —— 这是 Windows 自己那条级联的写法
+        //（本机实测 HKCR\*\shell\UpdateEncryptionSettingsWork 只有
+        // MUIVerb + ExtendedSubCommandsKey，没有 SubCommands）。
+        addTo.SetValue("ExtendedSubCommandsKey", LibraryKeyName, RegistryValueKind.String);
+    }
+
+    /// <summary>写动词库（目的地列表）。两个作用域共用这一份。</summary>
+    private static void WriteLibrary(IReadOnlyList<ShellTarget> targets, string executablePath)
+    {
         for (var i = 0; i < targets.Count; i++)
         {
             var target = targets[i];
-            var path = $@"{addToPath}\Shell\{DestinationPrefix}{i}";
+            var path = $@"{LibraryPath}\shell\{DestinationPrefix}{i}";
 
             using var destination = Registry.CurrentUser.CreateSubKey(path, writable: true)
                                     ?? throw new InvalidOperationException($"无法创建注册表键 {path}");
@@ -211,15 +243,9 @@ internal static class ShellContextMenu
             // 键名不动，也就不必在注册表里做"删旧建新"的迁移。
             destination.SetValue("MUIVerb", target.Label, RegistryValueKind.String);
 
-            // **每个目的地都要有图标。**
-            //
-            // 少了它会出一处很显眼但很难查的观感问题：第三级菜单项上多出一圈
-            // 空图标位的白色描边，而前两级没有 —— 因为第一级有图标、第二级是
-            // 级联父项本来就不画图标位，只有叶子这一级会去占那块位置。
-            //
-            // 判据来自对照：本机两个"已知良好"的级联叶子
-            // （Windows 自带的 EFS Decrypt、VS Code）都写了 Icon，只有我们没写。
-            // 图标借用程序自己的（与第一级一致），分组本身没有更贴切的图可用。
+            // **每个目的地都要有图标。** 判据来自对照：本机两个"已知良好"的级联叶子
+            //（Windows 自带的 EFS Decrypt、VS Code）都写了 Icon。图标借用程序自身的 ——
+            // 分组本身没有更贴切的图可用，与第一级一致也更整齐。
             destination.SetValue("Icon", executablePath, RegistryValueKind.String);
 
             // 多选时隐藏这一项。旧版动词默认会"每个选中文件起一个进程"，
@@ -228,7 +254,7 @@ internal static class ShellContextMenu
             destination.SetValue("MultiSelectModel", "Single", RegistryValueKind.String);
 
             using var command = destination.CreateSubKey("command", writable: true)
-                                ?? throw new InvalidOperationException($"无法创建注册表键 {path}\\command");
+                                ?? throw new InvalidOperationException($"无法创建注册表键 {path} 的 command");
 
             // 命令写在 (Default) 里，这是 shell 读取的位置。
             command.SetValue(null, ShellTargets.BuildCommand(executablePath, target), RegistryValueKind.String);
@@ -243,7 +269,6 @@ internal static class ShellContextMenu
     // 而这次调用的代价不小 —— CsWin32 生成的签名带 void* 参数，
     // 要调它就得给整个项目打开 unsafe。为一个效果存疑的调用打开 unsafe 不划算。
     //
-    // 真正需要它的是**文件关联**类改动（图标、默认程序），那与本功能无关。
     // 万一 Explorer 确实缓存了（社区里偶有报告），设置面板里给了
     // "重启资源管理器"的说明 —— 而不是在这里加一个不知道有没有用的调用。
 }

@@ -34,26 +34,34 @@ HKCU\Software\Classes\*\shell\WinQuick            ← 也写一份到 Directory\
     SubCommands  = ""            ← 空值才是「可展开」
     （不能有 command 子键，也不能有 (Default)）
   Shell\AddTo
-    MUIVerb      = "添加"
-    SubCommands  = ""
-    Shell\D_0    MUIVerb="添加到一级环"        MultiSelectModel=Single
-                 command\(Default) = "…\WinQuick.exe" --add-to="root" "%1"
-    Shell\D_1    MUIVerb="添加到「开发工具」"  MultiSelectModel=Single
-                 command\(Default) = "…" --add-to="group:开发工具" "%1"
+    MUIVerb                  = "添加"
+    ExtendedSubCommandsKey   = "WinQuick.AddTo"      ← 引用动词库，不再嵌一层 Shell
+
+HKCU\Software\Classes\WinQuick.AddTo\shell          ← 动词库（两个作用域共用这一份）
+    D_0   MUIVerb="添加到一级环"       Icon=…  MultiSelectModel=Single
+          command\(Default) = "…\WinQuick.exe" --add-to="root" "%1"
+    D_1   MUIVerb="添加到「开发工具」"  command\(Default) = "…" --add-to="group:开发工具" "%1"
 ```
 
 几条不是随便定的：
 
-- **空 `SubCommands` 是"可展开"的关键。** 微软文档里没写这一点，是社区验证出来的；少了它级联可能整个不渲染，
-  而现象只是"菜单里没有这一项"。`--shell-probe` 专门核这一条。
+- **目的地用 `ExtendedSubCommandsKey` 引用动词库，而不是继续嵌一层 `Shell\` 子键。**
+  链式嵌套能用，但第三级弹出面板会被画上一圈**老式 3D 白边框**。
+  判断依据是"同机制不同结果"：第一级到第二级也是链式级联、那一级没有边框，
+  差别只在于目的地那级是链式的**第二段**；而微软文档对"`ExtendedSubCommandsKey`
+  指向的键里能否再嵌套级联"始终没有验证 —— 我原来的结构正好踩在这个未验证位置上。
+  Windows 自己用的是 `ExtendedSubCommandsKey`（本机实测 EFS 那条级联就是），照它的写。
+- **空 `SubCommands` 是"可展开"的关键。** 微软文档里没写这一点，是社区验证出来的；
+  少了它级联可能整个不渲染，而现象只是"菜单里没有这一项"。`--shell-probe` 专门核这一条。
+- **每个目的地都要写 `Icon`。** 判据来自对照：本机两个"已知良好"的级联叶子
+  （Windows 的 EFS `Decrypt`、VS Code）都写了 Icon，只有我们没写。图标借用程序自身的。
 - **键名是 ASCII 序号 `D_0`、中文写在 `MUIVerb` 里**：分组改名时只改文案，键名不动。
-- **`%1` 和 exe 路径都带引号**：路径里有空格就会被 shell 拆成多个参数，而这个错误在路径短的时候完全看不出来。
+- **`%1` 和 exe 路径都带引号**：路径里有空格就会被 shell 拆成多个参数，
+  而这个错误在路径短的时候完全看不出来。
 - **`MultiSelectModel=Single`**：多选时隐藏该项。旧版动词默认"每个选中文件起一个进程"，
   而本功能一次只处理一个路径 —— 与其让用户以为会全部添加，不如多选时就不显示。
 - **目的地用分组名而不是索引**：索引会在增删项时移位，而注册表可能停留在上一轮写入的状态，
   那时点击会加进错误的分组且没有任何报错。
-
-结构上刻意与 Windows 自己用的级联一致（本机可对照 `HKCR\*\shell\UpdateEncryptionSettingsWork`），不自创写法。
 
 ## 3. 点击之后怎么生效
 
@@ -186,4 +194,17 @@ Explorer 启动 WinQuick.exe --add-to="…" "<文件路径>"
 
 这一条写在这里，是因为**核对代码本身看不出的东西只能靠对照**：
 拿系统自己的同类实现当参照物，比继续读文档猜有效。
+
+### 8.4 结论：改用动词库结构
+
+按 8.3 的思路把目的地那一级从"链式嵌套"改成 `ExtendedSubCommandsKey` + 动词库，
+理由是本机对照显示 **Windows 自己的级联父项用的就是这个**（它的值里就有
+`ExtendedSubCommandsKey`，而没有 `SubCommands`）。改动之后探针 34 项全通过，
+其中一条专门钉住这个结构（"用 ExtendedSubCommandsKey 引用动词库、不是嵌套 Shell"）——
+改回链式嵌套它就会红。
+
+如果这一版仍然有描边：**最简单的答案是把菜单压成两层**
+（`WinQuick → 添加到一级环 / 添加到「开发」`）。这不是妥协 ——
+新版 Win11 菜单本身就只允许一层子菜单，两层结构与平台一致，
+而且直接消掉了出问题的那一层弹出面板。要不要这么改由你定。
 

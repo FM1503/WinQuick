@@ -25,6 +25,9 @@ public static class ShellProbe
     private const string RootKey = @"Software\Classes\*\shell\WinQuick";
     private const string FolderKey = @"Software\Classes\Directory\shell\WinQuick";
 
+    /// <summary>目的地所在的动词库（由 ExtendedSubCommandsKey 引用）。</summary>
+    private const string LibraryKey = @"Software\Classes\WinQuick.AddTo";
+
     public static void Run(CliOptions cli)
     {
         ProbeOutput.Initialize("shell", "m5");
@@ -101,10 +104,26 @@ public static class ShellProbe
 
                 var addTo = root.OpenSubKey(@"Shell\AddTo");
                 var addToVerb = addTo?.GetValue("MUIVerb") as string;
+                var extended = addTo?.GetValue("ExtendedSubCommandsKey") as string;
+                var addToSubCommands = addTo?.GetValue("SubCommands") as string;
+
                 ProbeOutput.Kv("「添加」层的 MUIVerb", addToVerb ?? "(无)");
+                ProbeOutput.Kv("  引用的动词库", extended ?? "(无)");
+                ProbeOutput.Kv("  是否误留了 SubCommands",
+                    addToSubCommands is null ? "没有（正确）" : $"有「{addToSubCommands}」（不该有）");
+
                 results.Add(("「添加」层存在且文案正确", addToVerb == "添加", addToVerb ?? "无"));
 
-                var destinations = root.OpenSubKey(@"Shell\AddTo\Shell");
+                // 目的地通过 ExtendedSubCommandsKey 引用动词库，而不是再嵌一层 Shell 子键。
+                // 后者能工作，但第三级弹出面板会被画上一圈老式 3D 白边框 ——
+                // 这一条就是那次修复的回归锁：改回链式嵌套它就会红。
+                results.Add(("「添加」层用 ExtendedSubCommandsKey 引用动词库（不是嵌套 Shell）",
+                    extended == "WinQuick.AddTo" && addToSubCommands is null,
+                    $"ExtendedSubCommandsKey={extended ?? "无"}，SubCommands={addToSubCommands ?? "无"}"));
+
+                using var library = Registry.CurrentUser.OpenSubKey(LibraryKey + @"\shell");
+                var destinations = library;
+                ProbeOutput.Kv("动词库的键", LibraryKey + @"\shell");
                 var names = destinations?.GetSubKeyNames() ?? [];
                 ProbeOutput.Kv("目的地数量", names.Length.ToString());
 
@@ -185,13 +204,16 @@ public static class ShellProbe
 
             using (var afterFiles = Registry.CurrentUser.OpenSubKey(RootKey))
             using (var afterFolders = Registry.CurrentUser.OpenSubKey(FolderKey))
+            using (var afterLibrary = Registry.CurrentUser.OpenSubKey(LibraryKey))
             {
                 ProbeOutput.Kv("文件作用域键还在", afterFiles is null ? "否（正确）" : "是（残留）");
                 ProbeOutput.Kv("文件夹作用域键还在", afterFolders is null ? "否（正确）" : "是（残留）");
+                ProbeOutput.Kv("动词库键还在", afterLibrary is null ? "否（正确）" : "是（残留）");
 
                 results.Add(("注销成功", uninstallOk, uninstallError ?? ""));
                 results.Add(("注销后文件作用域无残留", afterFiles is null, RootKey));
                 results.Add(("注销后文件夹作用域无残留", afterFolders is null, FolderKey));
+                results.Add(("注销后动词库无残留", afterLibrary is null, LibraryKey));
             }
 
             // ---- 请求文件的往返 ------------------------------------------------

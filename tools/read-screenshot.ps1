@@ -1,6 +1,6 @@
 ﻿Add-Type -AssemblyName System.Drawing
 
-$path = 'C:\Users\22572\.zcode\cli\image-cache\sess_fb131d20-5fcc-472b-9ebd-9cc573665849\image-b47bff776dad8da8247ebed2bc2276ad.png'
+$path = 'C:\Users\22572\.zcode\cli\image-cache\sess_fb131d20-5fcc-472b-9ebd-9cc573665849\image-3a552fdd514669c4320f31e915539379.png'
 $img = [System.Drawing.Bitmap]::FromFile($path)
 $w = $img.Width
 $h = $img.Height

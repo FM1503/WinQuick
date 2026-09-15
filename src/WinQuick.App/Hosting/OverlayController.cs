@@ -138,6 +138,7 @@ public sealed class OverlayController : IDisposable
         window.AddItemRequested += (_, parentIndex) => AddItemRequested?.Invoke(this, parentIndex);
         window.SectorEditRequested += (_, request) => SectorEditRequested?.Invoke(this, request);
         window.AddGroupRequested += (_, request) => AddGroupRequested?.Invoke(this, request);
+        window.ReorderRequested += (_, request) => ReorderRequested?.Invoke(this, request);
         window.FocusLost += (_, _) => OnRadialFocusLost();
         return window;
     }
@@ -157,7 +158,9 @@ public sealed class OverlayController : IDisposable
     {
         if (_disposed) return;
 
-        _radial.ApplyMenu(menu, editMode: IsSettingsOpen);
+        // **不传 editMode**：编辑态是独立状态，不能在每次菜单重建时按"面板是否开着"重算 ——
+        // 长按进入编辑态时面板并没开，重算会把编辑态算没（而重排后正好会重建一次菜单）。
+        _radial.ApplyMenu(menu);
     }
 
     /// <summary>
@@ -351,6 +354,22 @@ public sealed class OverlayController : IDisposable
     internal void ReleaseForProbe(double x, double y) =>
         _radial.ReleaseForProbe(new System.Windows.Point(x, y));
 
+    /// <summary>诊断用：模拟指针移动。</summary>
+    internal void MovePointerForProbe(double x, double y) =>
+        _radial.MovePointerForProbe(new System.Windows.Point(x, y));
+
+    /// <summary>诊断用：长按阈值（毫秒）。探针要按它等待，不能写死 2000。</summary>
+    internal int LongPressMsForProbe => Design.TokenStore.Current.Interaction.LongPressMs;
+
+    /// <summary>诊断用：是否正在拖拽。</summary>
+    internal bool IsDraggingForProbe => _radial.IsDraggingForProbe;
+
+    /// <summary>诊断用：当前落点格子。</summary>
+    internal int DragTargetSlotForProbe => _radial.DragTargetSlotForProbe;
+
+    /// <summary>诊断用：目标格子标记是否真的画出来了。</summary>
+    internal bool DragMarkerAttachedForProbe => _radial.DragMarkerAttachedForProbe;
+
     /// <summary>诊断用：把窗口内坐标交给轮盘做命中测试（走的是点击同一套数学）。</summary>
     internal WinQuick.Core.Geometry.HitResult HitTestForProbe(double x, double y) =>
         _radial.HitTestForProbe(new System.Windows.Point(x, y));
@@ -374,6 +393,11 @@ public sealed class OverlayController : IDisposable
     /// 参数是父项索引；-1 表示第一层。
     /// </summary>
     public event EventHandler<int>? AddItemRequested;
+
+    /// <summary>
+    /// 用户拖拽重排了某一层。参数是（父项索引，从哪，到哪）；父项索引为 -1 表示第一层。
+    /// </summary>
+    public event EventHandler<(int ParentIndex, int From, int To)>? ReorderRequested;
 
     /// <summary>用户要求新建分组（带子菜单的项）。</summary>
     public event EventHandler<(int ParentIndex, string Label)>? AddGroupRequested;
@@ -484,10 +508,6 @@ public sealed class OverlayController : IDisposable
             ForegroundFocus.AttachTo(_settingsPanel);
         }
 
-        // 编辑态对齐到"面板是不是开着"。**必须放在上面恢复面板之后** ——
-        // 放在之前算出来的 IsSettingsOpen 是过时的（Hide 时把面板藏了），
-        // 结果就是"面板是开着的，轮盘上却没有「＋」"。
-        _radial.SetEditMode(IsSettingsOpen);
 
         IsVisible = true;
         _topmostTimer.Start();
@@ -506,6 +526,11 @@ public sealed class OverlayController : IDisposable
         IsVisible = false;
 
         _topmostTimer.Stop();
+
+        // 关闭覆盖层同时退出编辑态：编辑态是"当前这次唤出"里的状态，
+        // 下次按热键应当是干净的日常盘面（否则一按热键就看到「＋」和拖拽态）。
+        _radial.SetEditMode(false);
+
         // 指针轮询必须停 —— 它每 25ms 唤醒一次 UI 线程，窗口不可见时纯属浪费。
         _radial.StopInteraction();
         foreach (var dim in _dims) dim.Hide();
@@ -605,8 +630,8 @@ public sealed class OverlayController : IDisposable
 
         _settingsPanel.Hide();
 
-        // 退出设置态就收回「＋」，同时把子弧重新展开（索引没变，用户看到的是同一份菜单）。
-        _radial.SetEditMode(false);
+        // **不退出编辑态。** 编辑态现在有自己的出口（Esc / 点中心 / 点环外 / 关覆盖层）：
+        // 用户可能想关掉面板继续在轮盘上拖拽排版，替他把编辑态收掉反而打断操作。
         ForegroundFocus.AttachTo(_radial);
         SettingsClosed?.Invoke(this, EventArgs.Empty);
     }

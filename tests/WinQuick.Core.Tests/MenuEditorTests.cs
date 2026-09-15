@@ -260,6 +260,127 @@ public class MenuEditorTests
         Assert.Equal(@"C:\a.exe", updated.Items[0].Action?.Target);
     }
 
+    // ---------------------------------------------------------------- 重排
+
+    private static MenuSpec FourItems() => new(
+        Id: "t", Name: "测试",
+        Items: [Item("A"), Item("B"), Item("C"), Item("D")]);
+
+    [Fact]
+    public void Move_往后移是插入而不是交换()
+    {
+        // A 移到位置 2：[B, C, A, D]。
+        // 若是交换会得到 [C, B, A, D] —— 差别就在"中间那些项是否依次让位"。
+        var (menu, error) = MenuEditor.Move(FourItems(), -1, from: 0, to: 2);
+
+        Assert.Null(error);
+        Assert.Equal(["B", "C", "A", "D"], menu.Items.Select(i => i.Label));
+    }
+
+    [Fact]
+    public void Move_往前移()
+    {
+        var (menu, error) = MenuEditor.Move(FourItems(), -1, from: 3, to: 1);
+
+        Assert.Null(error);
+        Assert.Equal(["A", "D", "B", "C"], menu.Items.Select(i => i.Label));
+    }
+
+    [Fact]
+    public void Move_移到首位()
+    {
+        var (menu, _) = MenuEditor.Move(FourItems(), -1, from: 2, to: 0);
+
+        Assert.Equal(["C", "A", "B", "D"], menu.Items.Select(i => i.Label));
+    }
+
+    [Fact]
+    public void Move_同位置是空操作且不报错()
+    {
+        var original = FourItems();
+        var (menu, error) = MenuEditor.Move(original, -1, from: 1, to: 1);
+
+        Assert.Null(error);
+        Assert.Equal(["A", "B", "C", "D"], menu.Items.Select(i => i.Label));
+    }
+
+    [Fact]
+    public void Move_不动其它字段()
+    {
+        var menu = new MenuSpec("t", "测试",
+        [
+            new MenuItemSpec { Label = "A", IconPath = @"C:\a.exe", Action = MenuAction.Launch(@"C:\a.exe") },
+            Item("B"),
+        ]);
+
+        var (moved, _) = MenuEditor.Move(menu, -1, from: 0, to: 1);
+
+        Assert.Equal(["B", "A"], moved.Items.Select(i => i.Label));
+        Assert.Equal(@"C:\a.exe", moved.Items[1].IconPath);
+        Assert.Equal(@"C:\a.exe", moved.Items[1].Action?.Target);
+    }
+
+    [Fact]
+    public void Move_子层内重排()
+    {
+        var menu = new MenuSpec("t", "测试", [Container("组", [Item("子1"), Item("子2"), Item("子3")])]);
+
+        var (moved, error) = MenuEditor.Move(menu, parentIndex: 0, from: 2, to: 0);
+
+        Assert.Null(error);
+        Assert.Equal(["子3", "子1", "子2"], moved.Items[0].Children.Select(i => i.Label));
+        Assert.Single(moved.Items);
+    }
+
+    [Fact]
+    public void Move_子层重排不影响第一层()
+    {
+        var menu = new MenuSpec("t", "测试",
+        [
+            Item("A"),
+            Container("组", [Item("子1"), Item("子2")]),
+        ]);
+
+        var (moved, _) = MenuEditor.Move(menu, parentIndex: 1, from: 0, to: 1);
+
+        Assert.Equal(["A", "组"], moved.Items.Select(i => i.Label));
+        Assert.Equal(["子2", "子1"], moved.Items[1].Children.Select(i => i.Label));
+    }
+
+    [Fact]
+    public void Move_越界会被拒绝且不改动菜单()
+    {
+        var menu = FourItems();
+
+        Assert.NotNull(MenuEditor.Move(menu, -1, from: 4, to: 0).Error);
+        Assert.NotNull(MenuEditor.Move(menu, -1, from: -1, to: 0).Error);
+        Assert.NotNull(MenuEditor.Move(menu, -1, from: 0, to: 4).Error);
+        Assert.NotNull(MenuEditor.Move(menu, -1, from: 0, to: -1).Error);
+        Assert.NotNull(MenuEditor.Move(menu, 9, from: 0, to: 1).Error);
+
+        Assert.Equal(["A", "B", "C", "D"], menu.Items.Select(i => i.Label));
+    }
+
+    /// <summary>
+    /// 重排一轮之后顺序必须仍然自洽：反复把第 0 项往后挪，最终应当是原来的倒序。
+    /// 单步正确但组合起来错位，是索引处理最典型的问题。
+    /// </summary>
+    [Fact]
+    public void Move_连续重排一轮之后顺序自洽()
+    {
+        var menu = FourItems();
+
+        // 把每一项都往后挪一格，等价于整体循环左移一位
+        for (var i = 0; i < 4; i++)
+        {
+            var (next, error) = MenuEditor.Move(menu, -1, from: 0, to: 3);
+            Assert.Null(error);
+            menu = next;
+        }
+
+        Assert.Equal(["A", "B", "C", "D"], menu.Items.Select(i => i.Label));
+    }
+
     // ---------------------------------------------------------------- 查
 
     [Fact]

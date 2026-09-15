@@ -66,6 +66,7 @@ public sealed class ResidentHost : IDisposable
         _overlay.AddItemRequested += OnAddItemRequested;
         _overlay.SectorEditRequested += OnSectorEditRequested;
         _overlay.AddGroupRequested += OnAddGroupRequested;
+        _overlay.ReorderRequested += OnReorderRequested;
         _overlay.ExitRequested += (_, _) => Application.Current.Shutdown(0);
         _overlay.SettingsChanged += (_, config) => OnSettingsChanged(config);
         _overlay.SetHotkeyProbe(spec => _hotkeys.ProbeTemporarily(spec));
@@ -229,6 +230,30 @@ public sealed class ResidentHost : IDisposable
         // 加进子环的项，重建之后要把子弧重新展开 —— 否则用户看不到刚加的东西，
         // 会以为没加上。第一层不需要（它本来就全在屏幕上）。
         _reopenChildArcAfterRebuild = parentIndex;
+
+        PersistMenu(updated);
+    }
+
+    /// <summary>
+    /// 拖拽重排：把某一层里的项挪到新位置。
+    ///
+    /// 排列就是菜单里的数组顺序，扇区角度由项数均匀分配 —— 所以"改排列"只是挪数组，
+    /// 不新增任何字段，menus.json 里的顺序也始终等于盘面上的顺序。
+    /// </summary>
+    private void OnReorderRequested(object? sender, (int ParentIndex, int From, int To) request)
+    {
+        var (updated, error) = MenuEditor.Move(_menu, request.ParentIndex, request.From, request.To);
+        if (error is not null)
+        {
+            _tray.ShowBalloon("WinQuick 无法调整顺序", error);
+            return;
+        }
+
+        // 顺序没变时 Move 会原样返回，这里就不写盘 —— 一次没挪动的拖拽不该产生一次写盘。
+        if (ReferenceEquals(updated, _menu)) return;
+
+        // 子层重排后重建，把子弧重新展开：用户正在看的就是它，收起会让人以为操作没生效。
+        if (request.ParentIndex >= 0) _reopenChildArcAfterRebuild = request.ParentIndex;
 
         PersistMenu(updated);
     }

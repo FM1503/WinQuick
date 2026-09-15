@@ -328,7 +328,9 @@ public sealed partial class RadialRingView
         AddEllipse(root, center, radius.DeadZone - 4,
             TokenBrushes.Brush(colors.DeadZoneFill),
             TokenBrushes.Brush(colors.DeadZoneStroke, colors.DeadZoneStrokeAlpha), 1);
-        TextBlock escHint = AddText(root, center, 0, 0, "Esc",
+        // 编辑态下中心显示「完成」：那里的语义是"退出当前状态"。
+        // 日常是 Esc（退出轮盘），编辑态是完成（退出编辑）—— 同一个位置、同一类含义。
+        TextBlock escHint = AddText(root, center, 0, 0, editMode ? "完成" : "Esc",
             TokenBrushes.Brush(colors.Hint, colors.HintAlpha), tokens.Typography.HintFontSize);
 
         // 一级的鼓出几何写在这里：内缘（死区）不动，外缘向外扩 bulge 像素。
@@ -370,6 +372,8 @@ public sealed partial class RadialRingView
     /// </summary>
     public void ResetInteraction()
     {
+        // 拖拽预览也要收掉：残留的目标格子标记会留在视觉树上。
+        EndDrag();
         _bulge.Reset();
         CollapseChildArcImmediate();
         _hover = -1;

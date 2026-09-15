@@ -81,7 +81,11 @@ public sealed class RadialWindow : Window
         {
             Interval = TimeSpan.FromMilliseconds(25),
         };
-        _pointerPoll.Tick += (_, _) => EvaluateHover();
+        _pointerPoll.Tick += (_, _) =>
+        {
+            CheckLongPress();
+            EvaluateHover();
+        };
 
         WireViewEvents(_view);
 
@@ -125,6 +129,11 @@ public sealed class RadialWindow : Window
     /// 上层要再问一次"第一项是什么" —— 分组不能是空的。
     /// </summary>
     public event EventHandler<(int ParentIndex, string Label)>? AddGroupRequested;
+
+    /// <summary>
+    /// 用户拖拽重排了某一层。参数是（父项索引，从哪，到哪）；父项索引为 -1 表示第一层。
+    /// </summary>
+    public event EventHandler<(int ParentIndex, int From, int To)>? ReorderRequested;
 
     /// <summary>
     /// 用户在扇区的编辑面板上选了动作（改名 / 移除）。
@@ -471,8 +480,9 @@ public sealed class RadialWindow : Window
     /// <summary>诊断用：按真实命中结果走一遍左键分派（含"面板开着时先收面板"）。</summary>
     internal HitResult LeftClickForProbe(Point localPoint)
     {
+        _lastPointer = localPoint;
         var hit = _view.HitTest(localPoint);
-        HandleLeftDown(hit);
+        HandleLeftDown(hit, localPoint);
         HandleLeftUp(hit);
         return hit;
     }
@@ -480,12 +490,32 @@ public sealed class RadialWindow : Window
     /// <summary>诊断用：只按下（不抬起），用来核对"按下不该执行"。</summary>
     internal HitResult PressForProbe(Point localPoint)
     {
+        // 同时把 _lastPointer 摆到按下点：真实使用里指针必然在那里，
+        // 而探针不会真的移动鼠标，不摆的话长按的位置判定拿到的是上一次的位置。
+        _lastPointer = localPoint;
+
         var hit = _view.HitTest(localPoint);
-        HandleLeftDown(hit);
+        HandleLeftDown(hit, localPoint);
         return hit;
     }
 
-    /// <summary>诊断用：只抬起（配合上一次按下），用来核对"移到别处松开不执行"。</summary>
+    /// <summary>诊断用：模拟指针移动（走与真实 MouseMove 同一条预览刷新路径）。</summary>
+    internal void MovePointerForProbe(Point localPoint)
+    {
+        _lastPointer = localPoint;
+        UpdateDragPreview();
+    }
+
+    /// <summary>诊断用：是否正在拖拽。</summary>
+    internal bool IsDraggingForProbe => _view.IsDragging;
+
+    /// <summary>诊断用：当前落点格子。</summary>
+    internal int DragTargetSlotForProbe => _view.DragTargetSlot;
+
+    /// <summary>诊断用：目标格子标记是否真的画在视觉树上。</summary>
+    internal bool DragMarkerAttachedForProbe => _view.DragMarkerAttached;
+
+    /// <summary>诊断用：只抬起（配合上一次按下），用来核对"移到别处松开不执行"。
     internal HitResult ReleaseForProbe(Point localPoint)
     {
         var hit = _view.HitTest(localPoint);
@@ -658,7 +688,16 @@ public sealed class RadialWindow : Window
     private void OnMouseMove(object sender, MouseEventArgs e)
     {
         _lastPointer = e.GetPosition(_view.Root);
+        UpdateDragPreview();
         EvaluateHover();
+    }
+
+    /// <summary>拖拽中让被拖项跟着指针（只取角度，半径不影响落点）。</summary>
+    private void UpdateDragPreview()
+    {
+        if (!_view.IsDragging || _lastPointer is not { } local) return;
+
+        _view.UpdateDrag(_view.PolarOf(local).AngleDeg);
     }
 
     private void OnMouseLeave(object sender, MouseEventArgs e)
@@ -749,10 +788,32 @@ public sealed class RadialWindow : Window
     /// </summary>
     private HitResult? _pressed;
 
+    /// <summary>按下的时刻；0 表示当前没有进行中的按下。</summary>
+    private long _pressStartedAtMs;
+
+    /// <summary>
+    /// 长按过程中允许的指针移动量（DIP）。超过它就当作放弃长按。
+    /// 取 14 大致是"手抖但不至于换项"的幅度。
+    /// </summary>
+    private const double LongPressMoveSlopDips = 14;
+
+    /// <summary>按下时所在的扇区索引，-1 表示不在扇区上（死区/环外）。</summary>
+    private int _pressedIndex = -1;
+
+    private bool _pressedIsChild;
+
+    /// <summary>按下时的窗口内坐标。长按只在指针没怎么移动时才成立。</summary>
+    private Point _pressPoint;
+
+    /// <summary>这次按下是否已经触发过长按（触发后松手**不再执行**该项）。</summary>
+    private bool _longPressFired;
+
     private void OnMouseLeftDown(object sender, MouseButtonEventArgs e)
     {
         e.Handled = true;
-        HandleLeftDown(_view.HitTest(e.GetPosition(_view.Root)));
+
+        var local = e.GetPosition(_view.Root);
+        HandleLeftDown(_view.HitTest(local), local);
     }
 
     private void OnMouseLeftUp(object sender, MouseButtonEventArgs e)
@@ -767,8 +828,10 @@ public sealed class RadialWindow : Window
     /// 原来按下就直接执行了，问题很实在：按错了想挪开再松手也来不及 ——
     /// 程序已经启动了。改成"按住可以反悔"之后，误触只要移出扇区再松手即可。
     /// </summary>
-    private void HandleLeftDown(HitResult hit)
+    private void HandleLeftDown(HitResult hit, Point localPoint)
     {
+        _pressPoint = localPoint;
+
         // 就地面板里的行自己处理按下事件并标记已处理，所以能走到这里说明按下的不是面板。
         // 面板开着时，第一下只用来收面板 —— 不让它顺手把下面的项执行掉。
         if (_view.IsPanelOpen)
@@ -779,6 +842,61 @@ public sealed class RadialWindow : Window
         }
 
         _pressed = hit;
+
+        // 长按计时从"按下"开始，并且只对真实项计时（死区、环外、「＋」都不算）：
+        // 长按「＋」或空白处没有可编辑的对象，进了编辑态反而让人困惑。
+        var onItem = !_view.IsAddSector(hit.Index) && !_view.IsChildAddSector(hit.Index);
+        _pressedIndex = hit.Zone switch
+        {
+            HitZone.Sector when onItem => hit.Index,
+            HitZone.ChildSector when onItem => hit.Index,
+            _ => -1,
+        };
+        _pressedIsChild = hit.Zone == HitZone.ChildSector;
+        _pressStartedAtMs = _pressedIndex >= 0 ? NowMs() : 0;
+        _longPressFired = false;
+    }
+
+    /// <summary>
+    /// 长按检查。搭在已有的 25ms 指针轮询上，不另起计时器 ——
+    /// 这个轮询本来就在跑，多一个判断是零成本。
+    ///
+    /// 进入编辑态的同时**直接进入拖拽**（安卓那样一个连续手势）：
+    /// 长按后还得松手再按一次会让人以为没反应。
+    /// </summary>
+    private void CheckLongPress()
+    {
+        if (_pressStartedAtMs == 0 || _longPressFired || _pressedIndex < 0) return;
+        if (_view.IsPanelOpen || _view.IsDragging) return;
+
+        if (NowMs() - _pressStartedAtMs < _tokens.Interaction.LongPressMs) return;
+
+        // 判定用**移动距离**而不是"是否还在同一扇区"。
+        //
+        // 用扇区判定太苛刻：按住两秒的过程中指针抖过一条缝（12 扇区时缝隙只有几度）
+        // 长按就作废，而用户明明"按住没动"。这里给一个宽容度，与"按住可以反悔"
+        // 依然一致 —— 真的想取消，手挪开就是了。
+        if (_lastPointer is { } local)
+        {
+            var moved = Math.Sqrt(
+                Math.Pow(local.X - _pressPoint.X, 2) + Math.Pow(local.Y - _pressPoint.Y, 2));
+            if (moved > LongPressMoveSlopDips) return;
+        }
+
+        // **置位必须在所有提前返回之后。**
+        // 放在前面的话：一旦在临界时刻因为"指针挪开了"而返回，标志已经置位，
+        // 随后的松手会被当成"长按后的松手"而吞掉 —— 用户点一下完全没有反应，
+        // 而且看不出任何原因。（这个顺序错误是被探针抓到的。）
+        _longPressFired = true;
+
+        if (!_editMode)
+        {
+            // 切编辑态会就地换掉整棵视觉树（多出「＋」扇区）。索引不会因此移位 ——
+            // 「＋」永远排在所有项之后，所以按下时记下的索引在新树上仍然指向同一项。
+            SetEditMode(true);
+        }
+
+        _view.BeginDrag(_pressedIndex);
     }
 
     /// <summary>
@@ -793,9 +911,35 @@ public sealed class RadialWindow : Window
         if (_pressed is not { } pressed) return;
         _pressed = null;
 
+        _pressStartedAtMs = 0;
+
+        // 触发过长按：这次松手**不执行**该项。
+        // 少了这一条，长按会顺带把程序启动一次 —— 用户想编辑，结果打开了程序。
+        if (_longPressFired)
+        {
+            _longPressFired = false;
+            CommitDrag();
+            return;
+        }
+
         if (released.Zone != pressed.Zone || released.Index != pressed.Index) return;
 
         HandleClick(released);
+    }
+
+    /// <summary>松手：落在不同格子就请求重排；落回原处就什么都不做（不写盘）。</summary>
+    private void CommitDrag()
+    {
+        var from = _pressedIndex;
+        var wasDragging = _view.IsDragging;
+        var to = _view.DragTargetSlot;
+
+        _view.EndDrag();
+        _pressedIndex = -1;
+
+        if (!wasDragging || from < 0 || to < 0 || to == from) return;
+
+        ReorderRequested?.Invoke(this, (_pressedIsChild ? _view.ChildArcParent : -1, from, to));
     }
 
     /// <summary>
@@ -857,8 +1001,9 @@ public sealed class RadialWindow : Window
                     // 子环的「＋」也先出面板 —— 两个「＋」行为不一致正是用户困惑的来源：
                     // 点了一个直接进文件浏览器，就完全看不到"新建分组"（它在另一个「＋」上）。
                     _view.ShowAddChoice(hit.Index, isChild: true);
-                else
+                else if (!_editMode)
                     // 子项是叶子：执行它。父索引与子索引一起报上去，由上层解析成具体动作。
+                    // **编辑态下不执行**：编辑时误触启动了程序，代价比"多点一次"大得多。
                     ItemActivated?.Invoke(this, (_view.ChildArcParent, hit.Index));
                 break;
 
@@ -872,11 +1017,12 @@ public sealed class RadialWindow : Window
                 else if (_view.RootItemHasChildren(hit.Index))
                 {
                     // 点击有子项的扇区 = 跳过悬停延迟立即展开。
+                    // **编辑态下也照常展开** —— 要重排子环里的项，就得先进得去。
                     _hoverMachine.OpenImmediately(hit.Index);
                     _view.ExpandChildArc(hit.Index);
                     _view.SetHover(hit.Index);
                 }
-                else
+                else if (!_editMode)
                 {
                     ItemActivated?.Invoke(this, (hit.Index, -1));
                 }
@@ -886,7 +1032,14 @@ public sealed class RadialWindow : Window
                 // 中心 = 「返回上一层」。有子弧展开时先收子弧，否则取消整棵菜单。
                 // 这与饼菜单的既定语义一致（Don Hopkins 的规范里中心就是取消，
                 // Kurtenbach 的标记菜单里指向子菜单中心则是返回上一级）。
-                if (_view.IsChildArcVisible)
+                //
+                // 编辑态下中心是「完成」：先退出编辑态，**不关覆盖层** ——
+                // 与 Esc 一样逐层退出，不做"一次点掉两层"。
+                if (_editMode && !_view.IsChildArcVisible)
+                {
+                    SetEditMode(false);
+                }
+                else if (_view.IsChildArcVisible)
                 {
                     _hoverMachine.Reset();
                     _view.CollapseChildArc();
@@ -904,7 +1057,11 @@ public sealed class RadialWindow : Window
             case HitZone.Outside:
                 // 圆盘外一律关闭。本窗口是矩形而圆盘是圆的，四角的点击会被本窗口
                 // 收走、遮罩层收不到 —— 所以必须无条件兜底，否则在四角点击毫无反应。
-                DismissRequested?.Invoke(this, EventArgs.Empty);
+                //
+                // 编辑态下第一次点空白只退出编辑态（与 Esc 分层退出一致），
+                // 否则编辑到一半手一滑点到空白，整个覆盖层就没了、改动也没机会看。
+                if (_editMode) SetEditMode(false);
+                else DismissRequested?.Invoke(this, EventArgs.Empty);
                 break;
         }
     }
@@ -927,6 +1084,13 @@ public sealed class RadialWindow : Window
         if (_view.IsPanelOpen)
         {
             _view.DismissPanel();
+            return;
+        }
+
+        // 编辑态在"返回上一层"之外层：先退出编辑，再谈返回与关闭。
+        if (_editMode)
+        {
+            SetEditMode(false);
             return;
         }
 

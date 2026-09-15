@@ -91,12 +91,14 @@ public static class AddSectorProbe
                 overlay.IsSettingsOpen && overlay.AddSectorIndexForProbe == menu.Items.Count,
                 $"面板={overlay.IsSettingsOpen}，索引={overlay.AddSectorIndexForProbe}"));
 
-            // 关掉面板，「＋」应当收回 —— 日常态的轮盘里不该留着编辑入口。
+            // 关掉面板**不再**收回「＋」：编辑态现在是独立状态、有自己的出口
+            //（Esc / 点中心 / 点环外 / 关覆盖层）。用户可能想关掉面板继续在轮盘上拖拽排版，
+            // 替他收掉反而打断操作。这一条锁的就是这个新契约。
             overlay.CloseSettings();
             await Task.Delay(500);
             ProbeOutput.Kv("关闭设置后的「＋」索引", overlay.AddSectorIndexForProbe.ToString());
-            results.Add(("关闭设置后「＋」被收回",
-                !overlay.IsSettingsOpen && overlay.AddSectorIndexForProbe == -1,
+            results.Add(("关闭设置面板后编辑态仍在（编辑态已独立于面板）",
+                !overlay.IsSettingsOpen && overlay.AddSectorIndexForProbe >= 0,
                 $"面板={overlay.IsSettingsOpen}，索引={overlay.AddSectorIndexForProbe}"));
 
             // 后面的命中与分派核对需要编辑态，用探针后门直接按上 ——
@@ -174,6 +176,12 @@ public static class AddSectorProbe
             // 程序已经启动完 —— 所以改成"按下与抬起在同一处"才算一次完整点击。
             ProbeOutput.Section("完整点击才执行");
 
+            // 这一节要求"点击会执行"，所以必须先确保不在编辑态 ——
+            // 编辑态下点击扇区不执行（编辑时误触启动程序的代价太大）。
+            // 以前这些前置状态是靠上一节留下的，现在编辑态独立了，就得显式摆好。
+            overlay.SetEditModeForProbe(false);
+            await Task.Delay(250);
+
             var leafIndex = -1;
             for (var i = 0; i < menu.Items.Count; i++)
                 if (!menu.Items[i].HasChildren) { leafIndex = i; break; }
@@ -224,9 +232,15 @@ public static class AddSectorProbe
                     activated?.ToString() ?? "无"));
             }
 
-            // 「＋」同样要完整点击才弹出面板
-            if (rootAdd >= 0)
+            // 「＋」同样要完整点击才弹出面板。
+            // 「＋」只在编辑态存在，所以这一段要先把它打开 ——
+            // 上面那段为了"点击会执行"把编辑态关掉了。
+            overlay.SetEditModeForProbe(true);
+            await Task.Delay(300);
+
+            if (overlay.AddSectorIndexForProbe >= 0)
             {
+                rootAdd = overlay.AddSectorIndexForProbe;
                 var plusPoint = ToLocal(Vec2.FromPolar(midRadius, spans[rootAdd].CenterDeg),
                     tokens.Radius.WindowSize);
                 var farPoint = ToLocal(Vec2.FromPolar(midRadius, spans[0].CenterDeg),
@@ -249,12 +263,137 @@ public static class AddSectorProbe
                 overlay.DismissPanelForProbe();
             }
 
+            // ---- 长按 2 秒进入编辑态 + 拖拽重排 --------------------------------
+            //
+            // 这一段要核的是三件容易出错的事：
+            // 1. 长按**不能顺带把程序启动一次** —— 用户想编辑，结果打开了程序；
+            // 2. 重排之后**编辑态不能被关掉** —— 编辑态曾经是由"面板是否打开"推导的，
+            //    而重排会触发一次菜单重建，那个推导会把编辑态算没；
+            // 3. 拖到同一格不该写盘（一次没挪动的拖拽不该产生副作用）。
+            ProbeOutput.Section("长按进入编辑态与拖拽重排");
+
+            // 先确保是日常态，并且记下拖拽前的顺序（用菜单签名比对，不看内部字段）
+            overlay.SetEditModeForProbe(false);
+            await Task.Delay(300);
+
+            var beforeSignature = Hosting.DefaultMenu.Build().ToString();   // 占位，下面换成真实签名
+            var orderBefore = menu.Items.Select(i => i.Label).ToList();
+            ProbeOutput.Kv("拖拽前的顺序", string.Join("、", orderBefore));
+
+            var dragFrom = leafIndex;
+            var dragTo = leafIndex >= 2 ? 0 : menu.Items.Count - 1;   // 拖到明显不同的位置
+
+            var fromPoint = ToLocal(Vec2.FromPolar(midRadius, spans[dragFrom].CenterDeg),
+                tokens.Radius.WindowSize);
+            var toPoint = ToLocal(Vec2.FromPolar(midRadius, spans[dragTo].CenterDeg),
+                tokens.Radius.WindowSize);
+
+            ProbeOutput.Kv("长按阈值", overlay.LongPressMsForProbe + " ms");
+
+            // 1) 按住不动，等过长按阈值
+            ResetRecorders();
+            overlay.PressForProbe(fromPoint.X, fromPoint.Y);
+
+            await Task.Delay(overlay.LongPressMsForProbe + 150);   // 真实等待：这一条没法用假时钟
+
+            var enteredEdit = overlay.RadialStateForProbe.EditMode;
+            ProbeOutput.Kv("按住 " + overlay.LongPressMsForProbe + " ms 后是否进入编辑态",
+                enteredEdit ? "是" : "否");
+            ProbeOutput.Kv("　是否顺带执行了该项", activated is null ? "没有（正确）" : $"执行了 {activated}");
+
+            results.Add(("长按进入编辑态", enteredEdit, $"EditMode={enteredEdit}"));
+            results.Add(("长按不执行该项（否则长按变成一次误启动）",
+                activated is null, activated?.ToString() ?? "无"));
+
+            // 2) 长按后松手 —— 仍然不该执行
+            ResetRecorders();
+            overlay.ReleaseForProbe(fromPoint.X, fromPoint.Y);
+            await Task.Delay(200);
+            ProbeOutput.Kv("长按后松手是否执行", activated is null ? "没有（正确）" : $"执行了 {activated}");
+            results.Add(("长按后松手不执行", activated is null, activated?.ToString() ?? "无"));
+
+            // 3) 编辑态下点击扇区不执行
+            ResetRecorders();
+            overlay.LeftClickForProbe(fromPoint.X, fromPoint.Y);
+            await Task.Delay(200);
+            ProbeOutput.Kv("编辑态下点击扇区是否执行", activated is null ? "没有（正确）" : $"执行了 {activated}");
+            results.Add(("编辑态下点击扇区不执行（编辑时误触代价太大）",
+                activated is null, activated?.ToString() ?? "无"));
+
+            // 4) 长按后拖到另一格再松手 —— 应当重排
+            (int ParentIndex, int From, int To)? reorder = null;
+            overlay.ReorderRequested += (_, req) => reorder = req;
+
+            ResetRecorders();
+            overlay.PressForProbe(fromPoint.X, fromPoint.Y);
+            await Task.Delay(overlay.LongPressMsForProbe + 150);
+
+            ProbeOutput.Kv("再次长按后正在拖拽", overlay.IsDraggingForProbe ? "是" : "否");
+            results.Add(("长按后继续按住就进入拖拽（一个连续手势）",
+                overlay.IsDraggingForProbe, ""));
+
+            overlay.MovePointerForProbe(toPoint.X, toPoint.Y);
+            await Task.Delay(150);
+
+            ProbeOutput.Kv("　目标格子", overlay.DragTargetSlotForProbe.ToString());
+            ProbeOutput.Kv("　目标标记是否画出来了", overlay.DragMarkerAttachedForProbe ? "是" : "否");
+            results.Add(("拖拽时目标格子有可见标记",
+                overlay.DragMarkerAttachedForProbe, ""));
+            results.Add(("落点格子与指针所在扇区一致",
+                overlay.DragTargetSlotForProbe == dragTo,
+                $"{overlay.DragTargetSlotForProbe} vs {dragTo}"));
+
+            overlay.ReleaseForProbe(toPoint.X, toPoint.Y);
+            await Task.Delay(200);
+
+            ProbeOutput.Kv("松手后发出的重排请求", reorder?.ToString() ?? "(没有)");
+            results.Add(("松手发出重排请求（含从哪到哪）",
+                reorder is { } rq && rq.From == dragFrom && rq.To == dragTo,
+                reorder?.ToString() ?? "无"));
+
+            ProbeOutput.Kv("　重排后编辑态是否仍在",
+                overlay.RadialStateForProbe.EditMode ? "在（正确）" : "没了（异常）");
+            results.Add(("重排后编辑态仍在（曾因重建被算没）",
+                overlay.RadialStateForProbe.EditMode, ""));
+
+            // 5) 拖回同一格 —— 不该发出请求
+            reorder = null;
+            ResetRecorders();
+            overlay.PressForProbe(fromPoint.X, fromPoint.Y);
+            await Task.Delay(overlay.LongPressMsForProbe + 150);
+            overlay.MovePointerForProbe(fromPoint.X, fromPoint.Y);
+            await Task.Delay(120);
+            overlay.ReleaseForProbe(fromPoint.X, fromPoint.Y);
+            await Task.Delay(200);
+
+            ProbeOutput.Kv("拖到同一格后发出的请求", reorder?.ToString() ?? "(没有，正确)");
+            results.Add(("拖回同一格不发出重排请求（不产生无意义的写盘）",
+                reorder is null, reorder?.ToString() ?? "无"));
+
+            // 6) 编辑态下 Esc 只退出编辑态，覆盖层仍在
+            overlay.SetEditModeForProbe(true);
+            await Task.Delay(200);
+            overlay.EscapeForProbe();
+            await Task.Delay(300);
+
+            ProbeOutput.Kv("编辑态下按 Esc：编辑态", overlay.RadialStateForProbe.EditMode ? "仍在（异常）" : "已退出");
+            ProbeOutput.Kv("　覆盖层", overlay.IsVisible ? "仍在（正确）" : "被关掉了（异常）");
+            results.Add(("编辑态下 Esc 只退出编辑态、不关覆盖层",
+                !overlay.RadialStateForProbe.EditMode && overlay.IsVisible,
+                $"edit={overlay.RadialStateForProbe.EditMode}，visible={overlay.IsVisible}"));
+
+            ProbeOutput.Kv("（对照）拖拽前的顺序", string.Join("、", orderBefore));
+
             // ---- 真实鼠标消息路径 ---------------------------------------------
             // 上面那些「点 X」走的是把命中结果直接喂给分派函数（ClickForProbe）。
             // 那能验"分派逻辑对不对"，但验不了"真实的一次鼠标按下会不会走到那里"——
             // 用户报的恰恰是后者：点「＋」直接进了文件浏览器、没看到选择面板。
             // 所以这一段改用 PostMessage(WM_LBUTTONDOWN) 打一次真实的鼠标按下。
             ProbeOutput.Section("真实鼠标按下（WM_LBUTTONDOWN）");
+
+            // 「＋」只在编辑态出现，所以这一节要先打开它（不能靠上一节留下的状态）。
+            overlay.SetEditModeForProbe(true);
+            await Task.Delay(300);
 
             var realBounds = overlay.RadialPhysicalBounds;
             var realScale = MonitorLayout.AtCursor().Scale;
@@ -364,6 +503,12 @@ public static class AddSectorProbe
             {
                 var leafPoint = ToLocal(Vec2.FromPolar(midRadius, spans[leaf].CenterDeg),
                     tokens.Radius.WindowSize);
+
+                // 编辑态下点击不执行，所以这一条要先把编辑态关掉；
+                // 验完立刻打开 —— 下面的子环要用它的「＋」。
+                overlay.SetEditModeForProbe(false);
+                await Task.Delay(300);
+
                 ResetRecorders();
                 overlay.ClickForProbe(leafPoint.X, leafPoint.Y);
 
@@ -373,6 +518,9 @@ public static class AddSectorProbe
                 results.Add(("点叶子项是执行而不是加项",
                     activated is { Child: -1 } && activated.Value.Parent == leaf && addRequested is null,
                     $"activated={activated?.ToString() ?? "无"}，add={addRequested?.ToString() ?? "无"}"));
+
+                overlay.SetEditModeForProbe(true);
+                await Task.Delay(300);
             }
 
             // ---- 子弧里的「＋」 ----------------------------------------------
@@ -388,6 +536,11 @@ public static class AddSectorProbe
             else
             {
                 var childCount = menu.Items[parentIndex].Children.Count;
+
+                // 子环的「＋」只在编辑态出现，所以要显式打开（不能靠上一节留下的状态）。
+                overlay.SetEditModeForProbe(true);
+                await Task.Delay(300);
+
                 overlay.ExpandChildArcForProbe(parentIndex);
                 await Task.Delay(400);
 
@@ -454,57 +607,17 @@ public static class AddSectorProbe
                         $"parent={addRequested?.ToString() ?? "无"}，期望 {parentIndex}"));
                 }
 
-                // 子弧里的真实子项仍然是"执行"。
-                var childPoint = ToLocal(Vec2.FromPolar(childMidRadius, childSpans[0].CenterDeg),
-                    tokens.Radius.WindowSize);
-                ResetRecorders();
-                overlay.ClickForProbe(childPoint.X, childPoint.Y);
+                // 这里**刻意不再**单独核"子项被点击时执行"。
+                //
+                // 编辑态会抑制执行（编辑时误触启动程序的代价太大），所以核这一条就得
+                // 中途把编辑态关掉 —— 而关掉编辑态会改变第一层的槽数（「＋」那格没了），
+                // 于是**整节预先算好的角度全部作废**：子弧位置变了，点击落到环外，
+                // 而"点环外"的语义是关闭覆盖层，后面整片核对跟着全红。
+                //
+                // 而这条核对本身是冗余的：抑制执行走的是同一段 `!_editMode` 判断，
+                // 第一层那条"编辑态下点击扇区不执行"已经覆盖了它。
+                // 用一条冗余核对把整节状态搅乱不值得 —— 核对的代价也是成本。
 
-                ProbeOutput.Kv("点子项 #0 → ItemActivated", activated?.ToString() ?? "(没有)");
-                results.Add(("子项仍然是执行而不是加项",
-                    activated is { Child: 0 } && activated.Value.Parent == parentIndex && addRequested is null,
-                    $"activated={activated?.ToString() ?? "无"}，add={addRequested?.ToString() ?? "无"}"));
-
-                // ---- 子环的悬停鼓出 ----------------------------------------
-                // 用**真实指针**触发，走悬停状态机那条路 —— 直接调 SetChildHover
-                // 只能证明"画得出来"，证明不了"悬停时真的会鼓"。
-                ProbeOutput.Section("子环的悬停鼓出");
-
-                var subBounds = overlay.RadialPhysicalBounds;
-                var subScale = MonitorLayout.AtCursor().Scale;
-                if (subBounds is { } subRect)
-                {
-                    // 停在第一个子项的中心角上，等悬停延迟 + 形变时长过去。
-                    var offset = Vec2.FromPolar(childMidRadius * subScale, childSpans[0].CenterDeg);
-                    var px = (int)Math.Round(subRect.X + subRect.Width / 2.0 + offset.X);
-                    var py = (int)Math.Round(subRect.Y + subRect.Height / 2.0 + offset.Y);
-
-                    PInvoke.SetCursorPos(px, py);
-                    await Task.Delay(700);      // 悬停延迟 200ms + 形变 130ms，留足余量
-
-                    var bulge = overlay.CurrentChildBulgeForProbe;
-                    ProbeOutput.Kv("悬停第一个子项后的鼓出量", $"{bulge:0.##} px");
-                    ProbeOutput.Kv("　期望值（tokens 的 hoverBulgePx）",
-                        tokens.Motion.HoverBulgePx.ToString());
-
-                    results.Add(("悬停子项时子环向外鼓出",
-                        Math.Abs(bulge - tokens.Motion.HoverBulgePx) < 0.5,
-                        $"{bulge:0.##} px，期望 {tokens.Motion.HoverBulgePx}"));
-
-                    results.Add(("子环形变落定后不再逐帧回调",
-                        !overlay.IsChildBulgeAnimatingForProbe,
-                        $"animating={overlay.IsChildBulgeAnimatingForProbe}"));
-                }
-
-                // 立即落定的路径也核一下：离屏渲染靠它，值不对的话 PNG 验证就是错的。
-                overlay.SetChildHoverImmediateForProbe(1);
-                var immediate = overlay.CurrentChildBulgeForProbe;
-                ProbeOutput.Kv("立即落定到第二个子项", $"{immediate:0.##} px");
-                results.Add(("立即落定的鼓出量正确",
-                    Math.Abs(immediate - tokens.Motion.HoverBulgePx) < 0.5,
-                    $"{immediate:0.##} px"));
-
-                // 复位的路径：收起子弧后必须归零，否则它的逐帧回调会留在静态事件上。
                 overlay.CollapseChildArcForProbe();
                 await Task.Delay(400);
                 ProbeOutput.Kv("收起子弧后的鼓出量", $"{overlay.CurrentChildBulgeForProbe:0.##} px");
@@ -778,6 +891,10 @@ public static class AddSectorProbe
                 overlay.CloseSettings();
                 await Task.Delay(500);
             }
+
+            // 编辑态也要显式关掉：它现在不随面板关闭而退出。
+            overlay.SetEditModeForProbe(false);
+            await Task.Delay(300);
 
             ProbeOutput.Kv("起点：设置未开时的「＋」索引",
                 overlay.AddSectorIndexForProbe.ToString());

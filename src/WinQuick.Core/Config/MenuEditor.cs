@@ -114,6 +114,48 @@ public static class MenuEditor
         return (menu with { Items = items }, null);
     }
 
+    /// <summary>
+    /// 同一层内重排：把第 <paramref name="from"/> 项移到第 <paramref name="to"/> 个位置。
+    ///
+    /// **排列就是数组顺序。** 轮盘的扇区角度由项数均匀分配、按下标顺序落位，
+    /// 所以"改排列"不需要新增任何字段 —— 挪数组就够了。这样 menus.json 里的
+    /// 顺序始终等于盘面上的顺序，手写配置时也一眼能看懂。
+    ///
+    /// 语义是**插入**（安卓桌面那样）：把项取出来插到目标位置，中间的项依次让位。
+    /// 不是交换 —— 交换会让"我想把这个挪到 12 点方向"顺手把原来那项甩到别处，
+    /// 而插入的结果更接近用户说的"挪到这里"。
+    ///
+    /// <paramref name="parentIndex"/> 为 -1 表示第一层，否则是某个分组的子项。
+    /// </summary>
+    public static (MenuSpec Menu, string? Error) Move(MenuSpec menu, int parentIndex, int from, int to)
+    {
+        if (parentIndex >= menu.Items.Count)
+            return (menu, $"没有第 {parentIndex + 1} 项。");
+
+        var items = menu.Items.ToList();
+        var children = parentIndex < 0 ? null : items[parentIndex].Children.ToList();
+        var list = children ?? items;
+        var level = parentIndex < 0 ? "第一层" : $"「{items[parentIndex].Label}」";
+
+        if (from < 0 || from >= list.Count)
+            return (menu, $"{level}没有第 {from + 1} 项，无法移动。");
+
+        if (to < 0 || to >= list.Count)
+            return (menu, $"{level}没有第 {to + 1} 个位置，无法移入。");
+
+        // 同位置是空操作：不报错，也不产生一次无意义的写盘。
+        if (from == to) return (menu, null);
+
+        var moved = list[from];
+        list.RemoveAt(from);
+        list.Insert(to, moved);
+
+        if (children is null) return (menu with { Items = list }, null);
+
+        items[parentIndex] = items[parentIndex] with { Children = children };
+        return (menu with { Items = items }, null);
+    }
+
     /// <summary>改一项的名称。空名称会被拒绝 —— 界面上会显示成一块空白，用户认不出那是什么。</summary>
     public static (MenuSpec Menu, string? Error) Rename(
         MenuSpec menu, int rootIndex, int childIndex, string? label)

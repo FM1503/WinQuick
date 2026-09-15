@@ -105,6 +105,14 @@ public sealed record DesignTokens
                 "否则在 3 点/9 点方向文字会压到图标上。");
         }
 
+        // 长按阈值要有下限：太短会把普通点击误判成长按（点击是"执行程序"，
+        // 误判的代价是用户想启动程序却进了编辑态）。上限则是因为超过 3 秒
+        // 用户会以为程序没反应。
+        if (Interaction.LongPressMs < 400 || Interaction.LongPressMs > 3000)
+            problems.Add(
+                $"interaction.longPressMs={Interaction.LongPressMs} 超出合理范围 400–3000ms；" +
+                "过短会把普通点击误判成长按，过长会让用户以为没反应");
+
         // 子扇区的角度下限必须够大到能点中。
         if (Interaction.ChildMinSectorDegrees < 15)
             problems.Add($"interaction.childMinSectorDegrees={Interaction.ChildMinSectorDegrees} 过小，子项会细到点不中");
@@ -330,5 +338,13 @@ public sealed record InteractionTokens
     public int HoverOpenDelayMs { get; init; } = DefaultOpenDelayMs;
     public int HoverCloseDelayMs { get; init; } = DefaultCloseDelayMs;
     public double ChildSpanDegrees { get; init; } = 90;
+
+    /// <summary>
+    /// 长按多久进入编辑态。用户指定 2 秒。
+    ///
+    /// 做成令牌而不是常量：长按阈值是最依赖手感的一类参数，
+    /// 将来觉得"2 秒太长"时应该改一个数，而不是改代码。
+    /// </summary>
+    public int LongPressMs { get; init; } = 2000;
     public double ChildMinSectorDegrees { get; init; } = 25;
 }

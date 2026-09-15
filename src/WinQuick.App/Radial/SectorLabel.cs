@@ -235,6 +235,18 @@ internal sealed class SectorLabel
     }
 
     /// <summary>
+    /// 把标签挪到新的角度（拖拽预览用）。半径与盒子尺寸都不变 ——
+    /// 拖拽只在角向移动，标签的可用宽度、折行结果都不该变。
+    /// </summary>
+    public void MoveTo(Point center, double labelRadius, double angleDeg)
+    {
+        var offset = Core.Geometry.Vec2.FromPolar(labelRadius, angleDeg);
+
+        Canvas.SetLeft(_clipHost, center.X + offset.X - _clipHost.Width / 2);
+        Canvas.SetTop(_clipHost, center.Y + offset.Y - _clipHost.Height / 2);
+    }
+
+    /// <summary>
     /// 悬停状态变化。
     ///
     /// **只动透明度，不动字号与字重。** 动字重会触发一次文字重排（WPF 要按新字重

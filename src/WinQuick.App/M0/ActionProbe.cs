@@ -43,6 +43,7 @@ public static class ActionProbe
                 Action = MenuAction.Launch(cmd, $"/c echo winquick-launch-ok > \"{marker}\""),
             };
             results.Add(await RunOneAsync(launchItem, marker, "winquick-launch-ok"));
+            results.Add(await RunWorkingDirectoryCheckAsync());
 
             // ② open：用系统默认程序打开一个文件夹。
             //    这条不好自动核对（会真的弹出资源管理器窗口），所以只验证不抛异常。
@@ -87,6 +88,64 @@ public static class ActionProbe
         finally
         {
             try { if (File.Exists(marker)) File.Delete(marker); } catch { /* 清理失败不影响结论 */ }
+        }
+    }
+
+    /// <summary>
+    /// 核对"启动时的工作目录"。
+    ///
+    /// 为什么单独核这一条：开始菜单永远带「起始位置」（快捷方式里存着），
+    /// 而我们直接存 exe 路径时没有这个信息，子进程会继承**我们**的目录。
+    /// 不少程序要求从自己目录启动（OBS 就是），否则报错 ——
+    /// 现象正是用户报的"外部双击正常、从工具里打开报错"。
+    ///
+    /// 做法：把 cmd.exe 复制到一个临时目录，让它把自己的工作目录写进文件。
+    /// 用复制的副本而不是 System32 里的原件 —— 后者的目录恰好是默认值，
+    /// 那样测了也分不出"我们的兜底生效了"还是"本来就是那样"。
+    /// </summary>
+    private static async Task<(string, bool, string)> RunWorkingDirectoryCheckAsync()
+    {
+        ProbeOutput.Section("启动时的工作目录");
+
+        var tempDir = Path.Combine(Path.GetTempPath(), "wq-cwd-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+
+        try
+        {
+            var fakeExe = Path.Combine(tempDir, "cwd-reporter.exe");
+            File.Copy(Path.Combine(Environment.SystemDirectory, "cmd.exe"), fakeExe, overwrite: true);
+
+            var report = Path.Combine(tempDir, "cwd.txt");
+            var probeItem = new MenuItemSpec
+            {
+                Label = "工作目录探针",
+                Action = MenuAction.Launch(fakeExe, $"/c cd > \"{report}\""),
+            };
+
+            ActionExecutor.Execute(probeItem);
+
+            for (var i = 0; i < 40 && !File.Exists(report); i++) await Task.Delay(100);
+
+            var got = File.Exists(report) ? File.ReadAllText(report).Trim() : "";
+            ProbeOutput.Kv("exe 所在目录", tempDir);
+            ProbeOutput.Kv("子进程实际工作目录", got.Length > 0 ? got : "(没写出来)");
+
+            var ok = string.Equals(got, tempDir, StringComparison.OrdinalIgnoreCase);
+            ProbeOutput.Line();
+            ProbeOutput.Line(ok
+                ? "  >>> 与开始菜单一致：快捷方式带「起始位置」，我们按目标所在目录兜底。"
+                : "  >>> 工作目录不对 —— 要求从自身目录启动的程序会报错。");
+
+            return ("直接启动 exe 时，工作目录兜底为 exe 自己的目录", ok, got);
+        }
+        catch (Exception ex)
+        {
+            ProbeOutput.Line("  工作目录核对异常: " + ex.Message);
+            return ("工作目录核对跑完", false, ex.Message);
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); } catch { /* 清理失败不影响结论 */ }
         }
     }
 

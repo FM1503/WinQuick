@@ -86,7 +86,25 @@ public static class ActionExecutor
         };
 
         if (!string.IsNullOrWhiteSpace(arguments)) info.Arguments = arguments;
-        if (!string.IsNullOrWhiteSpace(workingDirectory)) info.WorkingDirectory = workingDirectory;
+
+        // 工作目录：开始菜单永远有它（快捷方式自带的「起始位置」），而我们直接存 exe
+        // 路径时没有这个信息 —— 子进程会继承**我们**的目录。
+        //
+        // 这不是小事：不少程序（OBS、部分游戏与 IDE）要求从自己的目录启动，
+        // 否则会报错或找不到资源。表现就是"外部双击正常、从工具里打开报错"。
+        //
+        // 对 .lnk / .url **不能**这样兜底：那会把快捷方式自己的「起始位置」覆盖成
+        // 快捷方式所在的文件夹（比如桌面），反而更糟。那种情况交给 shell 解析。
+        if (!string.IsNullOrWhiteSpace(workingDirectory))
+        {
+            info.WorkingDirectory = workingDirectory;
+        }
+        else if (!IsShellLink(target))
+        {
+            var ownDirectory = Path.GetDirectoryName(target);
+            if (!string.IsNullOrWhiteSpace(ownDirectory) && Directory.Exists(ownDirectory))
+                info.WorkingDirectory = ownDirectory;
+        }
 
         // 相对路径按 %WINDIR% 之外的当前目录解析会失效，所以这里做一次存在性检查，
         // 给出比"系统找不到指定的文件"更有用的提示。
@@ -95,6 +113,14 @@ public static class ActionExecutor
 
         Process.Start(info);
         return ActionResult.Ok($"已启动 {Path.GetFileName(target)}");
+    }
+
+    /// <summary>是不是由 shell 解析的快捷方式（这类不能用"目标自己的目录"兜底）。</summary>
+    private static bool IsShellLink(string target)
+    {
+        var ext = Path.GetExtension(target);
+        return ext.Equals(".lnk", StringComparison.OrdinalIgnoreCase)
+            || ext.Equals(".url", StringComparison.OrdinalIgnoreCase);
     }
 
     private static ActionResult OpenWithShell(string target)

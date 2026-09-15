@@ -211,6 +211,17 @@ internal static class ShellContextMenu
             // 键名不动，也就不必在注册表里做"删旧建新"的迁移。
             destination.SetValue("MUIVerb", target.Label, RegistryValueKind.String);
 
+            // **每个目的地都要有图标。**
+            //
+            // 少了它会出一处很显眼但很难查的观感问题：第三级菜单项上多出一圈
+            // 空图标位的白色描边，而前两级没有 —— 因为第一级有图标、第二级是
+            // 级联父项本来就不画图标位，只有叶子这一级会去占那块位置。
+            //
+            // 判据来自对照：本机两个"已知良好"的级联叶子
+            // （Windows 自带的 EFS Decrypt、VS Code）都写了 Icon，只有我们没写。
+            // 图标借用程序自己的（与第一级一致），分组本身没有更贴切的图可用。
+            destination.SetValue("Icon", executablePath, RegistryValueKind.String);
+
             // 多选时隐藏这一项。旧版动词默认会"每个选中文件起一个进程"，
             // 而本功能一次只处理一个路径 —— 与其让用户以为会全部添加，
             // 不如多选时就不显示。

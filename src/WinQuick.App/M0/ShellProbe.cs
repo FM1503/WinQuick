@@ -139,6 +139,12 @@ public static class ShellProbe
                     }
 
                     results.Add(($"[{i}] MultiSelectModel=Single", multiSelect == "Single", multiSelect ?? "无"));
+
+                    // 每个目的地都必须带图标：少了它叶子项会多出一圈空图标位的白描边，
+                    // 而前两级不会有 —— 只看注册表看不出这是问题，所以要用核对钉住。
+                    var destIcon = dest?.GetValue("Icon") as string;
+                    results.Add(($"[{i}] 有图标（缺了会在菜单里留一圈空图标位）",
+                        !string.IsNullOrEmpty(destIcon), destIcon ?? "无"));
                 }
 
                 // 含空格的分组名必须被引号包住，否则 shell 会把它拆成两个参数。

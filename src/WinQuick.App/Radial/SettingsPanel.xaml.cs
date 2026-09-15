@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Windows;
@@ -8,6 +8,7 @@ using System.Windows.Interop;
 using System.Windows.Media.Animation;
 using WinQuick.App.Config;
 using WinQuick.App.Design;
+using WinQuick.App.Diagnostics;
 using WinQuick.App.Hosting;
 using WinQuick.App.Interop;
 using WinQuick.App.Settings;
@@ -62,6 +63,9 @@ public partial class SettingsPanel : Window
         _original = current;
         _probeHotkey = probeHotkey;
         _apply = applyConfig;
+
+        // 窗口级操作计数（--flicker-probe）。
+        SurfaceOps.Watch(this, SurfaceOwner.Panel);
 
         LoadFrom(current, notify: false);
     }
@@ -262,6 +266,25 @@ public partial class SettingsPanel : Window
     {
         if (Content is not FrameworkElement root) return;
         if (!Design.MotionPreference.SystemAllows) return;   // 不播动画就别预先缩小
+
+        // **先把上一轮残留的动画清掉，再写起始值。**
+        //
+        // PlayEntrance 挂的是关键帧动画，默认 HoldEnd —— 动画结束后
+        // "动画值 1"会一直压着本地值。于是第二次打开面板时，
+        // 这里写的 Opacity = 0 会被那条残留动画的 1 盖掉：
+        // 面板先以**终态**完整显示几帧，然后才被新动画拽回 0 重新长出来。
+        // 观感就是"先闪一下整个面板，再缩放" —— 用户报的正是这个。
+        //
+        // 轮盘那份 PrepareEntrance 一直有这几句（所以轮盘没这个毛病），
+        // 面板当初照着抄却漏了，只有第一次打开是对的（那时还没有残留动画）。
+        // 判据在 --flash-probe 的"入场状态（应用侧逐帧）"：触发后首帧必须是 0。
+        root.BeginAnimation(OpacityProperty, null);
+
+        if (root.RenderTransform is System.Windows.Media.ScaleTransform previous)
+        {
+            previous.BeginAnimation(System.Windows.Media.ScaleTransform.ScaleXProperty, null);
+            previous.BeginAnimation(System.Windows.Media.ScaleTransform.ScaleYProperty, null);
+        }
 
         _entranceScale = new System.Windows.Media.ScaleTransform(EntranceFromScale, EntranceFromScale);
         root.RenderTransformOrigin = new Point(0.5, 0.5);
@@ -623,6 +646,15 @@ public partial class SettingsPanel : Window
 
     /// <summary>探针用：把"用户拖过"这个状态直接按上（没法在探针里模拟真实的 DragMove）。</summary>
     internal void MarkPlacedByUserForTest() => PlacedByUser = true;
+
+    // ---- 刷新闪烁探针用的接缝（--flicker-probe）----------------------------
+    // 这些动作**只改内容、不改尺寸**，正是"纯内容刷新"的样子。
+    // 面板高度会不会跟着变，直接决定分层窗口要不要重建表面 —— 所以探针
+    // 每一步都把高度一起打出来，而不是只报一个"闪没闪"。
+    internal void SetFooterForProbe(string text) => SetFooter(text, isError: false);
+    internal void SetHotkeyStatusForProbe(string text) => SetHotkeyStatus(text, isError: false);
+    internal double PanelHeightForProbe => ActualHeight;
+    internal double PanelWidthForProbe => ActualWidth;
 
     internal string HotkeyStatusTextForTest => HotkeyStatus.Text;
 

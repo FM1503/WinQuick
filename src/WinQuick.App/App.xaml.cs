@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 
 namespace WinQuick.App;
 
@@ -97,6 +97,16 @@ public partial class App : Application
             case "--perf-probe":
                 // 需要消息循环：帧间隔靠 CompositionTarget.Rendering 采。
                 RunDetached(() => M0.PerfProbe.RunAsync(cli));
+                break;
+
+            case "--flicker-probe":
+                // 需要消息循环与真实窗口：要真的显示覆盖层、打开面板、再逐个动作地刷新。
+                RunDetached(() => M0.FlickerProbe.RunAsync(cli));
+                break;
+
+            case "--flash-probe":
+                // 需要消息循环与真实窗口：要真的显示覆盖层并抓屏幕像素。
+                RunDetached(() => M0.FlashProbe.RunAsync(cli));
                 break;
 
             case "--add-sector-probe":

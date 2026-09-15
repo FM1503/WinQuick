@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Threading;
 using WinQuick.App.Design;
@@ -508,7 +508,16 @@ public sealed class OverlayController : IDisposable
         _radial.PrepareEntrance();
         _radial.Show();
         _radial.ReassertTopmost();
-        _radial.PlayEntrance();
+
+        // 动画**排到 Loaded 优先级**再起跑，不在这里同步调。
+        //
+        // 同步调的话时钟立刻起跑，而接下来 UI 线程还要忙一阵（操作条、遮罩、
+        // 焦点、托盘、z 序重申），等第一帧真正呈现时动画已经走过大半 ——
+        // 实测不透明度第一帧就到 0.71，一次 167ms 的缩放淡入被压成"啪地出现"，
+        // 观感就是闪一下。Loaded 低于 Render/Normal，等这批工作做完才轮到他，
+        // 于是动画从"真的开始有画面"的那一刻起算。
+        _radial.Dispatcher.BeginInvoke(
+            DispatcherPriority.Loaded, new Action(() => _radial.PlayEntrance()));
 
         _actionBar.PlaceAtMonitorCorner();
         _actionBar.Show();
@@ -641,7 +650,10 @@ public sealed class OverlayController : IDisposable
         // 面板是开在覆盖层旁边的，所以"打开面板 → 轮盘上出现「＋」"是同一个视野里的变化。
         _radial.SetEditMode(true);
 
-        _settingsPanel.PlayEntrance();
+        // 同 _radial：动画排在 Loaded 优先级起跑，否则第一帧就已经走过大半
+        // （实测面板首帧不透明度 0.59），入场缩放等于被跳过。
+        _settingsPanel.Dispatcher.BeginInvoke(
+            DispatcherPriority.Loaded, new Action(() => _settingsPanel.PlayEntrance()));
 
         // 面板需要键盘输入（热键录制、文本框），所以它会夺走轮盘的焦点。
         // 这不影响覆盖层 —— OnRadialFocusLost 会认出"焦点落在自己人身上"。
@@ -733,6 +745,7 @@ public sealed class OverlayController : IDisposable
         // 它不移动窗口，只保证小屏上底部的按钮不会被截掉。）
         if (_settingsPanel.PlacedByUser) return;
 
+        SurfaceOps.SetWindowPos("摆位设置面板");
         var hwnd = (HWND)_settingsPanel.HandleValue;
         PInvoke.SetWindowPos(hwnd, default, left, top, 0, 0,
             SET_WINDOW_POS_FLAGS.SWP_NOSIZE |
@@ -875,6 +888,25 @@ public sealed class OverlayController : IDisposable
     /// </summary>
     private void ReassertTopmost() => _zOrder.Reassert();
 
+    /// <summary>诊断用：轮盘入场状态（缩放, 不透明度）的读取器。
+    /// 返回读取器而不是值，是因为必须在 UI 线程上读、而且要**逐帧**读。</summary>
+    internal Func<(double Scale, double Opacity)> RadialEntranceStateForProbe =>
+        () => _radial.EntranceStateForProbe;
+
+    /// <summary>诊断用：手动触发一次全栈重申（--flash-probe 拿它量"重申本身会不会闪"）。</summary>
+    internal void ReassertTopmostForProbe() => ReassertTopmost();
+
+    /// <summary>诊断用：设置面板的物理像素矩形（屏幕取样要知道往哪儿抓）。</summary>
+    internal (int X, int Y, int Width, int Height)? SettingsPanelPhysicalBoundsForProbe
+    {
+        get
+        {
+            if (_settingsPanel is not { IsVisible: true } panel) return null;
+            if (!PInvoke.GetWindowRect((HWND)panel.HandleValue, out var rect)) return null;
+            return (rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top);
+        }
+    }
+
     /// <summary>
     /// 找出当前由我们某个窗口拥有的系统对话框（文件选择、消息框等）。
     ///
@@ -885,6 +917,12 @@ public sealed class OverlayController : IDisposable
     /// 只能事后补样式。这也是为什么必须由重申逻辑兜着 —— 补一次不够，
     /// 我们自己的窗口每次重申都可能把它挤下去。
     /// </summary>
+    /// <summary>诊断用：当前由我们某个窗口拥有的系统对话框句柄（0 表示没有）。</summary>
+    internal nint OwnedSystemDialogForProbe() => FindOwnedSystemDialog();
+
+    /// <summary>诊断用：某个句柄是不是我们自己的窗口。</summary>
+    internal bool IsOwnWindowForProbe(nint hwnd) => IsOwnWindow((HWND)hwnd);
+
     private nint FindOwnedSystemDialog()
     {
         var foreground = PInvoke.GetForegroundWindow();

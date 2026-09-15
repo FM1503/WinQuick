@@ -1,4 +1,5 @@
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
+using WinQuick.App.Diagnostics;
 using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.Graphics.Gdi;
@@ -68,6 +69,9 @@ public sealed class RawDimWindow : IDisposable
 
         _hwnd = hwnd;
 
+        // 窗口级操作计数（--flicker-probe）：新建遮罩 = 新建一整块全屏表面。
+        SurfaceOps.DimRebuild();
+
         if (hwnd == default)
         {
             var err = Marshal.GetLastWin32Error();
@@ -92,6 +96,7 @@ public sealed class RawDimWindow : IDisposable
     public void SetAlpha(byte alpha)
     {
         if (!IsValid) return;
+        SurfaceOps.DimAlpha();
         PInvoke.SetLayeredWindowAttributes(
             _hwnd, default, alpha, LAYERED_WINDOW_ATTRIBUTES_FLAGS.LWA_ALPHA);
     }
@@ -165,6 +170,7 @@ public sealed class RawDimWindow : IDisposable
     public void SetPhysicalBounds(int x, int y, int width, int height)
     {
         if (!IsValid) return;
+        SurfaceOps.SetWindowPos("遮罩摆位");
         PInvoke.SetWindowPos(_hwnd, default, x, y, width, height,
             SET_WINDOW_POS_FLAGS.SWP_NOZORDER |
             SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE |

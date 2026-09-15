@@ -1,4 +1,4 @@
-using WinQuick.App.Diagnostics;
+﻿using WinQuick.App.Diagnostics;
 using Windows.Win32.UI.Accessibility;
 using Windows.Win32;
 using Windows.Win32.Foundation;
@@ -190,16 +190,74 @@ public sealed class ZOrderManager
     {
         ReassertCount++;
 
+        // 先按"从后到前"收集，再**整组一次性提交**。
+        var targets = new List<HWND>();
         for (var i = _layers.Count - 1; i >= 0; i--)
         {
             foreach (var hwnd in _layers[i].Source())
             {
                 if (hwnd == 0) continue;
                 if (!PInvoke.IsWindow((HWND)hwnd)) continue;
-                BringToTopmostFront((HWND)hwnd);
+                targets.Add((HWND)hwnd);
             }
         }
+
+        if (targets.Count == 0) return;
+        if (targets.Count == 1)
+        {
+            BringToTopmostFront(targets[0]);
+            return;
+        }
+
+        // **不能逐个 SetWindowPos。**
+        //
+        // 逐个提交会留下"半成品"的层叠顺序：循环第一刀插的是最底层（全屏遮罩），
+        // 于是有那么几毫秒，遮罩压在轮盘与面板之上。合成器只要在这一瞬取走一帧，
+        // 用户看到的就是"整个界面黑了一下又回来"。
+        //
+        // 这是量出来的，不是推的：--flash-probe 连续重申 15 次，
+        // 逐窗版有 6~7 次在面板区留下坏帧（整块、幅度固定 —— 正是遮罩的 alpha），
+        // 而改成整组提交后一次都没有。
+        var hdwp = PInvoke.BeginDeferWindowPos(targets.Count);
+        if (hdwp == default)
+        {
+            // 批量接口拿不到（内存不足等）：退回逐个提交，行为与从前一致。
+            foreach (var hwnd in targets) BringToTopmostFront(hwnd);
+            return;
+        }
+
+        var ok = true;
+        foreach (var hwnd in targets)
+        {
+            hdwp = PInvoke.DeferWindowPos(hdwp, hwnd, HWND.HWND_TOPMOST, 0, 0, 0, 0, ZOrderFlags);
+            if (hdwp == default)
+            {
+                ok = false;
+                break;
+            }
+        }
+
+        if (ok && hdwp != default)
+        {
+            PInvoke.EndDeferWindowPos(hdwp);
+            SurfaceOps.SetWindowPos("z序重申(整组)");
+            return;
+        }
+
+        // 中途失败：这一组的改动不会生效，退回逐个提交。
+        foreach (var hwnd in targets) BringToTopmostFront(hwnd);
     }
+
+    /// <summary>
+    /// 重申用的位置标志：不动位置、不改尺寸、不激活、不改变所有者关系。
+    /// **不能带 SWP_NOZORDER**（那会让 z 序根本不生效），
+    /// 也**不能带 SWP_SHOWWINDOW**（会绕过 WPF 的可见性状态）。
+    /// </summary>
+    private const SET_WINDOW_POS_FLAGS ZOrderFlags =
+        SET_WINDOW_POS_FLAGS.SWP_NOMOVE |
+        SET_WINDOW_POS_FLAGS.SWP_NOSIZE |
+        SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE |
+        SET_WINDOW_POS_FLAGS.SWP_NOOWNERZORDER;
 
     /// <summary>
     /// 把一个窗口插到 topmost 层的最前面。
@@ -210,11 +268,9 @@ public sealed class ZOrderManager
     /// </summary>
     internal static void BringToTopmostFront(HWND hwnd)
     {
-        var ok = PInvoke.SetWindowPos(hwnd, HWND.HWND_TOPMOST, 0, 0, 0, 0,
-            SET_WINDOW_POS_FLAGS.SWP_NOMOVE |
-            SET_WINDOW_POS_FLAGS.SWP_NOSIZE |
-            SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE |
-            SET_WINDOW_POS_FLAGS.SWP_NOOWNERZORDER);
+        SurfaceOps.SetWindowPos("z序重申");
+
+        var ok = PInvoke.SetWindowPos(hwnd, HWND.HWND_TOPMOST, 0, 0, 0, 0, ZOrderFlags);
 
         if (!ok)
         {
@@ -226,10 +282,9 @@ public sealed class ZOrderManager
     }
 
     /// <summary>把一个窗口降到 topmost 之下（取消置顶）。给「需要临时让位」的场景用。</summary>
-    internal static void Demote(HWND hwnd) =>
-        PInvoke.SetWindowPos(hwnd, HWND.HWND_NOTOPMOST, 0, 0, 0, 0,
-            SET_WINDOW_POS_FLAGS.SWP_NOMOVE |
-            SET_WINDOW_POS_FLAGS.SWP_NOSIZE |
-            SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE |
-            SET_WINDOW_POS_FLAGS.SWP_NOOWNERZORDER);
+    internal static void Demote(HWND hwnd)
+    {
+        SurfaceOps.SetWindowPos("z序让位");
+        PInvoke.SetWindowPos(hwnd, HWND.HWND_NOTOPMOST, 0, 0, 0, 0, ZOrderFlags);
+    }
 }

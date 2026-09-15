@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
@@ -51,6 +51,9 @@ public sealed class RadialWindow : Window
     public RadialWindow(MenuSpec menu)
     {
         _tokens = TokenStore.Current;
+
+        // 窗口级操作计数（--flicker-probe）：必须在这里挂上，晚一步就漏掉前面几次。
+        SurfaceOps.Watch(this, SurfaceOwner.Wheel);
 
         WindowStyle = WindowStyle.None;
         ResizeMode = ResizeMode.NoResize;
@@ -280,6 +283,10 @@ public sealed class RadialWindow : Window
         _view = fresh;
         WireViewEvents(_view);
 
+        // 换内容对象会让整棵内容失效、走一次窗口级布局 —— 分层窗口上就是闪一下。
+        // 复用画布时 Root 与当前 Content 是同一个实例（等值 SetValue 是空操作），
+        // 但这一点要**数出来**而不是"应该没问题"：计数不为 0 就说明复用没生效。
+        SurfaceOps.MenuRebuild(swapped: !ReferenceEquals(Content, _view.Root));
         Content = _view.Root;
         _view.SetAccentOverride(_accentHex);
 

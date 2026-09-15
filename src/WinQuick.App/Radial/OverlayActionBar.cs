@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
@@ -47,6 +47,9 @@ public sealed class OverlayActionBar : Window
 
         Width = BarWidth;
         Height = BarHeight;
+
+        // 窗口级操作计数（--flicker-probe）。
+        SurfaceOps.Watch(this, SurfaceOwner.Bar);
 
         Content = BuildContent();
         SourceInitialized += (_, _) => ApplyExtendedStyles();

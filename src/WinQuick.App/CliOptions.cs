@@ -1,4 +1,4 @@
-namespace WinQuick.App;
+﻿namespace WinQuick.App;
 
 /// <summary>
 /// 极简命令行解析：第一个非选项参数是命令，其余是 `--key=value` 或 `--flag`。
@@ -38,6 +38,8 @@ public sealed class CliOptions
               --ms=N                每个扇区停留毫秒，默认 90
               --repeat=N            重复轮数，默认 3
           --add-sector-probe        核对环里的「＋」扇区：命中、点击分派、12 项上限、加项后位置
+          --flicker-probe           刷新闪烁：逐动作数窗口级操作，纯内容刷新应当一项都不涨
+          --flash-probe             闪烁本身：抓屏幕像素，量某个动作到底闪不闪
           --render-preview          离屏渲染出 PNG，做几何与配色的数值自检
               --out=路径            输出 PNG，默认 artifacts/m0/preview.png
               --state=名字          渲染状态，默认 default

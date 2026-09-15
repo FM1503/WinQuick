@@ -140,8 +140,7 @@ WM_KILLFOCUS
 WM_ACTIVATEAPP
 WM_NCACTIVATE
 // --- z 序与落点核对（探针用） ---
-// GetWindow(GW_HWNDNEXT
-GW_OWNER) 沿顶层窗口链遍历可读出真实 z 序；
+// GetWindow(GW_HWNDNEXT / GW_OWNER) 沿顶层窗口链遍历可读出真实 z 序；
 // WindowFromPoint 直接回答"这个坐标上的点击会被哪个窗口拿走"——
 // 这是"看得见却点不动"这类问题唯一可靠的判据。
 GetTopWindow
@@ -153,8 +152,28 @@ GW_HWNDNEXT
 GW_HWNDPREV
 
 // --- 前台变更事件（事件驱动地重申置顶，而不是无条件定时重申） ---
+// --- 批量 z 序（整组一次提交，避免中间态被合成器取走一帧） ---
+BeginDeferWindowPos
+DeferWindowPos
+EndDeferWindowPos
+HDWP
+
 SetWinEventHook
 UnhookWinEvent
 EVENT_SYSTEM_FOREGROUND
 WINEVENT_OUTOFCONTEXT
 WINEVENT_SKIPOWNPROCESS
+
+// --- 屏幕取样（--flash-probe 用）：抓屏幕像素来判「闪」，而不是看我们自己的视觉树 ---
+// 闪发生在合成器取走的那一帧上，进程内部的任何状态都看不见它，只有屏幕像素能。
+CreateCompatibleDC
+CreateCompatibleBitmap
+SelectObject
+BitBlt
+GetDIBits
+DeleteDC
+ReleaseDC
+BITMAPINFO
+BITMAPINFOHEADER
+DIB_USAGE
+ROP_CODE

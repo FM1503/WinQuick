@@ -79,7 +79,11 @@ public sealed class ResidentHost : IDisposable
         {
             Interval = HookHealthInterval,
         };
-        _hookHealthTimer.Tick += (_, _) => CheckHookHealth();
+        _hookHealthTimer.Tick += (_, _) =>
+        {
+            CheckHookHealth();
+            EnsureShellMenuInstalled();
+        };
 
         _saveDebounce = new DispatcherTimer(DispatcherPriority.Background)
         {
@@ -291,6 +295,27 @@ public sealed class ResidentHost : IDisposable
 
     /// <summary>重建轮盘之后要重新展开的子弧父项；-1 表示不用。</summary>
     private int _reopenChildArcAfterRebuild = -1;
+
+    /// <summary>
+    /// 自愈：注册项被外部删掉就补回来。
+    ///
+    /// 为什么需要它：注册项只在启动、菜单变化、开关变化时写一次，而它是**别人地盘上的东西** ——
+    /// 其它右键菜单工具、清理软件、或任何"重置关联"的操作都可能把它删掉，
+    /// 而那时程序不会有任何察觉，用户只看到"菜单项莫名其妙没了"。
+    /// 这正是本功能第一次上线后遇到的状况（删掉它的恰好是我自己的探针）。
+    ///
+    /// 代价是每 5 秒一次 OpenSubKey —— 可以忽略。做成自愈比做成"记得别删"可靠。
+    /// </summary>
+    private void EnsureShellMenuInstalled()
+    {
+        if (!_config.Config.ShellMenu) return;
+
+        var (installed, _) = Interop.ShellContextMenu.Query();
+        if (installed) return;
+
+        var exe = Environment.ProcessPath;
+        if (!string.IsNullOrWhiteSpace(exe)) SyncShellMenu();
+    }
 
     /// <summary>上一次写进注册表时的"开关 + 程序路径"，用来判断要不要重写。</summary>
     private string _shellMenuSignature = "";

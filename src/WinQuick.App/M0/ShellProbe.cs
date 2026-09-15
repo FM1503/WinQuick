@@ -45,6 +45,11 @@ public static class ShellProbe
 
         var exe = Environment.ProcessPath ?? @"C:\Probe\WinQuick.exe";
 
+        // **先备份现场。** 这个探针必须真的写注册表，但它不该把用户正在用的注册项弄丢 ——
+        // 真发生过一次：跑完探针后用户右键就看不到 WinQuick 了
+        //（探针结尾要核对"注销后无残留"，于是把它删了）。观测不应改变被观测的东西。
+        var snapshot = ShellContextMenu.Export();
+
         try
         {
             // 起点干净：先确保没有上一次遗留。
@@ -263,8 +268,21 @@ public static class ShellProbe
         }
         finally
         {
-            // 无论如何都不留残迹 —— 这是"可以写用户注册表"的前提。
+            // 先清掉探针自己的痕迹，再把现场原样写回。
             ShellContextMenu.Uninstall();
+
+            if (snapshot.Count > 0)
+            {
+                ShellContextMenu.Import(snapshot);
+                var restored = ShellContextMenu.ValueCount();
+                ProbeOutput.Section("恢复现场");
+                ProbeOutput.Kv("探测前已注册的值数", snapshot.Count.ToString());
+                ProbeOutput.Kv("写回后的值数", restored.ToString());
+
+                results.Add(("探针结束后把原有的注册项原样写回（不弄丢用户正在用的菜单项）",
+                    restored == snapshot.Count && ShellContextMenu.Query().Installed,
+                    $"{snapshot.Count} → {restored}"));
+            }
         }
 
         ProbeOutput.Section("结果");

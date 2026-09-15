@@ -67,6 +67,69 @@ internal static class ShellContextMenu
         }
     }
 
+    /// <summary>注册项里的一条值。</summary>
+    internal sealed record Entry(string SubKeyPath, string? ValueName, string Value);
+
+    /// <summary>
+    /// 把当前注册项导出成一份可以原样写回的快照。
+    ///
+    /// **给探针用。** 探针必须真的写一遍注册表才能核对结构，但它不该因此把
+    /// 用户正在用的注册项弄丢 —— 那件事真发生过一次：跑完探针之后，
+    /// 用户右键就再也看不到 WinQuick 了（探针结尾要核对"注销后无残留"，于是把它删了）。
+    /// 观测不应改变被观测的东西，所以先备份、跑完再原样写回。
+    /// </summary>
+    internal static List<Entry> Export()
+    {
+        var entries = new List<Entry>();
+
+        foreach (var scope in Scopes)
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.OpenSubKey(scope);
+                if (key is null) continue;
+                Collect(key, scope, entries);
+            }
+            catch
+            {
+                // 导出失败就当作"原本没有" —— 探针不该因为备份失败而拒绝运行。
+            }
+        }
+
+        return entries;
+    }
+
+    private static void Collect(RegistryKey key, string path, List<Entry> entries)
+    {
+        foreach (var name in key.GetValueNames())
+            if (key.GetValue(name) is string value)
+                entries.Add(new Entry(path, name.Length == 0 ? null : name, value));
+
+        foreach (var child in key.GetSubKeyNames())
+        {
+            using var sub = key.OpenSubKey(child);
+            if (sub is not null) Collect(sub, $@"{path}\{child}", entries);
+        }
+    }
+
+    /// <summary>把 <see cref="Export"/> 的快照原样写回。</summary>
+    internal static void Import(IReadOnlyList<Entry> entries)
+    {
+        if (entries.Count == 0) return;
+
+        foreach (var scope in Scopes)
+            Registry.CurrentUser.DeleteSubKeyTree(scope, throwOnMissingSubKey: false);
+
+        foreach (var entry in entries)
+        {
+            using var key = Registry.CurrentUser.CreateSubKey(entry.SubKeyPath, writable: true);
+            key?.SetValue(entry.ValueName, entry.Value, RegistryValueKind.String);
+        }
+    }
+
+    /// <summary>当前注册项里的值总数（供探针核对备份/还原是否完整）。</summary>
+    internal static int ValueCount() => Export().Count;
+
     /// <summary>彻底注销，不留任何键。</summary>
     public static (bool Ok, string? Error) Uninstall()
     {

@@ -90,6 +90,7 @@ public sealed class RadialWindow : Window
         MouseMove += OnMouseMove;
         MouseLeave += OnMouseLeave;
         MouseLeftButtonDown += OnMouseLeftDown;
+        MouseLeftButtonUp += OnMouseLeftUp;
         MouseRightButtonDown += OnMouseRightDown;
         KeyDown += OnKeyDown;
         // 失去焦点时不直接关闭，而是交给覆盖层判断：新前台窗口如果是我们自己的窗口
@@ -471,7 +472,24 @@ public sealed class RadialWindow : Window
     internal HitResult LeftClickForProbe(Point localPoint)
     {
         var hit = _view.HitTest(localPoint);
-        HandleLeftClick(hit);
+        HandleLeftDown(hit);
+        HandleLeftUp(hit);
+        return hit;
+    }
+
+    /// <summary>诊断用：只按下（不抬起），用来核对"按下不该执行"。</summary>
+    internal HitResult PressForProbe(Point localPoint)
+    {
+        var hit = _view.HitTest(localPoint);
+        HandleLeftDown(hit);
+        return hit;
+    }
+
+    /// <summary>诊断用：只抬起（配合上一次按下），用来核对"移到别处松开不执行"。</summary>
+    internal HitResult ReleaseForProbe(Point localPoint)
+    {
+        var hit = _view.HitTest(localPoint);
+        HandleLeftUp(hit);
         return hit;
     }
 
@@ -725,24 +743,59 @@ public sealed class RadialWindow : Window
         _view.SetChildHover(childIndex);
     }
 
+    /// <summary>
+    /// 按下的落点。为 null 表示当前没有正在进行的按下。
+    /// 见 <see cref="HandleLeftUp"/> —— 只有"按下与抬起在同一处"才算一次完整点击。
+    /// </summary>
+    private HitResult? _pressed;
+
     private void OnMouseLeftDown(object sender, MouseButtonEventArgs e)
     {
         e.Handled = true;
-        HandleLeftClick(_view.HitTest(e.GetPosition(_view.Root)));
+        HandleLeftDown(_view.HitTest(e.GetPosition(_view.Root)));
     }
 
-    /// <summary>左键落点的分派。与右键同理：抽出来让探针走同一条路径。</summary>
-    private void HandleLeftClick(HitResult hit)
+    private void OnMouseLeftUp(object sender, MouseButtonEventArgs e)
     {
-        // 编辑面板开着时，左键的第一下只用来收起面板 —— 不让它顺手把下面的项执行掉。
-        // 这与"点空白处关闭弹层"的一般直觉一致，也避免误触。
+        e.Handled = true;
+        HandleLeftUp(_view.HitTest(e.GetPosition(_view.Root)));
+    }
+
+    /// <summary>
+    /// 按下：**只记下落点，不做任何事**。
+    ///
+    /// 原来按下就直接执行了，问题很实在：按错了想挪开再松手也来不及 ——
+    /// 程序已经启动了。改成"按住可以反悔"之后，误触只要移出扇区再松手即可。
+    /// </summary>
+    private void HandleLeftDown(HitResult hit)
+    {
+        // 就地面板里的行自己处理按下事件并标记已处理，所以能走到这里说明按下的不是面板。
+        // 面板开着时，第一下只用来收面板 —— 不让它顺手把下面的项执行掉。
         if (_view.IsPanelOpen)
         {
             _view.DismissPanel();
+            _pressed = null;
             return;
         }
 
-        HandleClick(hit);
+        _pressed = hit;
+    }
+
+    /// <summary>
+    /// 抬起：只有在**同一个区域、同一项**上按下又松开，才当成一次完整点击去执行。
+    ///
+    /// 中途移到别处（另一个扇区、环外、中心）都当作放弃 —— 这正是"按住可以反悔"的实现。
+    /// 比较的是区域与索引，所以"按下在 A、松开在 B"不会执行 B：那会让用户在
+    /// 想取消的时候反而触发了另一个程序。
+    /// </summary>
+    private void HandleLeftUp(HitResult released)
+    {
+        if (_pressed is not { } pressed) return;
+        _pressed = null;
+
+        if (released.Zone != pressed.Zone || released.Index != pressed.Index) return;
+
+        HandleClick(released);
     }
 
     /// <summary>

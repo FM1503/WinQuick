@@ -388,6 +388,10 @@ public static class OverlayProbe
         var lParam = new LPARAM((clientY << 16) | (clientX & 0xFFFF));
 
         PInvoke.PostMessage(radial, PInvoke.WM_LBUTTONDOWN, new WPARAM(1), lParam);
+
+        // 补上抬起：自从改成"按下与抬起在同一处才算一次完整点击"之后，
+        // 只投递按下不会执行任何动作（这正是新语义要保证的）。
+        PInvoke.PostMessage(radial, PInvoke.WM_LBUTTONUP, default, lParam);
         await Task.Delay(250);
 
         ProbeOutput.Kv("ItemActivated 触发", hitIndex >= 0 ? $"是，索引 {hitIndex}" : "否");

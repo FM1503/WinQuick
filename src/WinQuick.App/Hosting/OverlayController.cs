@@ -343,6 +343,14 @@ public sealed class OverlayController : IDisposable
     internal WinQuick.Core.Geometry.HitResult LeftClickForProbe(double x, double y) =>
         _radial.LeftClickForProbe(new System.Windows.Point(x, y));
 
+    /// <summary>诊断用：只按下（不抬起）。</summary>
+    internal void PressForProbe(double x, double y) =>
+        _radial.PressForProbe(new System.Windows.Point(x, y));
+
+    /// <summary>诊断用：只抬起（配合上一次按下）。</summary>
+    internal void ReleaseForProbe(double x, double y) =>
+        _radial.ReleaseForProbe(new System.Windows.Point(x, y));
+
     /// <summary>诊断用：把窗口内坐标交给轮盘做命中测试（走的是点击同一套数学）。</summary>
     internal WinQuick.Core.Geometry.HitResult HitTestForProbe(double x, double y) =>
         _radial.HitTestForProbe(new System.Windows.Point(x, y));

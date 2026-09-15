@@ -169,6 +169,86 @@ public static class AddSectorProbe
                 addRequested == -1 && activated is null && !overlay.PanelAttached,
                 $"parent={addRequested?.ToString() ?? "无"}"));
 
+            // ---- 完整点击才执行 -----------------------------------------------
+            // 用户报的：鼠标按住就直接执行打开了。按错想挪开再松手已经来不及，
+            // 程序已经启动完 —— 所以改成"按下与抬起在同一处"才算一次完整点击。
+            ProbeOutput.Section("完整点击才执行");
+
+            var leafIndex = -1;
+            for (var i = 0; i < menu.Items.Count; i++)
+                if (!menu.Items[i].HasChildren) { leafIndex = i; break; }
+
+            var otherIndex = -1;
+            for (var i = 0; i < menu.Items.Count; i++)
+                if (i != leafIndex && !menu.Items[i].HasChildren) { otherIndex = i; break; }
+
+            if (leafIndex >= 0 && otherIndex >= 0)
+            {
+                var leafPoint = ToLocal(Vec2.FromPolar(midRadius, spans[leafIndex].CenterDeg),
+                    tokens.Radius.WindowSize);
+                var otherPoint = ToLocal(Vec2.FromPolar(midRadius, spans[otherIndex].CenterDeg),
+                    tokens.Radius.WindowSize);
+
+                // 1) 只按下 —— 不该执行
+                ResetRecorders();
+                overlay.PressForProbe(leafPoint.X, leafPoint.Y);
+                ProbeOutput.Kv("只按下时是否执行", activated is null ? "没有（正确）" : $"执行了 {activated}");
+                results.Add(("只按下不执行（可以按住后反悔）",
+                    activated is null, activated?.ToString() ?? "无"));
+
+                // 2) 同一扇区内松开 —— 执行
+                overlay.ReleaseForProbe(leafPoint.X, leafPoint.Y);
+                ProbeOutput.Kv("在同一扇区松开后", activated is null ? "没执行（异常）" : $"执行了 {activated}");
+                results.Add(("同一扇区内按下又松开才算一次完整点击",
+                    activated is { Child: -1 } && activated.Value.Parent == leafIndex,
+                    activated?.ToString() ?? "无"));
+
+                // 3) 按下 A、挪到 B 再松开 —— 不该执行（尤其不该执行 B）
+                ResetRecorders();
+                overlay.PressForProbe(leafPoint.X, leafPoint.Y);
+                overlay.ReleaseForProbe(otherPoint.X, otherPoint.Y);
+                ProbeOutput.Kv("按下后挪到另一个扇区再松开", activated is null
+                    ? "没有执行（正确）" : $"执行了 {activated}（不该）");
+                results.Add(("按下后挪到别的扇区松开不会执行（不会误开另一个程序）",
+                    activated is null, activated?.ToString() ?? "无"));
+
+                // 4) 按下后挪到环外再松开 —— 不该执行
+                var outsidePoint = ToLocal(Vec2.FromPolar(midRadius * 2.2, spans[leafIndex].CenterDeg),
+                    tokens.Radius.WindowSize);
+                ResetRecorders();
+                overlay.PressForProbe(leafPoint.X, leafPoint.Y);
+                overlay.ReleaseForProbe(outsidePoint.X, outsidePoint.Y);
+                ProbeOutput.Kv("按下后挪到环外再松开", activated is null
+                    ? "没有执行（正确）" : $"执行了 {activated}（不该）");
+                results.Add(("按下后挪到环外松开不会执行", activated is null,
+                    activated?.ToString() ?? "无"));
+            }
+
+            // 「＋」同样要完整点击才弹出面板
+            if (rootAdd >= 0)
+            {
+                var plusPoint = ToLocal(Vec2.FromPolar(midRadius, spans[rootAdd].CenterDeg),
+                    tokens.Radius.WindowSize);
+                var farPoint = ToLocal(Vec2.FromPolar(midRadius, spans[0].CenterDeg),
+                    tokens.Radius.WindowSize);
+
+                overlay.DismissPanelForProbe();
+                overlay.PressForProbe(plusPoint.X, plusPoint.Y);
+                ProbeOutput.Kv("只按下「＋」", overlay.PanelAttached ? "弹了面板（异常）" : "没弹（正确）");
+                overlay.ReleaseForProbe(farPoint.X, farPoint.Y);
+                ProbeOutput.Kv("　挪走后再松开", overlay.PanelAttached ? "弹了面板（异常）" : "没弹（正确）");
+                results.Add(("「＋」也要完整点击才弹面板",
+                    !overlay.PanelAttached, ""));
+
+                overlay.PressForProbe(plusPoint.X, plusPoint.Y);
+                overlay.ReleaseForProbe(plusPoint.X, plusPoint.Y);
+                ProbeOutput.Kv("　在原处按下又松开", overlay.PanelAttached ? "弹了面板（正确）" : "没弹（异常）");
+                results.Add(("「＋」完整点击后正常弹出面板",
+                    overlay.PanelAttached, ""));
+
+                overlay.DismissPanelForProbe();
+            }
+
             // ---- 真实鼠标消息路径 ---------------------------------------------
             // 上面那些「点 X」走的是把命中结果直接喂给分派函数（ClickForProbe）。
             // 那能验"分派逻辑对不对"，但验不了"真实的一次鼠标按下会不会走到那里"——
@@ -202,6 +282,9 @@ public static class AddSectorProbe
                 var lParam = new LPARAM((clientY << 16) | (clientX & 0xFFFF));
 
                 PInvoke.PostMessage(hwnd, PInvoke.WM_LBUTTONDOWN, new WPARAM(1), lParam);
+                // 必须补上抬起：自从改成"完整点击才执行"之后，只有按下不该有任何反应。
+                // 这条核对第一次就是靠这个失败的 —— 它证明了新语义在真实鼠标消息路径上也生效。
+                PInvoke.PostMessage(hwnd, PInvoke.WM_LBUTTONUP, default, lParam);
                 await Task.Delay(400);
 
                 ProbeOutput.Kv("按下位置（屏幕像素）", $"({clickScreenX},{clickScreenY})");
@@ -742,6 +825,7 @@ public static class AddSectorProbe
 
                 var lp = new LPARAM(((sy - wr2.top) << 16) | ((sx - wr2.left) & 0xFFFF));
                 PInvoke.PostMessage(hwnd2, PInvoke.WM_LBUTTONDOWN, new WPARAM(1), lp);
+                PInvoke.PostMessage(hwnd2, PInvoke.WM_LBUTTONUP, default, lp);
                 await Task.Delay(500);
 
                 ProbeOutput.Kv("　按下后面板类型", overlay.PanelKindForProbe);

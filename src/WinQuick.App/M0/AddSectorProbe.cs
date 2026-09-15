@@ -272,6 +272,16 @@ public static class AddSectorProbe
             // 3. 拖到同一格不该写盘（一次没挪动的拖拽不该产生副作用）。
             ProbeOutput.Section("长按进入编辑态与拖拽重排");
 
+            // **把真实光标停到屏幕角落。** 这一节用合成的指针位置驱动拖拽，
+            // 但只要真实光标还落在轮盘窗口里，它产生的 MouseMove 就会在合成操作之间
+            // 覆盖指针位置 —— 落点格子偶尔算成别的值，检核对时对时错。
+            //
+            // 停到角落就安全：轮盘是跟着**唤出时**的光标摆的，不会追过去。
+            // （这个坑是"设置探针会真的移光标"之后才出现的，而偶发失败比稳定失败更危险。）
+            var primary = MonitorLayout.All().FirstOrDefault();
+            Windows.Win32.PInvoke.SetCursorPos(primary.Right - 4, primary.Bottom - 4);
+            await Task.Delay(300);
+
             // 先确保是日常态，并且记下拖拽前的顺序（用菜单签名比对，不看内部字段）
             overlay.SetEditModeForProbe(false);
             await Task.Delay(300);

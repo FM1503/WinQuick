@@ -91,6 +91,74 @@ public static class SettingsProbe
 
             results.Add(("面板可显示", shown && handleCreated, $"{panel.ActualWidth:0}x{panel.ActualHeight:0}"));
 
+            // ---- 标题栏拖动 ----
+            // 这一条对应"实测拖不动"的反馈：最初用 Window.DragMove()，它要求窗口处于
+            // 激活状态、不满足就抛异常，而异常被静默吞掉 —— 表现是"按下去毫无反应"。
+            // 现在自己实现拖动，于是**可以用真实鼠标消息验**：
+            // 投递按下 → 移指针 → 抬起，窗口应当跟着挪。
+            ProbeOutput.Section("标题栏拖动面板");
+
+            var panelHwnd = (Windows.Win32.Foundation.HWND)panel.HandleValue;
+            if (panelHwnd != default && Windows.Win32.PInvoke.GetWindowRect(panelHwnd, out var beforeDrag))
+            {
+                // 标题栏在内容顶部：横向取中间，纵向离顶边约 24 DIP。
+                var scale = WinQuick.App.Diagnostics.MonitorLayout.AtCursor().Scale;
+                var titleX = beforeDrag.left + (int)Math.Round(120 * scale);
+                var titleY = beforeDrag.top + (int)Math.Round(24 * scale);
+
+                // 先激活面板：真实使用时用户点它就会激活它。
+                // 探针里不激活的话，投递的鼠标消息与真实场景不等价
+                //（而且这正好是"DragMove 拖不动"的可疑原因：面板一激活就被
+                //  覆盖层的置顶重申抢走前台，于是窗口在按下那一刻并不是激活的）。
+                Windows.Win32.PInvoke.SetForegroundWindow(panelHwnd);
+                await Task.Delay(300);
+                ProbeOutput.Kv("面板是否已激活", panel.IsActive ? "是" : "否");
+
+                // 记住原光标位置：这一节会把指针挪到面板上并真的按一下，收尾要还回去。
+                Windows.Win32.PInvoke.GetCursorPos(out var cursorBefore);
+                Windows.Win32.PInvoke.SetCursorPos(titleX, titleY);
+                await Task.Delay(200);
+
+                // 用 SendInput 合成**真实**的按键事件，而不是 PostMessage。
+                //
+                // 这是被数据逼出来的：投递的 WM_LBUTTONDOWN 在面板这条路径上收不到 ——
+                // WPF 会拿**真实按键状态**校验鼠标消息，投递的按下与真实状态不一致时会被丢掉。
+                // 真实的按下会同时改变按键状态，WPF 才认。
+                SendMouse(LeftDown: true);
+                await Task.Delay(150);
+
+                ProbeOutput.Kv("按下后是否进入拖动状态", panel.IsDraggingForTest ? "是" : "否");
+
+                // 移动指针：真实移动，WPF 才会派发 MouseMove 给拖动逻辑
+                var dx = (int)Math.Round(60 * scale);
+                var dy = (int)Math.Round(40 * scale);
+                Windows.Win32.PInvoke.SetCursorPos(titleX + dx, titleY + dy);
+                await Task.Delay(250);
+
+                SendMouse(LeftDown: false);
+                await Task.Delay(250);
+
+                Windows.Win32.PInvoke.GetWindowRect(panelHwnd, out var afterDrag);
+                var movedX = afterDrag.left - beforeDrag.left;
+                var movedY = afterDrag.top - beforeDrag.top;
+
+                ProbeOutput.Kv("面板移动量", $"({movedX}, {movedY})，期望约 ({dx}, {dy})");
+                ProbeOutput.Kv("拖动结束后 PlacedByUser", panel.PlacedByUserForTest ? "是（不再自动摆位）" : "否");
+
+                results.Add(("标题栏拖动真的能挪动面板",
+                    Math.Abs(movedX - dx) <= 3 && Math.Abs(movedY - dy) <= 3,
+                    $"移动 ({movedX}, {movedY})，期望 ({dx}, {dy})"));
+
+                results.Add(("拖过之后标记为已拖动（不再自动摆位）",
+                    panel.PlacedByUserForTest, ""));
+
+                Windows.Win32.PInvoke.SetCursorPos(cursorBefore.X, cursorBefore.Y);
+            }
+            else
+            {
+                results.Add(("标题栏拖动真的能挪动面板", false, "取不到面板窗口矩形"));
+            }
+
 
             // ---- 改动即应用 ----
             ProbeOutput.Section("改动即应用的语义");
@@ -324,6 +392,27 @@ public static class SettingsProbe
             try { if (Directory.Exists(temp)) Directory.Delete(temp, recursive: true); }
             catch { /* 清理失败不影响结论 */ }
         }
+    }
+
+    /// <summary>合成一次真实的鼠标按下/抬起（SendInput），而不是投递消息。</summary>
+    private static void SendMouse(bool LeftDown)
+    {
+        var flag = LeftDown
+            ? Windows.Win32.UI.Input.KeyboardAndMouse.MOUSE_EVENT_FLAGS.MOUSEEVENTF_LEFTDOWN
+            : Windows.Win32.UI.Input.KeyboardAndMouse.MOUSE_EVENT_FLAGS.MOUSEEVENTF_LEFTUP;
+
+        var input = new Windows.Win32.UI.Input.KeyboardAndMouse.INPUT
+        {
+            type = Windows.Win32.UI.Input.KeyboardAndMouse.INPUT_TYPE.INPUT_MOUSE,
+            Anonymous = new Windows.Win32.UI.Input.KeyboardAndMouse.INPUT._Anonymous_e__Union
+            {
+                mi = new Windows.Win32.UI.Input.KeyboardAndMouse.MOUSEINPUT { dwFlags = flag },
+            },
+        };
+
+        Windows.Win32.PInvoke.SendInput(
+            [input],
+            System.Runtime.InteropServices.Marshal.SizeOf<Windows.Win32.UI.Input.KeyboardAndMouse.INPUT>());
     }
 
     private static void Report(List<(string Name, bool Passed, string Detail)> results)

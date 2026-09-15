@@ -76,12 +76,15 @@ public partial class SettingsPanel : Window
     /// 按住标题栏拖动面板。
     ///
     /// 为什么要做：面板固定摆在光标所在屏的另一侧，但那个"另一侧"是估的 ——
-    /// 轮盘跟着光标走，总有一些位置会重叠。让用户自己拖开是最省事的解法
-    ///（也符合桌面程序的常识）。
+    /// 轮盘跟着光标走，总有一些位置会重叠。让用户自己拖开是最省事的解法。
     ///
-    /// 用 DragMove 而不是自己算鼠标位移：它由窗口管理器处理，
-    /// 会把 DPI 缩放、多显示器边界、以及"拖动时不要重入"这些细节一起处理好 ——
-    /// 自己算的话每个显示器缩放比都要单独对一遍。
+    /// **最初用的是 `Window.DragMove()`，实测拖不动。** 它要求窗口处于激活状态
+    ///（内部会检查 `IsActive`），不满足就抛异常 —— 而我当时把异常静默吞了，
+    /// 于是表现成"按下去毫无反应"，连原因都看不到。吞异常比抛异常更坏。
+    ///
+    /// 现在改成自己实现：记下按下的屏幕坐标与窗口位置，之后按位移挪窗口。
+    /// 全部用**物理像素**（`GetCursorPos` / `GetWindowRect` / `SetWindowPos`），
+    /// 绕开 DIP 换算 —— 在 175% 这类非整数缩放下按 DIP 算会逐帧累积误差。
     /// </summary>
     private void OnTitleBarMouseDown(object sender, MouseButtonEventArgs e)
     {
@@ -89,17 +92,63 @@ public partial class SettingsPanel : Window
 
         e.Handled = true;
 
-        try
-        {
-            DragMove();
-            PlacedByUser = true;
-        }
-        catch (InvalidOperationException)
-        {
-            // 鼠标已经松开时 DragMove 会抛这个 —— 快速点一下标题栏就会走到这里，
-            // 属于正常情况（用户只是点了一下，不是要拖）。
-        }
+        if (!Windows.Win32.PInvoke.GetCursorPos(out var cursor)) return;
+
+        var origin = CurrentPhysicalPosition;
+        if (origin is null) return;
+
+        _dragCursor = (cursor.X, cursor.Y);
+        _dragWindow = origin.Value;
+        _dragging = true;
+
+        // 监听整个窗口的移动与抬起（而不是只监听标题栏）：窗口会跟着指针走，
+        // 指针始终在窗口内，所以不捕获鼠标也收得到后续事件 ——
+        // 而捕获鼠标恰恰需要"我们是前台窗口"，那是一条本项目已经踩过的坑。
+        MouseMove += OnDragMouseMove;
+        MouseLeftButtonUp += OnDragMouseUp;
     }
+
+    private bool _dragging;
+    private (int X, int Y) _dragCursor;
+    private (int X, int Y) _dragWindow;
+
+    private void OnDragMouseMove(object sender, MouseEventArgs e)
+    {
+        if (!_dragging) return;
+        if (e.LeftButton != MouseButtonState.Pressed) { EndDrag(); return; }
+        if (!Windows.Win32.PInvoke.GetCursorPos(out var cursor)) return;
+
+        var left = _dragWindow.X + (cursor.X - _dragCursor.X);
+        var top = _dragWindow.Y + (cursor.Y - _dragCursor.Y);
+
+        var hwnd = new WindowInteropHelper(this).Handle;
+        Windows.Win32.PInvoke.SetWindowPos(
+            (Windows.Win32.Foundation.HWND)hwnd, default, left, top, 0, 0,
+            Windows.Win32.UI.WindowsAndMessaging.SET_WINDOW_POS_FLAGS.SWP_NOSIZE |
+            Windows.Win32.UI.WindowsAndMessaging.SET_WINDOW_POS_FLAGS.SWP_NOZORDER |
+            Windows.Win32.UI.WindowsAndMessaging.SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE |
+            Windows.Win32.UI.WindowsAndMessaging.SET_WINDOW_POS_FLAGS.SWP_NOOWNERZORDER);
+    }
+
+    private void OnDragMouseUp(object sender, MouseButtonEventArgs e) => EndDrag();
+
+    private void EndDrag()
+    {
+        if (!_dragging) return;
+
+        _dragging = false;
+        MouseMove -= OnDragMouseMove;
+        MouseLeftButtonUp -= OnDragMouseUp;
+
+        // 拖过就置位：之后不再自动摆位，否则等于白拖。
+        PlacedByUser = true;
+    }
+
+    /// <summary>探针用：当前是否正在拖动。</summary>
+    internal bool IsDraggingForTest => _dragging;
+
+    /// <summary>探针用：是否已标记为被用户摆放过。</summary>
+    internal bool PlacedByUserForTest => PlacedByUser;
 
     /// <summary>
     /// 把面板左下角的位置报出去，供"用户拖过之后记住位置"使用。

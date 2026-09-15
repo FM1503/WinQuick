@@ -119,6 +119,17 @@ internal sealed class SectorLabel
     /// <summary>被省略掉的字符数。供验证用。</summary>
     public int ElidedChars => Math.Max(0, _fullText.Length - _text.Text.Length);
 
+    /// <summary>
+    /// 最终内容是否真的装进了框里（宽和高都算）。
+    ///
+    /// 这是"没有被悄悄裁掉"的判据：任何标签都必须满足 `FitsBox || IsElided` ——
+    /// 要么装得下，要么明确标出了截断。两者都不满足就是"少了一截还没有提示"，
+    /// 而那正是最初的缺陷（三行文字被裁剪框切掉、宽度那一项看起来还完全正常）。
+    /// </summary>
+    public bool FitsBox =>
+        _text.DesiredSize.Width <= _availableWidth + 0.5 &&
+        _text.DesiredSize.Height <= _availableHeight + 0.5;
+
     /// <summary>达到最小字号后仍然横向溢出的像素数。</summary>
     public double OverflowPixels => _overflow;
 

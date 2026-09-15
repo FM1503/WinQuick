@@ -34,7 +34,10 @@ public static class LabelProbe
         {
             // 一个不可断行的超长标签：中文能任意断行，只有英文长词才会真的放不下，
             // 所以这里刻意用英文 —— 否则测的是一个走不到的路径。
-            const string longLabel = "VeryLongApplicationNameWithoutAnySpaces.exe";
+            // 要**足够长**才能真的触发截断：放宽到三行之后，能容纳的文字大约翻了一倍，
+            // 原来那条 43 字符的名字现在装得下了（那正是想要的效果）。
+            // 这里留一条真的放不下的，用来守住"截断"这条兜底路径。
+            const string longLabel = "VeryLongApplicationNameWithoutAnySpacesAndEvenMoreTextToOverflow.exe";
             const string shortLabel = "记事本";
 
             var baseMenu = DefaultMenu.Build();
@@ -54,8 +57,18 @@ public static class LabelProbe
             ProbeOutput.Kv("最长溢出", $"{overlay.MaxLabelOverflowForProbe:0.#} px");
             ProbeOutput.Kv("完整文字", longLabel);
 
-            results.Add(("超长不可断行的标签会被截断而不是溢出到相邻扇区",
+            results.Add(("真正放不下的标签会被明确截断（带省略号），而不是溢出",
                 longCount >= 1, $"截断 {longCount} 个"));
+
+            // 最重要的不变量：**没有任何标签是"既没装下、又没标出截断"的**。
+            // 那种状态就是"少了一截还没有提示"，也是最初的缺陷形态。
+            var clipped = overlay.SilentlyClippedLabelsForProbe;
+            ProbeOutput.Kv("被悄悄裁掉的标签数", clipped.Count.ToString());
+            ProbeOutput.Kv("　（既没装下、又没标出截断的）",
+                clipped.Count == 0 ? "没有" : string.Join("；", clipped));
+
+            results.Add(("没有标签被悄悄裁掉（要么装下、要么明确截断）",
+                clipped.Count == 0, clipped.Count == 0 ? "0 个" : string.Join("；", clipped)));
 
             // ---- 悬停不位移 --------------------------------------------------
             ProbeOutput.Section("悬停是否让文字位移");
@@ -78,47 +91,62 @@ public static class LabelProbe
             results.Add(("悬停不再启动滚动动画",
                 !overlay.LabelHasAnimationForProbe(0), ""));
 
-            // ---- 中心读出 ----------------------------------------------------
+            // ---- Esc 提示不被顶掉 --------------------------------------------
+            // 曾经有一版会在悬停到被截断的项时，把中心的 "Esc" 换成完整名字。
+            // 那是错的：Esc 是界面上唯一的取消提示，不该因为"某个项名字长"就消失。
+            // 而且那个做法本身也做不到它承诺的事 —— 中心只有 112px 宽，
+            // 长名字在那里同样要截断，等于把同一个缺陷画了两遍。
+            //
             // **必须用真实指针**：轮盘的指针轮询每 25ms 用"指针实际在哪"重算一次悬停，
-            // 探针直接调 SetHover 的话，下一次轮询就把它清掉了 ——
-            // 读到的是"没悬停"，而不是程序不对。（第一版就是这么误报的。）
-            ProbeOutput.Section("中心显示完整文字");
+            // 探针直接调 SetHover 的话下一次轮询就把它清掉了。
+            ProbeOutput.Section("Esc 提示在整个悬停过程中都不消失");
 
             var bounds = overlay.RadialPhysicalBounds;
             var scale = MonitorLayout.AtCursor().Scale;
-            if (bounds is { } rect)
+
+            async Task HoverAtAsync(double angleDeg)
             {
+                if (bounds is not { } rect) return;
+
                 var offset = Core.Geometry.Vec2.FromPolar(
-                    TokenStore.Current.Radius.LabelRadius * scale, 0);
+                    TokenStore.Current.Radius.LabelRadius * scale, angleDeg);
                 PInvoke.SetCursorPos(
                     (int)Math.Round(rect.X + rect.Width / 2.0 + offset.X),
                     (int)Math.Round(rect.Y + rect.Height / 2.0 + offset.Y));
                 await Task.Delay(600);      // 悬停延迟 200ms，留足余量
             }
 
-            ProbeOutput.Kv("中心读出可见", overlay.IsCenterReadoutVisibleForProbe ? "是" : "否");
-            ProbeOutput.Kv("中心读出的文字", overlay.CenterReadoutTextForProbe);
+            await HoverAtAsync(0);          // 被截断的长标签
+            ProbeOutput.Kv("悬停被截断项时", overlay.EscHintVisibleForProbe ? "Esc 可见（正确）" : "Esc 消失（异常）");
+            results.Add(("悬停被截断的长标签时 Esc 提示仍在",
+                overlay.EscHintVisibleForProbe, $"{longLabel}"));
 
-            results.Add(("悬停被截断项时中心显示完整文字",
-                overlay.IsCenterReadoutVisibleForProbe
-                && overlay.CenterReadoutTextForProbe == longLabel,
-                overlay.CenterReadoutTextForProbe));
-
-            // 没被截断的项不该占用中心 —— 那里同时是 "Esc" 提示的位置。
-            if (bounds is { } r2)
-            {
-                var offset = Core.Geometry.Vec2.FromPolar(TokenStore.Current.Radius.LabelRadius * scale, 45);
-                PInvoke.SetCursorPos(
-                    (int)Math.Round(r2.X + r2.Width / 2.0 + offset.X),
-                    (int)Math.Round(r2.Y + r2.Height / 2.0 + offset.Y));
-            }
-            await Task.Delay(600);
-            ProbeOutput.Kv("悬停短标签项时中心读出", overlay.IsCenterReadoutVisibleForProbe ? "可见（异常）" : "隐藏（正确）");
+            await HoverAtAsync(45);         // 短标签
+            ProbeOutput.Kv("悬停短标签项时", overlay.EscHintVisibleForProbe ? "Esc 可见（正确）" : "Esc 消失（异常）");
             ProbeOutput.Kv("　被悬停的短标签", overlay.LabelTextForProbe(1));
+            results.Add(("悬停短标签时 Esc 提示仍在",
+                overlay.EscHintVisibleForProbe, overlay.LabelTextForProbe(1)));
 
-            results.Add(("没被截断的项不占用中心（Esc 提示仍可见）",
-                !overlay.IsCenterReadoutVisibleForProbe,
-                $"label={overlay.LabelTextForProbe(1)}"));
+            // ---- 常见的长名字不该被截断 --------------------------------------
+            // "Adobe Photoshop 2025" 这种真实名字此前会被截断成 "Adobe Phot…"，
+            // 原因是只允许折两行，而它需要三行（Adobe / Photoshop / 2025）。
+            // 环内的径向空间本来就是够的（三行 41px，落在 129~170，环是 56~200），
+            // 所以放宽到三行比"截断 + 想办法把完整名字显示到别处"更直接。
+            ProbeOutput.Section("常见的长名字是否还要截断");
+
+            var commonItems = baseMenu.Items.ToList();
+            commonItems[2] = commonItems[2] with { Label = "Adobe Photoshop 2025" };
+            overlay.RebuildForMenu(baseMenu with { Items = commonItems });
+            await Task.Delay(600);
+
+            ProbeOutput.Kv("「Adobe Photoshop 2025」是否被截断",
+                overlay.LabelIsElidedForProbe(2) ? "是" : "否（完整显示）");
+            ProbeOutput.Kv("　最终字号 / 占宽",
+                $"{overlay.LabelFontSizeForProbe(2):0.#} / {overlay.LabelTextWidthForProbe(2):0.#}");
+
+            results.Add(("常见的长名字（Adobe Photoshop 2025）能完整显示、不截断",
+                !overlay.LabelIsElidedForProbe(2),
+                $"elided={overlay.LabelIsElidedForProbe(2)}，字号={overlay.LabelFontSizeForProbe(2):0.#}"));
 
             overlay.Hide();
         }

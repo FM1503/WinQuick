@@ -268,17 +268,26 @@ public sealed class OverlayController : IDisposable
     /// <summary>诊断用：某个标签的完整文字。</summary>
     internal string LabelTextForProbe(int index) => _radial.LabelText(index);
 
+    /// <summary>诊断用：某个标签是否被截断。</summary>
+    internal bool LabelIsElidedForProbe(int index) => _radial.LabelIsElided(index);
+
+    /// <summary>诊断用：被悄悄裁掉（既没装下、又没标出截断）的标签。</summary>
+    internal IReadOnlyList<string> SilentlyClippedLabelsForProbe => _radial.SilentlyClippedLabels;
+
+    /// <summary>诊断用：某个标签的最终字号。</summary>
+    internal double LabelFontSizeForProbe(int index) => _radial.LabelFontSize(index);
+
+    /// <summary>诊断用：某个标签的文字占宽。</summary>
+    internal double LabelTextWidthForProbe(int index) => _radial.LabelTextWidth(index);
+
+    /// <summary>诊断用：中心的 "Esc" 提示是否可见。</summary>
+    internal bool EscHintVisibleForProbe => _radial.EscHintVisible;
+
     /// <summary>诊断用：被截断的标签数。</summary>
     internal int ElidedLabelCountForProbe => _radial.ElidedLabelCount;
 
     /// <summary>诊断用：最大标签溢出像素。</summary>
     internal double MaxLabelOverflowForProbe => _radial.MaxLabelOverflow;
-
-    /// <summary>诊断用：中心读出是否可见。</summary>
-    internal bool IsCenterReadoutVisibleForProbe => _radial.IsCenterReadoutVisible;
-
-    /// <summary>诊断用：中心读出的文字。</summary>
-    internal string CenterReadoutTextForProbe => _radial.CenterReadoutText;
 
     /// <summary>诊断用：把某个扇区立即置为悬停（不播放动画）。</summary>
     internal void SetHoverImmediateForProbe(int index) => _radial.SetHoverImmediateForProbe(index);

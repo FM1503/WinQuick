@@ -382,17 +382,26 @@ public sealed class RadialWindow : Window
     /// <summary>诊断用：某个标签的完整文字。</summary>
     internal string LabelText(int index) => _view.LabelText(index);
 
+    /// <summary>诊断用：中心的 "Esc" 提示是否可见。</summary>
+    internal bool EscHintVisible => _view.EscHintVisible;
+
+    /// <summary>诊断用：某个标签是否被截断。</summary>
+    internal bool LabelIsElided(int index) => _view.LabelIsElided(index);
+
+    /// <summary>诊断用：被悄悄裁掉（既没装下、又没标出截断）的标签。</summary>
+    internal IReadOnlyList<string> SilentlyClippedLabels => _view.SilentlyClippedLabels;
+
+    /// <summary>诊断用：某个标签的最终字号。</summary>
+    internal double LabelFontSize(int index) => _view.LabelFontSize(index);
+
+    /// <summary>诊断用：某个标签的文字占宽。</summary>
+    internal double LabelTextWidth(int index) => _view.LabelTextWidth(index);
+
     /// <summary>诊断用：被截断的标签数。</summary>
     internal int ElidedLabelCount => _view.ElidedLabelCount;
 
     /// <summary>诊断用：最大标签溢出像素。</summary>
     internal double MaxLabelOverflow => _view.MaxLabelOverflow;
-
-    /// <summary>诊断用：中心读出是否可见。</summary>
-    internal bool IsCenterReadoutVisible => _view.IsCenterReadoutVisible;
-
-    /// <summary>诊断用：中心读出的文字。</summary>
-    internal string CenterReadoutText => _view.CenterReadoutText;
 
     /// <summary>诊断用：把某个扇区立即置为悬停（不播放动画）。</summary>
     internal void SetHoverImmediateForProbe(int index) => _view.SetHoverImmediate(index);

@@ -99,6 +99,17 @@ public sealed partial class RadialRingView
     /// 只数真实菜单项 —— 「＋」也是个 Image（画的是加号，不是 shell 图标），
     /// 把它算进去会让这个计数在探针里永远是 itemCount+1，失去核对意义。
     /// </summary>
+    /// <summary>
+    /// 诊断用：中心的 "Esc" 提示是否可见。
+    ///
+    /// 它必须**始终**可见：曾经有一版会在悬停到被截断的项时把它换成完整名字，
+    /// 那是错的 —— Esc 是界面上唯一的取消提示，不该因为某个项名字长就消失。
+    /// </summary>
+    internal bool EscHintVisible => _escHint.Visibility == Visibility.Visible;
+
+    /// <summary>中心的 "Esc" 提示。它任何时候都不该被隐藏或替换。</summary>
+    private TextBlock _escHint = null!;
+
     /// <summary>诊断用：某个标签的排版快照。</summary>
     internal (double Left, double FontSize, string Weight, bool Wrapping, double Width)
         LabelLayoutSnapshot(int index) =>
@@ -111,6 +122,26 @@ public sealed partial class RadialRingView
     /// <summary>诊断用：某个标签的完整文字。</summary>
     internal string LabelText(int index) =>
         index >= 0 && index < _labels.Length ? _labels[index].Text : "";
+
+    /// <summary>诊断用：某个标签是否被截断。</summary>
+    internal bool LabelIsElided(int index) =>
+        index >= 0 && index < _labels.Length && _labels[index].IsElided;
+
+    /// <summary>诊断用：某个标签的内容是否真的装进了框里。</summary>
+    internal bool LabelFitsBox(int index) =>
+        index >= 0 && index < _labels.Length && _labels[index].FitsBox;
+
+    /// <summary>诊断用：有没有标签"既没装下、又没标出截断"（会被悄悄裁掉）。</summary>
+    internal IReadOnlyList<string> SilentlyClippedLabels =>
+        _labels.Where(l => !l.FitsBox && !l.IsElided).Select(l => l.FullText).ToList();
+
+    /// <summary>诊断用：某个标签的最终字号。</summary>
+    internal double LabelFontSize(int index) =>
+        index >= 0 && index < _labels.Length ? _labels[index].FontSize : 0;
+
+    /// <summary>诊断用：某个标签的文字占宽。</summary>
+    internal double LabelTextWidth(int index) =>
+        index >= 0 && index < _labels.Length ? _labels[index].TextWidth : 0;
 
     public int RenderedIconCount
     {
@@ -162,8 +193,6 @@ public sealed partial class RadialRingView
         // 几何形变交给逐帧动画器：颜色高亮是即时反馈，外扩是有形的位移，
         // 两者时长不同，所以分开处理。
         _bulge.SetHover(index);
-
-        UpdateCenterReadout();
     }
 
     /// <summary>把某个扇区涂成悬停或基准样式。越界索引会被忽略（-1 就是"没有悬停"）。</summary>
@@ -299,30 +328,8 @@ public sealed partial class RadialRingView
         AddEllipse(root, center, radius.DeadZone - 4,
             TokenBrushes.Brush(colors.DeadZoneFill),
             TokenBrushes.Brush(colors.DeadZoneStroke, colors.DeadZoneStrokeAlpha), 1);
-        var centerHint = AddText(root, center, 0, 0, "Esc",
+        TextBlock escHint = AddText(root, center, 0, 0, "Esc",
             TokenBrushes.Brush(colors.Hint, colors.HintAlpha), tokens.Typography.HintFontSize);
-
-        // 中心读出：悬停到被截断的项时，在这里显示完整文字。
-        //
-        // 死区是界面上唯一整块空着的地方，而它的语义正是"当前没指向任何项"——
-        // 用它显示"当前指向的那一项的完整名字"不占任何额外空间，
-        // 也让"文字被截断"这件事有了去处（原来靠悬停滚动，那个做法已去掉）。
-        var centerReadout = new TextBlock
-        {
-            TextAlignment = TextAlignment.Center,
-            TextWrapping = TextWrapping.Wrap,
-            TextTrimming = TextTrimming.CharacterEllipsis,
-            MaxWidth = (radius.DeadZone - 4) * 2 - 14,
-            MaxHeight = (radius.DeadZone - 4) * 2 - 14,
-            FontSize = tokens.Typography.HintFontSize,
-            FontFamily = new FontFamily(tokens.Typography.LabelFontFamily),
-            Foreground = TokenBrushes.Brush(colors.Label, 0.95),
-            Visibility = Visibility.Collapsed,
-        };
-        Canvas.SetLeft(centerReadout, center.X - ((radius.DeadZone - 4) * 2 - 14) / 2);
-        Canvas.SetTop(centerReadout, center.Y - ((radius.DeadZone - 4) * 2 - 14) / 2);
-        Canvas.SetZIndex(centerReadout, 1);
-        root.Children.Add(centerReadout);
 
         // 一级的鼓出几何写在这里：内缘（死区）不动，外缘向外扩 bulge 像素。
         // 鼓出接近 0 时直接用冻结的基准几何 —— 动画落定时走这条，
@@ -345,8 +352,7 @@ public sealed partial class RadialRingView
         {
             AddSectorIndex = addIndex,
             EditMode = editMode,
-            CenterHint = centerHint,
-            CenterReadout = centerReadout,
+            _escHint = escHint,
         };
     }
 
@@ -387,51 +393,6 @@ public sealed partial class RadialRingView
     /// <summary>「＋」扇区的文字。命中它时按这个报给上层。</summary>
     public const string AddSectorLabel = "添加";
 
-    /// <summary>中心的 "Esc" 提示。悬停到被截断的项时让位给完整文字。</summary>
-    private TextBlock CenterHint { get; init; } = null!;
-
-    /// <summary>中心读出：显示被截断项的完整文字。</summary>
-    private TextBlock CenterReadout { get; init; } = null!;
-
-    /// <summary>诊断用：中心是否正在显示完整文字。</summary>
-    public bool IsCenterReadoutVisible => CenterReadout.Visibility == Visibility.Visible;
-
-    /// <summary>诊断用：中心读出的文字。</summary>
-    public string CenterReadoutText => CenterReadout.Text;
-
-    /// <summary>
-    /// 按当前悬停项刷新中心读出。
-    ///
-    /// 只有**被截断**的项才占用中心：没被截断的标签在扇区里已经读全了，
-    /// 再在中心重复一遍是噪音，而且会把 "Esc" 这个唯一的取消提示挤掉。
-    /// </summary>
-    private void UpdateCenterReadout()
-    {
-        var (text, elided) = CurrentHoveredLabel();
-
-        if (!elided)
-        {
-            CenterReadout.Visibility = Visibility.Collapsed;
-            CenterHint.Visibility = Visibility.Visible;
-            return;
-        }
-
-        CenterReadout.Text = text;
-        CenterReadout.Visibility = Visibility.Visible;
-        CenterHint.Visibility = Visibility.Collapsed;
-    }
-
-    /// <summary>当前悬停项的完整文字，以及它是否被截断。</summary>
-    private (string Text, bool Elided) CurrentHoveredLabel()
-    {
-        if (_hoveredChild >= 0 && _hoveredChild < _childLabels.Count)
-            return (_childLabels[_hoveredChild].FullText, _childLabels[_hoveredChild].IsElided);
-
-        if (_hover >= 0 && _hover < _labels.Length)
-            return (_labels[_hover].FullText, _labels[_hover].IsElided);
-
-        return ("", false);
-    }
 
     /// <summary>这一份视图是否处于编辑态（决定「＋」扇区画不画）。</summary>
     public bool EditMode { get; private init; }

@@ -178,7 +178,6 @@ public sealed partial class RadialRingView
         _childArcRemoving = true;
         ApplyChildSectorStyle(_hoveredChild, hovered: false);
         _hoveredChild = -1;
-        UpdateCenterReadout();
 
         if (_childAnimator is null) { CollapseChildArcImmediate(); return; }
         _childAnimator.Collapse();
@@ -240,8 +239,6 @@ public sealed partial class RadialRingView
 
         // 形状与颜色分开：颜色是即时反馈，外扩是有形的位移，两者时长不同。
         _childBulge?.SetHover(index);
-
-        UpdateCenterReadout();
     }
 
     /// <summary>

@@ -372,6 +372,15 @@ public sealed class RadialWindow : Window
     /// <summary>诊断用：根环「＋」的索引。</summary>
     internal int AddSectorIndex => _view.AddSectorIndex;
 
+    /// <summary>诊断用：被悬停子项当前的鼓出像素数。</summary>
+    internal double CurrentChildBulgeForProbe => _view.CurrentChildBulge;
+
+    /// <summary>诊断用：子环形变动画是否还在跑。</summary>
+    internal bool IsChildBulgeAnimatingForProbe => _view.IsChildBulgeAnimating;
+
+    /// <summary>诊断用：立即把子环悬停形变落定（不播放动画）。</summary>
+    internal void SetChildHoverImmediateForProbe(int index) => _view.SetChildHoverImmediate(index);
+
     /// <summary>诊断用：子弧「＋」的索引。</summary>
     internal int ChildAddSectorIndex => _view.ChildAddSectorIndex;
 

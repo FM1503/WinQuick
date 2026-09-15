@@ -271,9 +271,20 @@ public sealed partial class RadialRingView
         AddText(root, center, 0, 0, "Esc",
             TokenBrushes.Brush(colors.Hint, colors.HintAlpha), tokens.Typography.HintFontSize);
 
+        // 一级的鼓出几何写在这里：内缘（死区）不动，外缘向外扩 bulge 像素。
+        // 鼓出接近 0 时直接用冻结的基准几何 —— 动画落定时走这条，
+        // 不必为"没有形变"的扇区重建几何。
         var bulge = new SectorBulgeAnimator(
-            sectors, baseGeometry, center,
-            radius.DeadZone, radius.Ring1Outer, spans, radius.SectorGapDegrees,
+            count,
+            writeGeometry: (i, bulgePx) =>
+            {
+                sectors[i].Data = bulgePx < 0.05
+                    ? baseGeometry[i]
+                    : SectorGeometry.RingSector(
+                        center, radius.DeadZone, radius.Ring1Outer + bulgePx,
+                        spans[i].StartDeg + radius.SectorGapDegrees,
+                        spans[i].EndDeg - radius.SectorGapDegrees);
+            },
             tokens.Motion.HoverBulgePx, tokens.Motion.EntranceEasing, tokens.Motion.HoverBulgeMs);
 
         return new RadialRingView(
@@ -349,6 +360,12 @@ public sealed partial class RadialRingView
 
     /// <summary>子弧里的子项数量。</summary>
     public int ChildItemCount => _childSpans.Length;
+
+    /// <summary>被悬停子项当前的鼓出像素数 —— 供验证子环形变确实发生了。</summary>
+    public double CurrentChildBulge => _childBulge?.CurrentBulgeOf(_hoveredChild) ?? 0;
+
+    /// <summary>子环的形变动画是否还在进行中。</summary>
+    public bool IsChildBulgeAnimating => _childBulge?.IsAnimating ?? false;
 
     /// <summary>子弧当前的展开进度：0 完全收起，1 完全展开。</summary>
     public double ChildArcProgress => _childArcProgress;

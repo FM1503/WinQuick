@@ -109,6 +109,15 @@ public sealed record DesignTokens
         if (Interaction.ChildMinSectorDegrees < 15)
             problems.Add($"interaction.childMinSectorDegrees={Interaction.ChildMinSectorDegrees} 过小，子项会细到点不中");
 
+        // 子环的悬停鼓出要有地方鼓：外缘 + 鼓出量不能超出窗口。
+        // 一级的鼓出由"子环内径要躲开一级的鼓出"这条间接保障（子环在一级外面），
+        // 但子环自己是最外圈，鼓出去就是真的出界 —— 那会被窗口边缘裁掉，
+        // 表现为"悬停子项时右边少一块"，而且只在特定方向上出现，很难看出来。
+        if (Radius.Ring2Outer + Motion.HoverBulgePx > Radius.WindowSize / 2.0)
+            problems.Add(
+                $"ring2Outer={Radius.Ring2Outer} + hoverBulgePx={Motion.HoverBulgePx} " +
+                $"超过了窗口半径 {Radius.WindowSize / 2.0} —— 子环悬停鼓出会被窗口边缘裁掉");
+
         // 子环撑满整圈时，最细的那一档（= MaxChildSectors）也必须还能放下文字。
         //
         // 这条把"环的尺寸"和"子项上限"绑在一起：以后谁把环改小了、

@@ -1,10 +1,7 @@
-using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using WinQuick.App.Radial;
-using WinQuick.Core.Geometry;
 using WinQuick.Core.Motion;
-using ShapePath = System.Windows.Shapes.Path;
 
 namespace WinQuick.App.Radial;
 
@@ -18,16 +15,18 @@ namespace WinQuick.App.Radial;
 ///
 /// 代价是可控的：同一时刻最多只有两个扇区在变化（新悬停的鼓出、旧悬停的缩回），
 /// 每个扇区每帧重建一次小几何；静止时整条渲染回调会断开，不产生任何逐帧开销。
+///
+/// **几何由调用方写**，这个类只管"每个扇区此刻该鼓出多少像素"。
+/// 它起初自己算环带几何（内径外径都传进来），但子环不能这么办：子环的外径同时还受
+/// 展开进度控制，两处各写一次 Data 就会互相覆盖。交给调用方写，
+/// "谁拥有几何"就收敛到了一处，而缓动、逐帧回调、快速划过的接续、回调计数
+/// 这些部分两个环都能原样复用。
 /// </summary>
 internal sealed class SectorBulgeAnimator
 {
-    private readonly ShapePath[] _sectors;
-    private readonly PathGeometry[] _baseGeometry;
-    private readonly Point _center;
-    private readonly double _innerRadius;
-    private readonly double _baseOuterRadius;
-    private readonly SectorSpan[] _spans;
-    private readonly double _gapDegrees;
+    /// <summary>写某个扇区的几何。第二个参数是该扇区此刻的鼓出像素数（0 = 基准形态）。</summary>
+    private readonly Action<int, double> _writeGeometry;
+
     private readonly double _bulgePixels;
     private readonly CubicBezier _easing;
     private readonly double _durationMs;
@@ -42,22 +41,15 @@ internal sealed class SectorBulgeAnimator
     private bool _running;
 
     public SectorBulgeAnimator(
-        ShapePath[] sectors, PathGeometry[] baseGeometry, Point center,
-        double innerRadius, double baseOuterRadius, SectorSpan[] spans, double gapDegrees,
+        int count, Action<int, double> writeGeometry,
         double bulgePixels, string easing, int durationMs)
     {
-        _sectors = sectors;
-        _baseGeometry = baseGeometry;
-        _center = center;
-        _innerRadius = innerRadius;
-        _baseOuterRadius = baseOuterRadius;
-        _spans = spans;
-        _gapDegrees = gapDegrees;
+        _writeGeometry = writeGeometry;
         _bulgePixels = bulgePixels;
         _easing = CubicBezier.Parse(easing);
         _durationMs = Math.Max(1, durationMs);
 
-        var n = sectors.Length;
+        var n = count;
         _current = new double[n];
         _from = new double[n];
         _target = new double[n];
@@ -167,28 +159,17 @@ internal sealed class SectorBulgeAnimator
 
         if (!anyActive)
         {
-            // 全部落定：把几何还原成冻结的基准几何，然后断开渲染回调。
+            // 全部落定：把几何还原成基准形态，然后断开渲染回调。
+            // 还原走**同一条写入路径** —— 否则会留下一帧"鼓出没收回"的几何。
             for (var i = 0; i < _current.Length; i++)
-                if (Math.Abs(_current[i]) < 1e-6) _sectors[i].Data = _baseGeometry[i];
+                if (Math.Abs(_current[i]) < 1e-6) _writeGeometry(i, 0);
 
             Stop();
         }
     }
 
-    private void ApplyBulge(int index)
-    {
-        var bulge = _current[index] * _bulgePixels;
-        if (bulge < 0.05)
-        {
-            _sectors[index].Data = _baseGeometry[index];
-            return;
-        }
-
-        var span = _spans[index];
-        _sectors[index].Data = SectorGeometry.RingSector(
-            _center, _innerRadius, _baseOuterRadius + bulge,
-            span.StartDeg + _gapDegrees, span.EndDeg - _gapDegrees);
-    }
+    private void ApplyBulge(int index) =>
+        _writeGeometry(index, _current[index] * _bulgePixels);
 
     /// <summary>
     /// 立即把所有扇区复位到基准几何并停止动画。
@@ -203,7 +184,7 @@ internal sealed class SectorBulgeAnimator
         {
             _current[i] = 0;
             _target[i] = 0;
-            _sectors[i].Data = _baseGeometry[i];
+            _writeGeometry(i, 0);
         }
     }
 }

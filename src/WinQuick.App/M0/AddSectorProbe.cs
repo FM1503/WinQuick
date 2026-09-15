@@ -382,8 +382,52 @@ public static class AddSectorProbe
                     activated is { Child: 0 } && activated.Value.Parent == parentIndex && addRequested is null,
                     $"activated={activated?.ToString() ?? "无"}，add={addRequested?.ToString() ?? "无"}"));
 
+                // ---- 子环的悬停鼓出 ----------------------------------------
+                // 用**真实指针**触发，走悬停状态机那条路 —— 直接调 SetChildHover
+                // 只能证明"画得出来"，证明不了"悬停时真的会鼓"。
+                ProbeOutput.Section("子环的悬停鼓出");
+
+                var subBounds = overlay.RadialPhysicalBounds;
+                var subScale = MonitorLayout.AtCursor().Scale;
+                if (subBounds is { } subRect)
+                {
+                    // 停在第一个子项的中心角上，等悬停延迟 + 形变时长过去。
+                    var offset = Vec2.FromPolar(childMidRadius * subScale, childSpans[0].CenterDeg);
+                    var px = (int)Math.Round(subRect.X + subRect.Width / 2.0 + offset.X);
+                    var py = (int)Math.Round(subRect.Y + subRect.Height / 2.0 + offset.Y);
+
+                    PInvoke.SetCursorPos(px, py);
+                    await Task.Delay(700);      // 悬停延迟 200ms + 形变 130ms，留足余量
+
+                    var bulge = overlay.CurrentChildBulgeForProbe;
+                    ProbeOutput.Kv("悬停第一个子项后的鼓出量", $"{bulge:0.##} px");
+                    ProbeOutput.Kv("　期望值（tokens 的 hoverBulgePx）",
+                        tokens.Motion.HoverBulgePx.ToString());
+
+                    results.Add(("悬停子项时子环向外鼓出",
+                        Math.Abs(bulge - tokens.Motion.HoverBulgePx) < 0.5,
+                        $"{bulge:0.##} px，期望 {tokens.Motion.HoverBulgePx}"));
+
+                    results.Add(("子环形变落定后不再逐帧回调",
+                        !overlay.IsChildBulgeAnimatingForProbe,
+                        $"animating={overlay.IsChildBulgeAnimatingForProbe}"));
+                }
+
+                // 立即落定的路径也核一下：离屏渲染靠它，值不对的话 PNG 验证就是错的。
+                overlay.SetChildHoverImmediateForProbe(1);
+                var immediate = overlay.CurrentChildBulgeForProbe;
+                ProbeOutput.Kv("立即落定到第二个子项", $"{immediate:0.##} px");
+                results.Add(("立即落定的鼓出量正确",
+                    Math.Abs(immediate - tokens.Motion.HoverBulgePx) < 0.5,
+                    $"{immediate:0.##} px"));
+
+                // 复位的路径：收起子弧后必须归零，否则它的逐帧回调会留在静态事件上。
                 overlay.CollapseChildArcForProbe();
                 await Task.Delay(400);
+                ProbeOutput.Kv("收起子弧后的鼓出量", $"{overlay.CurrentChildBulgeForProbe:0.##} px");
+                results.Add(("收起子弧后鼓出归零",
+                    overlay.CurrentChildBulgeForProbe == 0,
+                    $"{overlay.CurrentChildBulgeForProbe:0.##} px"));
             }
 
             // ---- 子环容量：铺满整圈 ------------------------------------------

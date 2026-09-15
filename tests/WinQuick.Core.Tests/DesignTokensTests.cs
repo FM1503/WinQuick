@@ -201,6 +201,23 @@ public class DesignTokensTests
         Assert.Contains(cramped.Validate(), p => p.Contains("子环按"));
     }
 
+    /// <summary>
+    /// 子环的悬停鼓出要有地方鼓。子环是最外圈，鼓出去就是真的出界 ——
+    /// 会被窗口边缘裁掉，表现为"悬停子项时某个方向少一块"，
+    /// 而且只在特定方向上出现，很难看出来。
+    /// </summary>
+    [Fact]
+    public void Validate_CatchesChildRingBulgeClippedByWindow()
+    {
+        // 鼓出量涨到 30：350 + 30 = 380 > 窗口半径 370。
+        var tooMuchBulge = Tokens with
+        {
+            Motion = Tokens.Motion with { HoverBulgePx = 30 },
+        };
+
+        Assert.Contains(tooMuchBulge.Validate(), p => p.Contains("子环悬停鼓出会被窗口边缘裁掉"));
+    }
+
     /// <summary>现实那一份必须过 —— 否则上面那条测试只是在测一个不可能的状态。</summary>
     [Fact]
     public void RealTokens_SurviveTheChildRingLabelCheck()

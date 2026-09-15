@@ -45,6 +45,15 @@ public sealed partial class RadialRingView
     private bool _childArcRemoving;
 
     /// <summary>
+    /// 子环的悬停形变，与一级用同一个动画器，只是几何写的是子环那一带。
+    ///
+    /// 子环迟了一轮才有鼓出，因为它比一级多一个变量：外径同时受**展开进度**控制。
+    /// 两个写入者各写一次 Data 会互相覆盖，所以先把动画器改成由调用方写几何，
+    /// 再让"展开进度 + 鼓出"在一处合成（见 <see cref="WriteChildSectorGeometry"/>）。
+    /// </summary>
+    private SectorBulgeAnimator? _childBulge;
+
+    /// <summary>
     /// 展开某个父扇区的子弧。已有子弧会立刻被替换（同时只显示一个子弧）。
     /// </summary>
     public void ExpandChildArc(int parentIndex, bool immediate = false)
@@ -150,6 +159,13 @@ public sealed partial class RadialRingView
         _childAnimator ??= new ChildArcAnimator(
             tokens.Motion.ChildArcDurationMs, tokens.Motion.ChildArcEasing, OnChildArcProgress);
 
+        // 子环的悬停鼓出。几何由 WriteChildSectorGeometry 统一写（见那里的说明），
+        // 这里只负责"每个子项此刻该鼓出多少"。
+        _childBulge = new SectorBulgeAnimator(
+            slotCount,
+            writeGeometry: WriteChildSectorGeometry,
+            tokens.Motion.HoverBulgePx, tokens.Motion.EntranceEasing, tokens.Motion.HoverBulgeMs);
+
         if (immediate) SetChildArcImmediate(true);
         else _childAnimator.Expand();
     }
@@ -171,6 +187,13 @@ public sealed partial class RadialRingView
     public void CollapseChildArcImmediate()
     {
         _childAnimator?.Reset();
+
+        // 鼓出动画也必须复位并置空：它的回调写的是即将被移除的扇区，
+        // 不复位就会一直挂在静态的 Rendering 事件上（既泄漏、又每帧写垃圾）；
+        // 置空则是因为它绑着这一批子扇区的数量，下一轮展开要按新数量重建。
+        _childBulge?.Reset();
+        _childBulge = null;
+
         RemoveChildVisuals();
         _childArcParent = -1;
         _childArcRemoving = false;
@@ -202,12 +225,25 @@ public sealed partial class RadialRingView
     /// <summary>这个子弧索引是不是「＋」。</summary>
     public bool IsChildAddSector(int index) => index >= 0 && index == _childAddSectorIndex;
 
-    /// <summary>设置子项的悬停高亮。</summary>
+    /// <summary>设置子项的悬停高亮（含向外鼓出）。</summary>
     public void SetChildHover(int index)
     {
         if (index == _hoveredChild) return;
         _hoveredChild = index;
         ApplyChildHover();
+
+        // 形状与颜色分开：颜色是即时反馈，外扩是有形的位移，两者时长不同。
+        _childBulge?.SetHover(index);
+    }
+
+    /// <summary>
+    /// 立即把子环的悬停形变落定到终态，不播放动画。
+    /// 离屏渲染要用它 —— 只渲染一帧，动画推进不了，画出来的永远是未形变的状态。
+    /// </summary>
+    public void SetChildHoverImmediate(int index)
+    {
+        SetChildHover(index);
+        _childBulge?.SetHoverImmediate(index);
     }
 
     private void ApplyChildHover()
@@ -247,25 +283,35 @@ public sealed partial class RadialRingView
     }
 
     /// <summary>
+    /// **子环几何的唯一写入点**：外径 = 基准外径按展开进度拉开 + 该子项的鼓出量。
+    ///
+    /// 合成放在一处是必须的：展开动画与悬停形变是两条独立的逐帧回调，
+    /// 谁都可以在任何一帧动这个扇区 —— 各写各的，后写的就把前一个的效果抹掉了。
+    /// </summary>
+    private void WriteChildSectorGeometry(int index, double bulgePx)
+    {
+        if (index < 0 || index >= _childSectors.Count) return;
+
+        var radius = TokenStore.Current.Radius;
+        var band = radius.Ring2;
+        var span = _childSpans[index];
+
+        var outer = band.Inner + band.Width * _childArcProgress + bulgePx;
+
+        _childSectors[index].Data = SectorGeometry.RingSector(
+            _center, band.Inner, outer,
+            span.StartDeg + radius.SectorGapDegrees,
+            span.EndDeg - radius.SectorGapDegrees);
+    }
+
+    /// <summary>
     /// 按当前进度重建子扇区几何：内外半径从重合（无厚度）逐渐拉开到完整环带。
     /// 这就是「从父扇区方向生长出来」这个观感的来源。
     /// </summary>
     private void RebuildChildGeometry()
     {
-        var radius = TokenStore.Current.Radius;
-        var band = radius.Ring2;
-
-        var inner = band.Inner;
-        var outer = band.Inner + band.Width * _childArcProgress;
-
         for (var i = 0; i < _childSectors.Count; i++)
-        {
-            var span = _childSpans[i];
-            _childSectors[i].Data = SectorGeometry.RingSector(
-                _center, inner, outer,
-                span.StartDeg + radius.SectorGapDegrees,
-                span.EndDeg - radius.SectorGapDegrees);
-        }
+            WriteChildSectorGeometry(i, _childBulge?.CurrentBulgeOf(i) ?? 0);
 
         // 图标与文字的透明度跟随进度，否则它们会在扇区还很薄的时候先冒出来。
         var opacity = Math.Clamp(_childArcProgress, 0, 1);

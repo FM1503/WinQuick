@@ -258,6 +258,16 @@ public sealed class OverlayController : IDisposable
     /// <summary>诊断用：收起面板。</summary>
     internal void DismissPanelForProbe() => _radial.DismissPanelForProbe();
 
+    /// <summary>诊断用：被悬停子项当前的鼓出像素数。</summary>
+    internal double CurrentChildBulgeForProbe => _radial.CurrentChildBulgeForProbe;
+
+    /// <summary>诊断用：子环形变动画是否还在跑。</summary>
+    internal bool IsChildBulgeAnimatingForProbe => _radial.IsChildBulgeAnimatingForProbe;
+
+    /// <summary>诊断用：立即把子环悬停形变落定（不播放动画）。</summary>
+    internal void SetChildHoverImmediateForProbe(int index) =>
+        _radial.SetChildHoverImmediateForProbe(index);
+
     /// <summary>诊断用：面板是否真的挂在视觉树上。</summary>
     internal bool PanelAttached => _radial.PanelAttached;
 

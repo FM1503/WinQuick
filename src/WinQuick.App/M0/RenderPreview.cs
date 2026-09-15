@@ -113,7 +113,9 @@ public static class RenderPreview
             {
                 view.ExpandChildArc(parentWithChildren, immediate: true);
                 // child-leaf 额外高亮第一个子项，用来验证子弧的悬停高亮色。
-                if (state == "child-leaf") view.SetChildHover(0);
+                // 立即落定而不是 SetChildHover：只渲染一帧，动画推进不了，
+                // 否则画出来的永远是未形变状态，子环的鼓出就等于没被验证过。
+                if (state == "child-leaf") view.SetChildHoverImmediate(0);
             }
 
             var size = tokens.Radius.WindowSize;

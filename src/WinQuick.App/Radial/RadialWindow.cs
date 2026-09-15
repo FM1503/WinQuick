@@ -512,6 +512,9 @@ public sealed class RadialWindow : Window
     /// <summary>诊断用：被拖的是子环里的项还是第一层的。</summary>
     internal bool DragIsChildForProbe => _view.DragIsChild;
 
+    /// <summary>诊断用：子环的编辑态虚线是否画出来了。</summary>
+    internal bool ChildEditOutlineAttached => _view.ChildEditOutlineAttached;
+
     /// <summary>诊断用：按下时判定的扇区索引（-1 = 不在真实项上，长按不会触发）。</summary>
     internal int PressedIndexForProbe => _pressedIndex;
 
@@ -834,8 +837,11 @@ public sealed class RadialWindow : Window
     /// <summary>按下时的窗口内坐标。长按只在指针没怎么移动时才成立。</summary>
     private Point _pressPoint;
 
-    /// <summary>这次按下是否已经触发过长按（触发后松手**不再执行**该项）。</summary>
-    private bool _longPressFired;
+    /// <summary>
+    /// 这次按下是否已经变成拖拽（长按进入编辑态、或编辑态下按下）。
+    /// 变成拖拽之后松手**不再执行**该项，而是走提交重排。
+    /// </summary>
+    private bool _pressBecameDrag;
 
     private void OnMouseLeftDown(object sender, MouseButtonEventArgs e)
     {
@@ -883,7 +889,19 @@ public sealed class RadialWindow : Window
         };
         _pressedIsChild = hit.Zone == HitZone.ChildSector;
         _pressStartedAtMs = _pressedIndex >= 0 ? NowMs() : 0;
-        _longPressFired = false;
+        _pressBecameDrag = false;
+
+        // **编辑态下按下就直接进入拖拽**，不必再等一次长按。
+        //
+        // 长按的语义是"进入编辑态"；进了之后每次拖拽还要再按住一秒很烦，
+        // 安卓也不是这样（进编辑态之后图标直接就能拖）。
+        // 子环里的项同样：先悬停父项展开子环（200ms 悬停本来就会展开），
+        // 再按子项即可拖 —— 所以编辑态下"点父项展开"这条路径不再需要。
+        if (_editMode && _pressedIndex >= 0)
+        {
+            _pressBecameDrag = true;
+            _view.BeginDrag(_pressedIndex, isChild: _pressedIsChild);
+        }
     }
 
     /// <summary>
@@ -895,7 +913,10 @@ public sealed class RadialWindow : Window
     /// </summary>
     private void CheckLongPress()
     {
-        if (_pressStartedAtMs == 0 || _longPressFired || _pressedIndex < 0) return;
+        // 编辑态下按下已经直接进入拖拽（见 HandleLeftDown），不需要长按计时。
+        if (_editMode) return;
+
+        if (_pressStartedAtMs == 0 || _pressBecameDrag || _pressedIndex < 0) return;
         if (_view.IsPanelOpen || _view.IsDragging) return;
 
         if (NowMs() - _pressStartedAtMs < _tokens.Interaction.LongPressMs) return;
@@ -916,14 +937,11 @@ public sealed class RadialWindow : Window
         // 放在前面的话：一旦在临界时刻因为"指针挪开了"而返回，标志已经置位，
         // 随后的松手会被当成"长按后的松手"而吞掉 —— 用户点一下完全没有反应，
         // 而且看不出任何原因。（这个顺序错误是被探针抓到的。）
-        _longPressFired = true;
+        _pressBecameDrag = true;
 
-        if (!_editMode)
-        {
-            // 切编辑态会就地换掉整棵视觉树（多出「＋」扇区）。索引不会因此移位 ——
-            // 「＋」永远排在所有项之后，所以按下时记下的索引在新树上仍然指向同一项。
-            SetEditMode(true);
-        }
+        // 切编辑态会就地换掉整棵视觉树（多出「＋」扇区）。索引不会因此移位 ——
+        // 「＋」永远排在所有项之后，所以按下时记下的索引在新树上仍然指向同一项。
+        SetEditMode(true);
 
         _view.BeginDrag(_pressedIndex, isChild: _pressedIsChild);
     }
@@ -942,11 +960,11 @@ public sealed class RadialWindow : Window
 
         _pressStartedAtMs = 0;
 
-        // 触发过长按：这次松手**不执行**该项。
+        // 这次按下已经变成拖拽：松手**不执行**该项，而是提交重排。
         // 少了这一条，长按会顺带把程序启动一次 —— 用户想编辑，结果打开了程序。
-        if (_longPressFired)
+        if (_pressBecameDrag)
         {
-            _longPressFired = false;
+            _pressBecameDrag = false;
             CommitDrag();
             return;
         }

@@ -367,6 +367,9 @@ public sealed class OverlayController : IDisposable
     /// <summary>诊断用：被拖的是子环里的项还是第一层的。</summary>
     internal bool DragIsChildForProbe => _radial.DragIsChildForProbe;
 
+    /// <summary>诊断用：子环的编辑态虚线是否画出来了。</summary>
+    internal bool ChildEditOutlineAttached => _radial.ChildEditOutlineAttached;
+
     /// <summary>诊断用：按下时判定的扇区索引（-1 = 不在真实项上）。</summary>
     internal int PressedIndexForProbe => _radial.PressedIndexForProbe;
 

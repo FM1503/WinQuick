@@ -71,6 +71,12 @@ public sealed partial class RadialRingView
         _dragAngleDeg = DragSpans[index].CenterDeg;
         _dragTarget = index;
 
+        // **子环可能正在收起。** 那次收起是在按下之前就被悬停状态机排上的
+        //（指针当时不在父项上），动画 167ms 后才播完 —— 而用户此刻已经在拖这一环里的项了。
+        // 不把它落定为"展开"，收起动画播完就会把子环整个抽掉：
+        // 拖拽被取消，甚至（改这里之前）让预览去访问已清空的扇区数组而越界崩溃。
+        if (isChild) SetChildArcImmediate(true);
+
         // 用形变的终态把它"抬起来"，并且**立即落定**（不播动画）：
         // 逐帧动画器每帧都会按 spans[index] 重写几何，那会和下面的预览互相覆盖。
         // 子环那一路用子环自己的鼓出动画器。
@@ -84,6 +90,14 @@ public sealed partial class RadialRingView
     public void UpdateDrag(double angleDeg)
     {
         if (_dragIndex < 0) return;
+
+        // 被拖那一级的扇区可能在这一帧之前就没了（子环收起、菜单重建）。
+        // 不判这一下就是越界崩溃 —— 而且崩在逐帧回调里，现场很难看。
+        if (_dragIndex >= DragSectors.Length)
+        {
+            ClearDragState();
+            return;
+        }
 
         _dragAngleDeg = angleDeg;
 
@@ -118,9 +132,33 @@ public sealed partial class RadialRingView
         ShowDragMarker(_dragTarget, sweep, band.Inner, band.Outer);
     }
 
+    /// <summary>
+    /// 只作废拖拽状态，**不碰视觉** —— 用于"被拖那一级的扇区已经不在了"的情形。
+    /// 这时再按索引去访问它们就是越界（探针抓到过这个崩溃）。
+    /// </summary>
+    private void ClearDragState()
+    {
+        if (_dragMarker is not null)
+        {
+            Root.Children.Remove(_dragMarker);
+            _dragMarker = null;
+        }
+
+        _dragIndex = -1;
+        _dragTarget = -1;
+        _dragIsChild = false;
+    }
+
     /// <summary>结束拖动：清掉目标标记，并把被拖项放回它自己的格子。</summary>
     public void EndDrag()
     {
+        if (_dragIndex >= DragSectors.Length)
+        {
+            // 被拖那一级的扇区已经没了（例如子环在拖拽过程中被收起）。
+            ClearDragState();
+            return;
+        }
+
         if (_dragMarker is not null)
         {
             Root.Children.Remove(_dragMarker);

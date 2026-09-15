@@ -450,6 +450,10 @@ public sealed partial class RadialRingView
     /// <summary>子弧里的子项数量。</summary>
     public int ChildItemCount => _childSpans.Length;
 
+    /// <summary>诊断用：子环的编辑态虚线是否真的画在视觉树上。</summary>
+    public bool ChildEditOutlineAttached =>
+        _childEditOutline is not null && Root.Children.Contains(_childEditOutline);
+
     /// <summary>诊断用：子弧里被截断的标签数。</summary>
     public int ChildElidedLabelCount => _childLabels.Count(l => l.IsElided);
 

@@ -374,6 +374,21 @@ public static class AddSectorProbe
             results.Add(("拖回同一格不发出重排请求（不产生无意义的写盘）",
                 reorder is null, reorder?.ToString() ?? "无"));
 
+            // 5.4) 编辑态下**按下就直接拖拽**，不必再长按 1 秒。
+            // 长按的语义是"进入编辑态"；进了之后每次拖拽都还要再按一秒很烦。
+            overlay.SetEditModeForProbe(true);
+            await Task.Delay(250);
+
+            ResetRecorders();
+            overlay.PressForProbe(fromPoint.X, fromPoint.Y);
+            await Task.Delay(120);
+            ProbeOutput.Kv("编辑态下按下是否立即进入拖拽",
+                overlay.IsDraggingForProbe ? "是（正确）" : "否（还要再长按）");
+            results.Add(("编辑态下按下即拖拽，不必再长按",
+                overlay.IsDraggingForProbe, ""));
+            overlay.ReleaseForProbe(fromPoint.X, fromPoint.Y);
+            await Task.Delay(200);
+
             // 5.5) 松手之后编辑态必须**仍然在**。
             // 用户反馈"松开鼠标就退出了" —— 行为上它一直在（只有 Esc / 点中心 /
             // 点环外才退），但这一条要能证明，不能靠读代码。
@@ -431,18 +446,24 @@ public static class AddSectorProbe
                 ProbeOutput.Kv("　覆盖层是否可见（轮询在跑的前提）", overlay.IsVisible ? "是" : "否（长按不可能触发）");
                 ProbeOutput.Kv("　当前编辑态", overlay.RadialStateForProbe.EditMode ? "开" : "关");
 
+                // 编辑态下**按下就直接拖拽**，所以这里不等长按 —— 也不该等：
+                // 等一秒反而会把"编辑态下可以立即拖"这个新行为测漏。
                 ResetRecorders();
                 reorder = null;
                 overlay.PressForProbe(cFrom.X, cFrom.Y);
                 ProbeOutput.Kv("　按下时判定的索引 / 是否子环",
                     $"{overlay.PressedIndexForProbe} / {overlay.PressedIsChildForProbe}");
-                await Task.Delay(overlay.LongPressMsForProbe + 150);
+                await Task.Delay(150);
 
-                ProbeOutput.Kv("子环里长按后被拖的是", overlay.DragIsChildForProbe ? "子环里的项" : "一级环的项（异常）");
-                ProbeOutput.Kv("　被拖索引", overlay.DragTargetSlotForProbe.ToString());
-                results.Add(("子环里长按拖的是子环里的项，不是一级环",
+                ProbeOutput.Kv("子环里按下后被拖的是",
+                    overlay.DragIsChildForProbe ? "子环里的项" : "一级环的项（异常）");
+                results.Add(("编辑态下子环里按下即拖拽，且拖的是子环里的项",
                     overlay.IsDraggingForProbe && overlay.DragIsChildForProbe,
                     $"dragging={overlay.IsDraggingForProbe}，isChild={overlay.DragIsChildForProbe}"));
+
+                ProbeOutput.Kv("　子环的编辑态虚线", overlay.ChildEditOutlineAttached ? "已画出" : "没有");
+                results.Add(("子环也有编辑态虚线描边（与一级环同形）",
+                    overlay.ChildEditOutlineAttached, ""));
 
                 overlay.MovePointerForProbe(cTo.X, cTo.Y);
                 await Task.Delay(150);

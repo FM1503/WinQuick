@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Shapes;
 using WinQuick.App.Design;
 using WinQuick.App.Interop;
 using WinQuick.Core.Config;
@@ -53,6 +54,9 @@ public sealed partial class RadialRingView
     /// </summary>
     private SectorBulgeAnimator? _childBulge;
 
+    /// <summary>子环的编辑态虚线。收起子弧时要一并清掉。</summary>
+    private Ellipse? _childEditOutline;
+
     /// <summary>
     /// 展开某个父扇区的子弧。已有子弧会立刻被替换（同时只显示一个子弧）。
     /// </summary>
@@ -66,6 +70,10 @@ public sealed partial class RadialRingView
         if (_childArcParent == parentIndex && !_childArcRemoving)
         {
             if (immediate) SetChildArcImmediate(true);
+
+            // 已经展开的情况也要补一次编辑态虚线：子弧可能是**日常态**下展开的，
+            // 那时不加虚线，之后切到编辑态不会再走这条路径。
+            SyncChildEditOutline();
             return;
         }
 
@@ -93,6 +101,12 @@ public sealed partial class RadialRingView
         var colors = tokens.Color;
         var fill = TokenBrushes.Brush(colors.SectorFill, colors.SectorFillAlpha);
         var stroke = TokenBrushes.Brush(colors.SectorStroke, colors.SectorStrokeAlpha);
+
+        // 编辑态标识：子环也有自己的一圈虚线，与第一层那圈同形。
+        // 用户反馈"从子环进入编辑也要像一级环一样有虚线描边" ——
+        // 少了它，在子环里操作时分不清"现在编辑的是子环还是第一层"。
+        // 它属于子弧的视觉，所以收进 _childExtraVisuals，收起时一并移除。
+        SyncChildEditOutline();
 
         var iconRadius = band.At(radius.IconRadiusRatio);
         var labelRadius = band.At(radius.LabelRadiusRatio);
@@ -336,8 +350,50 @@ public sealed partial class RadialRingView
         }
     }
 
+    /// <summary>按当前编辑态增删子环那圈虚线。可重复调用。</summary>
+    private void SyncChildEditOutline()
+    {
+        if (!EditMode || _childArcParent < 0)
+        {
+            if (_childEditOutline is not null)
+            {
+                Root.Children.Remove(_childEditOutline);
+                _childExtraVisuals.Remove(_childEditOutline);
+                _childEditOutline = null;
+            }
+            return;
+        }
+
+        if (_childEditOutline is not null) return;
+
+        var radius = TokenStore.Current.Radius;
+        var band = radius.Ring2;
+
+        var outline = new Ellipse
+        {
+            Width = (band.Outer + 6) * 2,
+            Height = (band.Outer + 6) * 2,
+            Fill = null,
+            Stroke = TokenBrushes.Brush(TokenStore.Current.Color.HoverStroke, 0.5),
+            StrokeThickness = 1.4,
+            StrokeDashArray = new DoubleCollection { 3, 4 },
+            IsHitTestVisible = false,
+            Opacity = _childArcProgress,
+        };
+        Canvas.SetLeft(outline, _center.X - (band.Outer + 6));
+        Canvas.SetTop(outline, _center.Y - (band.Outer + 6));
+        Root.Children.Add(outline);
+        _childExtraVisuals.Add(outline);
+        _childEditOutline = outline;
+    }
+
     private void RemoveChildVisuals()
     {
+        // 子环都没了，针对它的拖拽预览必须一起作废：否则下一帧的 UpdateDrag
+        // 会去访问已经清空的子环扇区数组，直接越界崩溃
+        //（收起动画可能在拖拽进行中才播完 —— 它是在按下之前就被排上的）。
+        if (_dragIsChild) ClearDragState();
+
         foreach (var visual in _childSectors.Cast<UIElement>()
                      .Concat(_childIcons)
                      .Concat(_childChildMarkers.Where(m => m is not null).Cast<UIElement>())
@@ -356,6 +412,7 @@ public sealed partial class RadialRingView
         _childLabels.Clear();
         _childChildMarkers.Clear();
         _childSpans = [];
+        _childEditOutline = null;
     }
 
     private Image AddChildIcon(MenuItemSpec child, double iconRadius, double angleDeg, double iconSize)

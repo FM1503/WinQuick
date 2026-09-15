@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
@@ -264,7 +265,9 @@ public sealed class RadialWindow : Window
         // （把这一行删掉，那条核对就会红）。
         _view.ResetInteraction();
 
-        var fresh = RadialRingView.Build(menu, editMode: _editMode);
+        // 复用当前画布：换掉 Window.Content 会让整棵内容失效、走一次窗口级布局，
+        // 在分层窗口上表现为闪一下（改一次菜单就闪一次）。
+        var fresh = RadialRingView.Build(menu, editMode: _editMode, reuse: Content as Canvas);
 
         // 先把动画状态归零再挂新树：退场动画的 HoldEnd 值会留在 _scale 上，
         // 不清掉的话新内容会从"上次退场结束时的缩放"开始。

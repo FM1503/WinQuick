@@ -264,7 +264,12 @@
                         Content="恢复默认" Click="OnResetClick" />
             </Grid>
 
+            <!-- 页脚高度写死两行：它是每次操作都会变的文本，而窗口是 SizeToContent="Height" ——
+                 文本一变行数、窗口就改高度，而**分层窗口改高度会重建整块表面**，
+                 看起来就是每操作一次闪一下。（本项目不写死尺寸的原则针对视觉规格，
+                 这里写死的是一个"防止窗口反复改尺寸"的占位高度，不参与观感设计。） -->
             <TextBlock x:Name="FooterStatus" Style="{StaticResource Hint}" Margin="0,10,0,0"
+                       MinHeight="{DynamicResource Wq.Size.FooterMinHeight}"
                        Text="改动即时生效并自动保存。" />
         </StackPanel>
         </ScrollViewer>

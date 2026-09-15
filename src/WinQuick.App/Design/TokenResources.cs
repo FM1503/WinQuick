@@ -64,6 +64,11 @@ public static class TokenResources
         Set("Size.FieldPadding", new Thickness(6, 4, 6, 4));
 
         // ---- 字体 ----
+        // 页脚占位高度：两行小字。目的是让窗口高度**不随状态文本的行数变化** ——
+        // 面板是 SizeToContent="Height"，文本一变行数窗口就改高度，
+        // 而分层窗口改高度会重建整块表面（用户看到的就是每次操作闪一下）。
+        Set("Size.FooterMinHeight", (typography.LabelFontSize - 2.5) * 1.35 * 2 + 4);
+
         Set("Font.Family", new FontFamily(typography.LabelFontFamily));
         Set("Font.LabelSize", typography.LabelFontSize);
         Set("Font.BodySize", typography.LabelFontSize - 1);

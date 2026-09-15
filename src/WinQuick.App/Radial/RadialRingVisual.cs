@@ -234,21 +234,30 @@ public sealed partial class RadialRingView
     /// 日常使用时轮盘里应当只有用户自己的项，编辑入口属于设置场景。
     /// 传 false 时即使有空位也不画「＋」，各扇区的角度随之回到完整等分。
     /// </param>
-    public static RadialRingView Build(MenuSpec menu, double? sizeOverride = null, bool editMode = false)
+    /// <param name="reuse">
+    /// 复用一棵已有的画布（把它的子元素清空后重建内容）。
+    ///
+    /// **菜单重建时必须传它。** 换掉 `Window.Content` 会让窗口的整棵内容失效、
+    /// 走一次完整的窗口级测量/排列，在分层窗口上就会闪一下 ——
+    /// 而用户改一次菜单就会重建一次，看起来就是"刷新时频繁闪"。
+    /// 复用同一个画布则只失效它的子元素，不触碰 Window 的内容对象。
+    /// </param>
+    public static RadialRingView Build(
+        MenuSpec menu, double? sizeOverride = null, bool editMode = false, Canvas? reuse = null)
     {
         var tokens = TokenStore.Current;
         var radius = tokens.Radius;
         var size = sizeOverride ?? radius.WindowSize;
         var center = new Point(size / 2, size / 2);
 
-        var root = new Canvas
-        {
-            Width = size,
-            Height = size,
-            // Transparent（而非 null）才可命中测试：整窗范围都能收到鼠标事件，
-            // 「点圆盘外关闭」才成立。
-            Background = Brushes.Transparent,
-        };
+        var root = reuse ?? new Canvas();
+        root.Children.Clear();
+        root.Width = size;
+        root.Height = size;
+
+        // Transparent（而非 null）才可命中测试：整窗范围都能收到鼠标事件，
+        // 「点圆盘外关闭」才成立。
+        root.Background = Brushes.Transparent;
 
         // 所有角度都走 Core 的 RadialLayout：渲染与命中测试共用同一份数学，
         // 不会出现「看着在扇区 A、点下去选中 B」。

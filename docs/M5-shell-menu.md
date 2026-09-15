@@ -33,28 +33,21 @@ HKCU\Software\Classes\*\shell\WinQuick            ← 也写一份到 Directory\
     Icon         = <exe 路径>
     SubCommands  = ""            ← 空值才是「可展开」
     （不能有 command 子键，也不能有 (Default)）
-  Shell\AddTo
-    MUIVerb                  = "添加"
-    ExtendedSubCommandsKey   = "WinQuick.AddTo"      ← 引用动词库，不再嵌一层 Shell
-
-HKCU\Software\Classes\WinQuick.AddTo\shell          ← 动词库（两个作用域共用这一份）
-    D_0   MUIVerb="添加到一级环"       Icon=…  MultiSelectModel=Single
-          command\(Default) = "…\WinQuick.exe" --add-to="root" "%1"
-    D_1   MUIVerb="添加到「开发工具」"  command\(Default) = "…" --add-to="group:开发工具" "%1"
+  Shell\D_0   MUIVerb="添加到一级环"        Icon=…  MultiSelectModel=Single
+              command\(Default) = "…\WinQuick.exe" --add-to="root" "%1"
+  Shell\D_1   MUIVerb="添加到「开发工具」"   command\(Default) = "…" --add-to="group:开发工具" "%1"
 ```
+
+**两层，没有中间的「添加」层。** 曾经做过三层，但那一层的弹出面板在经典菜单里会被画上
+一圈老式 3D 白边框（见第 8 节），试过两条路都没消掉，最后压成两层 ——
+新版 Win11 菜单本身也只允许一层子菜单，两层与平台一致。
 
 几条不是随便定的：
 
-- **目的地用 `ExtendedSubCommandsKey` 引用动词库，而不是继续嵌一层 `Shell\` 子键。**
-  链式嵌套能用，但第三级弹出面板会被画上一圈**老式 3D 白边框**。
-  判断依据是"同机制不同结果"：第一级到第二级也是链式级联、那一级没有边框，
-  差别只在于目的地那级是链式的**第二段**；而微软文档对"`ExtendedSubCommandsKey`
-  指向的键里能否再嵌套级联"始终没有验证 —— 我原来的结构正好踩在这个未验证位置上。
-  Windows 自己用的是 `ExtendedSubCommandsKey`（本机实测 EFS 那条级联就是），照它的写。
 - **空 `SubCommands` 是"可展开"的关键。** 微软文档里没写这一点，是社区验证出来的；
   少了它级联可能整个不渲染，而现象只是"菜单里没有这一项"。`--shell-probe` 专门核这一条。
-- **每个目的地都要写 `Icon`。** 判据来自对照：本机两个"已知良好"的级联叶子
-  （Windows 的 EFS `Decrypt`、VS Code）都写了 Icon，只有我们没写。图标借用程序自身的。
+- **每个目的地都写 `Icon`。** 判据来自对照：本机两个"已知良好"的叶子项
+  （Windows 的 EFS `Decrypt`、VS Code）都写了 Icon。图标借用程序自身的。
 - **键名是 ASCII 序号 `D_0`、中文写在 `MUIVerb` 里**：分组改名时只改文案，键名不动。
 - **`%1` 和 exe 路径都带引号**：路径里有空格就会被 shell 拆成多个参数，
   而这个错误在路径短的时候完全看不出来。
@@ -207,4 +200,25 @@ Explorer 启动 WinQuick.exe --add-to="…" "<文件路径>"
 （`WinQuick → 添加到一级环 / 添加到「开发」`）。这不是妥协 ——
 新版 Win11 菜单本身就只允许一层子菜单，两层结构与平台一致，
 而且直接消掉了出问题的那一层弹出面板。要不要这么改由你定。
+
+### 8.5 结论：压成两层
+
+第 8.4 节改成动词库结构之后白边框仍在，于是按用户要求压成两层：
+目的地直接挂在 `WinQuick` 下 —— **也就是原来「添加」所在的位置，而那一层本来就是正常的**。
+
+试过的两条路都记下来，免得以后重复踩：
+
+| 尝试 | 结果 |
+|---|---|
+| 给目的地补 `Icon`（对照三类叶子项后发现的唯一缺失值） | 白边框仍在 |
+| 目的地那一级从链式嵌套改成 `ExtendedSubCommandsKey` + 动词库（Windows 自己的写法） | 白边框仍在 |
+| **压成两层** | 目的地落在原本正常的那一层位置 |
+
+最后一条不是妥协：新版 Win11 菜单只允许一层子菜单，两层与平台一致，
+而且直接消掉了出问题的那层弹出面板。
+
+**没能查清的部分要说清楚**：白边框的成因我始终没有确证。
+我看不到 Explorer 的渲染，只能逐值对照注册表 —— 而注册表层面唯一能指出的差异
+（三层里的第二段链式嵌套）改掉之后问题依旧。所以这是**"绕开"而不是"修好"**：
+三层为什么会被画成那样，仍然不知道。
 

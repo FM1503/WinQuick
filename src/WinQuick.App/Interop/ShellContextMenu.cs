@@ -21,37 +21,28 @@ namespace WinQuick.App.Interop;
 internal static class ShellContextMenu
 {
     private const string VerbKeyName = "WinQuick";
-    private const string AddSubKeyName = "AddTo";
     private const string DestinationPrefix = "D_";
 
     /// <summary>
-    /// 动词库的键名（相对 <c>HKEY_CLASSES_ROOT</c>）。
+    /// 结构：**两层** —— <c>WinQuick → 添加到一级环 / 添加到「分组」</c>。
     ///
-    /// 目的地放在这里、由 <c>ExtendedSubCommandsKey</c> 引用，而不是继续嵌一层
-    /// <c>Shell\</c> 子键 —— 后者能工作，但第三级弹出面板会被画上一圈**老式 3D 白边框**。
+    /// 曾经做过三层（多一层「添加」），但那一层的弹出面板在经典菜单里会被画上
+    /// 一圈**老式 3D 白边框**，而它上面那层没有。试过两条路都没消掉：
+    /// 补 `Icon`（对照三类叶子项后发现唯一缺的值）、把目的地那一级从链式嵌套
+    /// 换成 `ExtendedSubCommandsKey` + 动词库（即 Windows 自己用的那种写法）。
     ///
-    /// 判断依据是"同机制不同结果"：第一级到第二级用的也是链式级联，那一级的面板没有边框，
-    /// 差别只在于目的地那一级是链式的**第二段**（WinQuick → Shell\AddTo → Shell\D_*）。
-    /// 而微软文档对"ExtendedSubCommandsKey 指向的键里能否再嵌套级联"始终没有验证 ——
-    /// 我原来的结构正好踩在这个未验证位置上。Windows 自己用的是 ExtendedSubCommandsKey
-    ///（本机实测 EFS 那条级联就是），于是照它的写法来。
+    /// 于是压成两层：目的地直接挂在 <c>WinQuick</c> 下 —— 也就是原来「添加」所在的位置，
+    /// 而**那一层本来就是正常的**。这不是妥协：新版 Win11 菜单本身就只允许一层子菜单，
+    /// 两层与平台一致，也直接消掉了出问题的那层弹出面板。
     /// </summary>
-    private const string LibraryKeyName = "WinQuick.AddTo";
-
-    private const string LibraryPath = @"Software\Classes\" + LibraryKeyName;
-
-    /// <summary>文件与文件夹两个作用域。文件夹用 <c>Directory</c>（文件系统目录）。</summary>
     private static readonly string[] VerbScopes =
     [
         @"Software\Classes\*\shell\" + VerbKeyName,
         @"Software\Classes\Directory\shell\" + VerbKeyName,
     ];
 
-    /// <summary>
-    /// 我们拥有的所有键。注销、备份、还原都遍历它 ——
-    /// 漏掉动词库就会留下一个孤儿键，探针的"无残留"核对会抓到。
-    /// </summary>
-    private static readonly string[] AllKeys = [.. VerbScopes, LibraryPath];
+    /// <summary>我们拥有的所有键。注销、备份、还原都遍历它。</summary>
+    private static readonly string[] AllKeys = [.. VerbScopes];
 
     /// <summary>注册项里的一条值。</summary>
     internal sealed record Entry(string SubKeyPath, string? ValueName, string Value);
@@ -73,11 +64,8 @@ internal static class ShellContextMenu
             foreach (var key in AllKeys)
                 Registry.CurrentUser.DeleteSubKeyTree(key, throwOnMissingSubKey: false);
 
-            // 动词库只写一份，两个作用域共用（微软文档明确支持这样做）。
-            WriteLibrary(targets, executablePath);
-
             foreach (var scope in VerbScopes)
-                WriteScope(scope, executablePath);
+                WriteScope(scope, targets, executablePath);
 
             var note = skipped.Count > 0
                 ? $"以下分组名里有引号，无法写进右键菜单，已跳过：{string.Join("、", skipped)}"
@@ -132,8 +120,8 @@ internal static class ShellContextMenu
     /// <summary>注册表里实际写下去的目的地数量，供探针核对。</summary>
     internal static int DestinationCount()
     {
-        using var library = Registry.CurrentUser.OpenSubKey(LibraryPath + @"\shell");
-        return library?.GetSubKeyNames().Length ?? 0;
+        using var shell = Registry.CurrentUser.OpenSubKey(VerbScopes[0] + @"\Shell");
+        return shell?.GetSubKeyNames().Length ?? 0;
     }
 
     /// <summary>
@@ -197,10 +185,10 @@ internal static class ShellContextMenu
     internal static int ValueCount() => Export().Count;
 
     /// <summary>
-    /// 写第一、二级：<c>WinQuick</c> 下挂一个 <c>Shell\AddTo</c>，
-    /// 后者用 <c>ExtendedSubCommandsKey</c> 指向动词库。
+    /// 写两层：<c>WinQuick</c> 直接挂一串目的地。
     /// </summary>
-    private static void WriteScope(string scope, string executablePath)
+    private static void WriteScope(
+        string scope, IReadOnlyList<ShellTarget> targets, string executablePath)
     {
         using (var verb = Registry.CurrentUser.CreateSubKey(scope, writable: true)
                           ?? throw new InvalidOperationException($"无法创建注册表键 {scope}"))
@@ -216,25 +204,17 @@ internal static class ShellContextMenu
             // 刻意不写 (Default)：父项的默认值必须为空，否则 Explorer 会拿它当命令。
         }
 
-        var addToPath = $@"{scope}\Shell\{AddSubKeyName}";
-        using var addTo = Registry.CurrentUser.CreateSubKey(addToPath, writable: true)
-                          ?? throw new InvalidOperationException($"无法创建注册表键 {addToPath}");
-
-        addTo.SetValue("MUIVerb", "添加", RegistryValueKind.String);
-
-        // 引用动词库。**不写 SubCommands** —— 这是 Windows 自己那条级联的写法
-        //（本机实测 HKCR\*\shell\UpdateEncryptionSettingsWork 只有
-        // MUIVerb + ExtendedSubCommandsKey，没有 SubCommands）。
-        addTo.SetValue("ExtendedSubCommandsKey", LibraryKeyName, RegistryValueKind.String);
+        WriteDestinations($@"{scope}\Shell", targets, executablePath);
     }
 
-    /// <summary>写动词库（目的地列表）。两个作用域共用这一份。</summary>
-    private static void WriteLibrary(IReadOnlyList<ShellTarget> targets, string executablePath)
+    /// <summary>写目的地列表。它们就是 <c>WinQuick</c> 弹出面板里的那些项。</summary>
+    private static void WriteDestinations(
+        string shellPath, IReadOnlyList<ShellTarget> targets, string executablePath)
     {
         for (var i = 0; i < targets.Count; i++)
         {
             var target = targets[i];
-            var path = $@"{LibraryPath}\shell\{DestinationPrefix}{i}";
+            var path = $@"{shellPath}\{DestinationPrefix}{i}";
 
             using var destination = Registry.CurrentUser.CreateSubKey(path, writable: true)
                                     ?? throw new InvalidOperationException($"无法创建注册表键 {path}");

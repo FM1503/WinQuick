@@ -25,8 +25,7 @@ public static class ShellProbe
     private const string RootKey = @"Software\Classes\*\shell\WinQuick";
     private const string FolderKey = @"Software\Classes\Directory\shell\WinQuick";
 
-    /// <summary>目的地所在的动词库（由 ExtendedSubCommandsKey 引用）。</summary>
-    private const string LibraryKey = @"Software\Classes\WinQuick.AddTo";
+
 
     public static void Run(CliOptions cli)
     {
@@ -102,28 +101,19 @@ public static class ShellProbe
                     defaultValue is null && !hasCommand,
                     $"(Default)={defaultValue ?? "空"}，command={(hasCommand ? "有" : "无")}"));
 
-                var addTo = root.OpenSubKey(@"Shell\AddTo");
-                var addToVerb = addTo?.GetValue("MUIVerb") as string;
-                var extended = addTo?.GetValue("ExtendedSubCommandsKey") as string;
-                var addToSubCommands = addTo?.GetValue("SubCommands") as string;
+                // 结构是**两层**：目的地直接挂在 WinQuick 的 Shell 子键下。
+                //
+                // 曾经是三层（多一层「添加」），但那一层的弹出面板在经典菜单里会被画上
+                // 一圈老式 3D 白边框，试过补 Icon、换 ExtendedSubCommandsKey 都没消掉，
+                // 最后压成两层 —— 新版 Win11 菜单本身也只允许一层子菜单。
+                // 这一条是结构的回归锁：谁再嵌一层它就会红。
+                results.Add(("结构是两层：没有中间的「添加」层",
+                    root.OpenSubKey(@"Shell\AddTo") is null
+                    && root.GetValue("ExtendedSubCommandsKey") is null,
+                    "WinQuick → 目的地"));
 
-                ProbeOutput.Kv("「添加」层的 MUIVerb", addToVerb ?? "(无)");
-                ProbeOutput.Kv("  引用的动词库", extended ?? "(无)");
-                ProbeOutput.Kv("  是否误留了 SubCommands",
-                    addToSubCommands is null ? "没有（正确）" : $"有「{addToSubCommands}」（不该有）");
-
-                results.Add(("「添加」层存在且文案正确", addToVerb == "添加", addToVerb ?? "无"));
-
-                // 目的地通过 ExtendedSubCommandsKey 引用动词库，而不是再嵌一层 Shell 子键。
-                // 后者能工作，但第三级弹出面板会被画上一圈老式 3D 白边框 ——
-                // 这一条就是那次修复的回归锁：改回链式嵌套它就会红。
-                results.Add(("「添加」层用 ExtendedSubCommandsKey 引用动词库（不是嵌套 Shell）",
-                    extended == "WinQuick.AddTo" && addToSubCommands is null,
-                    $"ExtendedSubCommandsKey={extended ?? "无"}，SubCommands={addToSubCommands ?? "无"}"));
-
-                using var library = Registry.CurrentUser.OpenSubKey(LibraryKey + @"\shell");
-                var destinations = library;
-                ProbeOutput.Kv("动词库的键", LibraryKey + @"\shell");
+                var destinations = root.OpenSubKey(@"Shell");
+                ProbeOutput.Kv("目的地的父键", RootKey + @"\Shell");
                 var names = destinations?.GetSubKeyNames() ?? [];
                 ProbeOutput.Kv("目的地数量", names.Length.ToString());
 
@@ -204,16 +194,13 @@ public static class ShellProbe
 
             using (var afterFiles = Registry.CurrentUser.OpenSubKey(RootKey))
             using (var afterFolders = Registry.CurrentUser.OpenSubKey(FolderKey))
-            using (var afterLibrary = Registry.CurrentUser.OpenSubKey(LibraryKey))
             {
                 ProbeOutput.Kv("文件作用域键还在", afterFiles is null ? "否（正确）" : "是（残留）");
                 ProbeOutput.Kv("文件夹作用域键还在", afterFolders is null ? "否（正确）" : "是（残留）");
-                ProbeOutput.Kv("动词库键还在", afterLibrary is null ? "否（正确）" : "是（残留）");
 
                 results.Add(("注销成功", uninstallOk, uninstallError ?? ""));
                 results.Add(("注销后文件作用域无残留", afterFiles is null, RootKey));
                 results.Add(("注销后文件夹作用域无残留", afterFolders is null, FolderKey));
-                results.Add(("注销后动词库无残留", afterLibrary is null, LibraryKey));
             }
 
             // ---- 请求文件的往返 ------------------------------------------------
@@ -404,7 +391,12 @@ public static class ShellProbe
                     ? "command 子键的 (Default)" : "(无 command 子键)");
             }
 
-            ProbeOutput.Line("  >>> 我们的结构与它一致：父项 MUIVerb + 空的 SubCommands，子项在 Shell\\<名>\\command 下。");
+            ProbeOutput.Line(
+                "  >>> 两者**不完全相同**：系统那条用 ExtendedSubCommandsKey，"
+                + "我们用空的 SubCommands + Shell 子键。");
+            ProbeOutput.Line(
+                "      两者都是 shell 认的写法；先前三层结构时试过改成系统那种，白边框没消掉，"
+                + "于是压成两层、回到链式。");
         }
         catch (Exception ex)
         {

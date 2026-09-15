@@ -364,6 +364,15 @@ public sealed class OverlayController : IDisposable
     /// <summary>诊断用：是否正在拖拽。</summary>
     internal bool IsDraggingForProbe => _radial.IsDraggingForProbe;
 
+    /// <summary>诊断用：被拖的是子环里的项还是第一层的。</summary>
+    internal bool DragIsChildForProbe => _radial.DragIsChildForProbe;
+
+    /// <summary>诊断用：按下时判定的扇区索引（-1 = 不在真实项上）。</summary>
+    internal int PressedIndexForProbe => _radial.PressedIndexForProbe;
+
+    /// <summary>诊断用：按下时判定为子环里的项。</summary>
+    internal bool PressedIsChildForProbe => _radial.PressedIsChildForProbe;
+
     /// <summary>诊断用：当前落点格子。</summary>
     internal int DragTargetSlotForProbe => _radial.DragTargetSlotForProbe;
 

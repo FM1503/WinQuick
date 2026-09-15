@@ -280,6 +280,10 @@ public static class AddSectorProbe
             var orderBefore = menu.Items.Select(i => i.Label).ToList();
             ProbeOutput.Kv("拖拽前的顺序", string.Join("、", orderBefore));
 
+            // 日常态（无「＋」）下第一层的格子角度。多处都要按当前布局重算，
+            // 因为切换编辑态会改变槽数（9 ↔ 8），父扇区中心角随之变化。
+            var spansNow8 = RadialLayout.Distribute(menu.Items.Count);
+
             var dragFrom = leafIndex;
             var dragTo = leafIndex >= 2 ? 0 : menu.Items.Count - 1;   // 拖到明显不同的位置
 
@@ -369,6 +373,90 @@ public static class AddSectorProbe
             ProbeOutput.Kv("拖到同一格后发出的请求", reorder?.ToString() ?? "(没有，正确)");
             results.Add(("拖回同一格不发出重排请求（不产生无意义的写盘）",
                 reorder is null, reorder?.ToString() ?? "无"));
+
+            // 5.5) 松手之后编辑态必须**仍然在**。
+            // 用户反馈"松开鼠标就退出了" —— 行为上它一直在（只有 Esc / 点中心 /
+            // 点环外才退），但这一条要能证明，不能靠读代码。
+            ResetRecorders();
+            overlay.PressForProbe(fromPoint.X, fromPoint.Y);
+            await Task.Delay(overlay.LongPressMsForProbe + 150);
+            var afterLongPress = overlay.RadialStateForProbe.EditMode;
+            overlay.ReleaseForProbe(fromPoint.X, fromPoint.Y);
+            await Task.Delay(250);
+            var afterRelease = overlay.RadialStateForProbe.EditMode;
+
+            ProbeOutput.Kv("长按进入编辑态", afterLongPress ? "是" : "否");
+            ProbeOutput.Kv("　松手之后是否仍在编辑态", afterRelease ? "是（正确）" : "否（异常）");
+            results.Add(("松手之后编辑态保持（只有 Esc/点中心/点环外才退出）",
+                afterLongPress && afterRelease,
+                $"长按后={afterLongPress}，松手后={afterRelease}"));
+
+            // 5.6) 子环里长按：拖的必须是**子环里的项**，不是一级环
+            //
+            // 用户实测报的：子环长按后编辑的是一级环。原因是拖拽预览只操作第一层的
+            // 扇区数组，于是子环里长按会拖到"同一索引的一级扇区"上。
+            // parentIndex / childCount 在后面的"第二层子弧"一节才声明，
+            // 这里自己算一份（这一节要排在它前面，因为后面的核对依赖编辑态被重置）。
+            var childParent = -1;
+            for (var i = 0; i < menu.Items.Count; i++)
+                if (menu.Items[i].HasChildren) { childParent = i; break; }
+
+            var childN = childParent >= 0 ? menu.Items[childParent].Children.Count : 0;
+
+            if (childParent >= 0 && childN > 0)
+            {
+                overlay.SetEditModeForProbe(true);
+                await Task.Delay(300);
+                overlay.ReopenChildArc(childParent);
+                await Task.Delay(400);
+
+                // **这里必须用编辑态（含「＋」）的 spans**，也就是本节开头算的那一份：
+                // 此刻编辑态是开着的，第一层有 9 格、父扇区中心在 280°；
+                // 而日常态的 8 格布局里它在 315° —— 用错了子弧就整体偏移，
+                // 按下的点落到环外，长按根本不会触发（又是一次"坐标跟布局不匹配"）。
+                var childSlots = RadialLayout.DistributeWithin(
+                    RadialLayout.ChildArc(spans[childParent].CenterDeg, childN,
+                        tokens.Interaction.ChildSpanDegrees),
+                    childN);
+                var childBandMid = tokens.Radius.Ring2.At(0.5);
+                var cFrom = ToLocal(Vec2.FromPolar(childBandMid, childSlots[0].CenterDeg),
+                    tokens.Radius.WindowSize);
+                var cTo = ToLocal(Vec2.FromPolar(childBandMid, childSlots[^1].CenterDeg),
+                    tokens.Radius.WindowSize);
+
+                var cHit = overlay.HitTestForProbe(cFrom.X, cFrom.Y);
+                ProbeOutput.Kv("　按下点的命中", $"{cHit.Zone}/{cHit.Index}");
+                ProbeOutput.Kv("　按下前子弧是否展开", overlay.IsChildArcExpanded ? "是" : "否");
+                ProbeOutput.Kv("　按下前面板是否开着", overlay.PanelAttached ? "是" : "否");
+                ProbeOutput.Kv("　覆盖层是否可见（轮询在跑的前提）", overlay.IsVisible ? "是" : "否（长按不可能触发）");
+                ProbeOutput.Kv("　当前编辑态", overlay.RadialStateForProbe.EditMode ? "开" : "关");
+
+                ResetRecorders();
+                reorder = null;
+                overlay.PressForProbe(cFrom.X, cFrom.Y);
+                ProbeOutput.Kv("　按下时判定的索引 / 是否子环",
+                    $"{overlay.PressedIndexForProbe} / {overlay.PressedIsChildForProbe}");
+                await Task.Delay(overlay.LongPressMsForProbe + 150);
+
+                ProbeOutput.Kv("子环里长按后被拖的是", overlay.DragIsChildForProbe ? "子环里的项" : "一级环的项（异常）");
+                ProbeOutput.Kv("　被拖索引", overlay.DragTargetSlotForProbe.ToString());
+                results.Add(("子环里长按拖的是子环里的项，不是一级环",
+                    overlay.IsDraggingForProbe && overlay.DragIsChildForProbe,
+                    $"dragging={overlay.IsDraggingForProbe}，isChild={overlay.DragIsChildForProbe}"));
+
+                overlay.MovePointerForProbe(cTo.X, cTo.Y);
+                await Task.Delay(150);
+                ProbeOutput.Kv("　子环拖拽的落点格子", overlay.DragTargetSlotForProbe.ToString());
+
+                overlay.ReleaseForProbe(cTo.X, cTo.Y);
+                await Task.Delay(250);
+
+                ProbeOutput.Kv("　发出的重排请求（父索引应为 " + childParent + "）",
+                    reorder?.ToString() ?? "(没有)");
+                results.Add(("子环拖拽发出的是子层重排（父索引为该项）",
+                    reorder is { } cr && cr.ParentIndex == childParent,
+                    reorder?.ToString() ?? "无"));
+            }
 
             // 6) 编辑态下 Esc 只退出编辑态，覆盖层仍在
             overlay.SetEditModeForProbe(true);

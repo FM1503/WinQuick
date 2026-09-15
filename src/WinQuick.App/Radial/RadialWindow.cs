@@ -509,6 +509,15 @@ public sealed class RadialWindow : Window
     /// <summary>诊断用：是否正在拖拽。</summary>
     internal bool IsDraggingForProbe => _view.IsDragging;
 
+    /// <summary>诊断用：被拖的是子环里的项还是第一层的。</summary>
+    internal bool DragIsChildForProbe => _view.DragIsChild;
+
+    /// <summary>诊断用：按下时判定的扇区索引（-1 = 不在真实项上，长按不会触发）。</summary>
+    internal int PressedIndexForProbe => _pressedIndex;
+
+    /// <summary>诊断用：按下时判定为子环里的项。</summary>
+    internal bool PressedIsChildForProbe => _pressedIsChild;
+
     /// <summary>诊断用：当前落点格子。</summary>
     internal int DragTargetSlotForProbe => _view.DragTargetSlot;
 
@@ -716,6 +725,26 @@ public sealed class RadialWindow : Window
     /// </summary>
     private void EvaluateHover()
     {
+        // 拖拽中不推进悬停状态机：否则指针扫过别的扇区会一路展开子菜单，
+        // 而用户正在做的事是"把这一项拖到那边去"。
+        if (_view.IsDragging)
+        {
+            ApplyHighlight(-1, -1);
+            return;
+        }
+
+        // **按住期间也冻结悬停。** 按下之后用户不是在用悬停导航，而是在点击或长按，
+        // 这两种意图都不该让盘面在指下变动。
+        //
+        // 这一条是被用户报的问题逼出来的：子环里按住不动时，指针落在子项上，
+        // 状态机认为"你离开父项了"，350ms 后把子弧收掉 —— 于是 1 秒长按触发时
+        // 子环已经没了，拖拽要么拖不动、要么拖到了别的东西上。
+        if (_pressed is not null)
+        {
+            ApplyHighlight(-1, -1);
+            return;
+        }
+
         // 编辑面板开着时不推进悬停状态机。
         // 面板通常压在某个扇区上，指针在那里会被判成"悬停在那个扇区"——
         // 于是面板开着的时候子弧会自己展开、收起，用户正在改的这一项还会高亮闪动。
@@ -896,7 +925,7 @@ public sealed class RadialWindow : Window
             SetEditMode(true);
         }
 
-        _view.BeginDrag(_pressedIndex);
+        _view.BeginDrag(_pressedIndex, isChild: _pressedIsChild);
     }
 
     /// <summary>

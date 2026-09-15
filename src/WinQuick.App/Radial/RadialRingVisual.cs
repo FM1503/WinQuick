@@ -324,6 +324,29 @@ public sealed partial class RadialRingView
                 childMarkers[i] = AddChildMarker(root, center, radius.Ring1Outer, span.CenterDeg, stroke);
         }
 
+        // 编辑态标识：环外一圈**持续显示**的虚线。
+        //
+        // 为什么需要它：用户反馈"松开鼠标就以为退出编辑态了"。行为上编辑态其实一直在
+        //（只有 Esc / 点中心 / 点环外才退），但屏幕上没有持久的标记 ——
+        // 被拖那一项的"抬起"和虚线目标框一松手就消失，看起来就像模式结束了。
+        // 加一个不随拖拽起落变化的标识，模式在不在就一目了然。
+        if (editMode)
+        {
+            var editRing = new Ellipse
+            {
+                Width = (radius.Ring1Outer + 8) * 2,
+                Height = (radius.Ring1Outer + 8) * 2,
+                Fill = null,
+                Stroke = TokenBrushes.Brush(colors.HoverStroke, 0.5),
+                StrokeThickness = 1.4,
+                StrokeDashArray = new DoubleCollection { 3, 4 },
+                IsHitTestVisible = false,
+            };
+            Canvas.SetLeft(editRing, center.X - (radius.Ring1Outer + 8));
+            Canvas.SetTop(editRing, center.Y - (radius.Ring1Outer + 8));
+            root.Children.Add(editRing);
+        }
+
         // 中心死区：语义是「取消」。用一块内凹的圆暗示它不可点选。
         AddEllipse(root, center, radius.DeadZone - 4,
             TokenBrushes.Brush(colors.DeadZoneFill),

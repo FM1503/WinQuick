@@ -340,11 +340,11 @@ public sealed record InteractionTokens
     public double ChildSpanDegrees { get; init; } = 90;
 
     /// <summary>
-    /// 长按多久进入编辑态。用户指定 2 秒。
+    /// 长按多久进入编辑态。用户实测 2 秒偏长，定为 1 秒。
     ///
     /// 做成令牌而不是常量：长按阈值是最依赖手感的一类参数，
     /// 将来觉得"2 秒太长"时应该改一个数，而不是改代码。
     /// </summary>
-    public int LongPressMs { get; init; } = 2000;
+    public int LongPressMs { get; init; } = 1000;
     public double ChildMinSectorDegrees { get; init; } = 25;
 }

@@ -66,6 +66,58 @@ public partial class SettingsPanel : Window
         LoadFrom(current, notify: false);
     }
 
+    /// <summary>
+    /// 用户是否手动拖过面板。拖过之后就不再自动摆位 ——
+    /// 面板挡住轮盘正是拖动的动机，自动摆位会把它拽回原处，等于白拖。
+    /// </summary>
+    public bool PlacedByUser { get; private set; }
+
+    /// <summary>
+    /// 按住标题栏拖动面板。
+    ///
+    /// 为什么要做：面板固定摆在光标所在屏的另一侧，但那个"另一侧"是估的 ——
+    /// 轮盘跟着光标走，总有一些位置会重叠。让用户自己拖开是最省事的解法
+    ///（也符合桌面程序的常识）。
+    ///
+    /// 用 DragMove 而不是自己算鼠标位移：它由窗口管理器处理，
+    /// 会把 DPI 缩放、多显示器边界、以及"拖动时不要重入"这些细节一起处理好 ——
+    /// 自己算的话每个显示器缩放比都要单独对一遍。
+    /// </summary>
+    private void OnTitleBarMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ButtonState != MouseButtonState.Pressed) return;
+
+        e.Handled = true;
+
+        try
+        {
+            DragMove();
+            PlacedByUser = true;
+        }
+        catch (InvalidOperationException)
+        {
+            // 鼠标已经松开时 DragMove 会抛这个 —— 快速点一下标题栏就会走到这里，
+            // 属于正常情况（用户只是点了一下，不是要拖）。
+        }
+    }
+
+    /// <summary>
+    /// 把面板左下角的位置报出去，供"用户拖过之后记住位置"使用。
+    /// 用物理像素，避免 DIP 换算在非整数缩放下丢精度。
+    /// </summary>
+    public (int X, int Y)? CurrentPhysicalPosition
+    {
+        get
+        {
+            var hwnd = new WindowInteropHelper(this).Handle;
+            if (hwnd == IntPtr.Zero) return null;
+            return Windows.Win32.PInvoke.GetWindowRect(
+                (Windows.Win32.Foundation.HWND)hwnd, out var rect)
+                ? (rect.left, rect.top)
+                : null;
+        }
+    }
+
     /// <summary>用户要求关闭设置（点 ✕ 或按 Esc）。</summary>
     public event EventHandler? CloseRequested;
 
@@ -491,6 +543,9 @@ public partial class SettingsPanel : Window
     internal void SetAccentForTest(string? value) => AccentBox.Text = value ?? "";
 
     internal void InvokeApplyForTest() => ApplyAndPersist();
+
+    /// <summary>探针用：把"用户拖过"这个状态直接按上（没法在探针里模拟真实的 DragMove）。</summary>
+    internal void MarkPlacedByUserForTest() => PlacedByUser = true;
 
     internal string HotkeyStatusTextForTest => HotkeyStatus.Text;
 

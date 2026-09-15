@@ -72,6 +72,11 @@ public partial class App : Application
                 RunDetached(() => M0.ActionProbe.RunAsync(cli));
                 break;
 
+            case "--particle-probe":
+                // 需要消息循环与真实窗口：要在真的分层窗口上逐帧更新一堆图形。
+                RunDetached(() => M0.ParticleProbe.RunAsync(cli));
+                break;
+
             case "--label-probe":
                 // 需要消息循环与真实窗口：要核对悬停前后的排版属性。
                 RunDetached(() => M0.LabelProbe.RunAsync(cli));

@@ -31,6 +31,8 @@ public sealed class CliOptions
           --add-to=值 路径          由文件右键菜单调用：把该路径加进指定目的地
                                       （值形如 root 或 group:分组名）
           --shell-probe             右键菜单集成：注册→逐键核对→注销后无残留
+          --particle-probe          粒子动画代价：在真窗口上逐帧动 N 个图形/一张位图，量帧间隔
+              --seconds=N           每档采样秒数，默认 3
           --label-probe             标签：超长文本的截断方式、悬停是否位移、中心读出完整文字
           --perf-probe              帧间隔分布：扫过扇区与子弧动画，测流畅度的可比值
               --ms=N                每个扇区停留毫秒，默认 90

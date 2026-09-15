@@ -91,6 +91,7 @@ public static class SettingsProbe
 
             results.Add(("面板可显示", shown && handleCreated, $"{panel.ActualWidth:0}x{panel.ActualHeight:0}"));
 
+
             // ---- 改动即应用 ----
             ProbeOutput.Section("改动即应用的语义");
 

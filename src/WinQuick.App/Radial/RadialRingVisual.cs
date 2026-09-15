@@ -91,6 +91,9 @@ public sealed partial class RadialRingView
     /// <summary>视觉根。类型是 Canvas 而不是 FrameworkElement —— 子弧需要往它里面增删图形。</summary>
     public Canvas Root { get; }
 
+    /// <summary>圆心（窗口内坐标）。探针挂粒子场时要用。</summary>
+    public Point Center => _center;
+
     public int SectorCount => _sectors.Length;
     public int HoverIndex => _hover;
 

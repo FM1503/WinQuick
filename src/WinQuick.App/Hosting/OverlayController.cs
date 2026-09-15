@@ -367,6 +367,14 @@ public sealed class OverlayController : IDisposable
     /// <summary>诊断用：被拖的是子环里的项还是第一层的。</summary>
     internal bool DragIsChildForProbe => _radial.DragIsChildForProbe;
 
+    /// <summary>
+    /// 诊断用：把一块"粒子场"挂到轮盘画布上或摘下来。
+    /// 粒子探针要量的是"在真实的分层窗口上逐帧动一堆图形"的代价，
+    /// 所以必须挂在真窗口的真画布上，而不是另开一个干净窗口量。
+    /// </summary>
+    internal void AttachParticleFieldForProbe(object? field) =>
+        _radial.AttachParticleFieldForProbe(field);
+
     /// <summary>诊断用：子环的编辑态虚线是否画出来了。</summary>
     internal bool ChildEditOutlineAttached => _radial.ChildEditOutlineAttached;
 
@@ -714,6 +722,11 @@ public sealed class OverlayController : IDisposable
         // 溢出屏幕就等于点不到 —— 用户已经因为"按钮点不到"报过一次问题了。
         left = Math.Clamp(left, monitor.X, Math.Max(monitor.X, monitor.Right - panelWidth));
         top = Math.Clamp(top, monitor.Y, Math.Max(monitor.Y, monitor.Bottom - panelHeight));
+
+        // 用户手动拖过就不再自动摆位：面板挡住轮盘正是他拖开的动机，
+        // 自动摆位会把它拽回原处 —— 等于白拖。（最大高度那段仍然照做，
+        // 它不移动窗口，只保证小屏上底部的按钮不会被截掉。）
+        if (_settingsPanel.PlacedByUser) return;
 
         var hwnd = (HWND)_settingsPanel.HandleValue;
         PInvoke.SetWindowPos(hwnd, default, left, top, 0, 0,

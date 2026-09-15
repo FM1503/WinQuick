@@ -515,6 +515,10 @@ public sealed class RadialWindow : Window
     /// <summary>诊断用：子环的编辑态虚线是否画出来了。</summary>
     internal bool ChildEditOutlineAttached => _view.ChildEditOutlineAttached;
 
+    /// <summary>诊断用：把粒子场挂上/摘下（接口由探针定义，这里只做转发）。</summary>
+    internal void AttachParticleFieldForProbe(object? field) =>
+        ParticleFieldHost.Attach(_view.Root, _view.Center, field);
+
     /// <summary>诊断用：按下时判定的扇区索引（-1 = 不在真实项上，长按不会触发）。</summary>
     internal int PressedIndexForProbe => _pressedIndex;
 

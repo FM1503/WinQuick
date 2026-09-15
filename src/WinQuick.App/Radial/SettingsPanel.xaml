@@ -103,8 +103,11 @@
                       Padding="0,0,2,0">
         <StackPanel Margin="18,14,18,16">
 
-            <!-- 标题栏 -->
-            <Grid>
+            <!-- 标题栏。**它同时是拖动把手**：标题区按住就能把面板拖开。 -->
+            <Grid x:Name="TitleBar" Background="Transparent"
+                  Cursor="SizeAll"
+                  MouseLeftButtonDown="OnTitleBarMouseDown"
+                  ToolTip="按住可拖动面板">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />

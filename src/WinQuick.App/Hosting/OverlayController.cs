@@ -504,6 +504,8 @@ public sealed class OverlayController : IDisposable
         if (_preserveRadialPosition is { } bounds) _radial.PlaceAt(bounds.X, bounds.Y, bounds.Width, bounds.Height);
         else _radial.PlaceAtCursor();
 
+        // 先落定入场起始状态再显示：顺序反了会先闪一帧终态。
+        _radial.PrepareEntrance();
         _radial.Show();
         _radial.ReassertTopmost();
         _radial.PlayEntrance();
@@ -627,6 +629,9 @@ public sealed class OverlayController : IDisposable
         // 为什么必须两遍：布局完成前 ActualHeight 不可靠，按它算出的 top 会让面板底部溢出屏幕，
         // 而溢出的恰恰是最常用的底部按钮 —— 用户就点不到了。
         // （这个溢出是被探针的「面板完整落在屏内」核对抓到的。）
+        // 同上：先落定起始状态，再显示。
+        _settingsPanel.PrepareEntrance();
+
         PositionSettingsPanel();
         _settingsPanel.Show();
         _settingsPanel.UpdateLayout();
@@ -801,11 +806,7 @@ public sealed class OverlayController : IDisposable
         _radial.IsHitTestVisible = true;
     }
 
-    private static bool AnimationsEnabled()
-    {
-        try { return SystemParameters.ClientAreaAnimation; }
-        catch { return true; }
-    }
+    private static bool AnimationsEnabled() => Design.MotionPreference.SystemAllows;
 
     public void Toggle()
     {

@@ -598,6 +598,35 @@ public sealed class RadialWindow : Window
     ///
     /// 系统关掉「在 Windows 中显示动画」（无障碍设置）时全部时长归零 —— 这类偏好必须尊重。
     /// </summary>
+    /// <summary>
+    /// 把入场动画的**起始状态**先落定。必须在 <c>Show()</c> **之前**调用。
+    ///
+    /// 少了这一步，窗口会先以终态渲染一两帧、动画才开始 —— 看起来就是"先闪一下再缩放"。
+    /// 原因是 Show() 之后合成器可能立刻取走一帧，而 BeginAnimation 要到下一帧才生效；
+    /// 于是那一帧画的是还没被动画接管的属性值（终态）。
+    ///
+    /// 程序启动后**首次**唤出时最明显：那一次窗口刚被映射，首帧的取走更早。
+    /// </summary>
+    public void PrepareEntrance()
+    {
+        if (!AnimationsEnabled())
+        {
+            ResetAnimationState();
+            return;
+        }
+
+        // 先清掉可能残留的 HoldEnd（上一轮退场动画留下的），再把起始值写死。
+        _scale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+        _scale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+        _view.Root.BeginAnimation(UIElement.OpacityProperty, null);
+
+        _scale.ScaleX = _scale.ScaleY = _tokens.Motion.EntranceFromScale;
+        _view.Root.Opacity = 0;
+    }
+
+    /// <summary>诊断用：入场起始状态是否已经落定（缩放值, 透明度）。</summary>
+    internal (double Scale, double Opacity) EntranceStateForProbe => (_scale.ScaleX, _view.Root.Opacity);
+
     public void PlayEntrance()
     {
         var motion = _tokens.Motion;
@@ -663,19 +692,7 @@ public sealed class RadialWindow : Window
     /// 是否播放动画。用户显式设了就用他的选择，否则跟随系统
     /// 「在 Windows 中显示动画」的无障碍开关。
     /// </summary>
-    private bool AnimationsEnabled()
-    {
-        if (_animationsOverride is { } explicitValue) return explicitValue;
-
-        try
-        {
-            return SystemParameters.ClientAreaAnimation;
-        }
-        catch
-        {
-            return true;
-        }
-    }
+    private bool AnimationsEnabled() => MotionPreference.IsEnabled(_animationsOverride);
 
     private static KeySpline BuildKeySpline(string easing)
     {

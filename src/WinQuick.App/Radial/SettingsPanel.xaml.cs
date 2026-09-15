@@ -248,6 +248,32 @@ public partial class SettingsPanel : Window
             : $"{DimSlider.Value * 100:0}%";
 
     /// <summary>进入设置时播放与轮盘一致的入场动画，观感上是覆盖层的一部分。</summary>
+    /// <summary>入场动画的起始缩放。Prepare 与 Play 必须用同一个值，所以抽成常量。</summary>
+    private const double EntranceFromScale = 0.94;
+
+    private System.Windows.Media.ScaleTransform? _entranceScale;
+
+    /// <summary>
+    /// 把入场动画的**起始状态**先落定。必须在 <c>Show()</c> **之前**调用 ——
+    /// 否则面板会先以终态渲染一两帧、动画才开始，看起来是"先闪一下再缩放"。
+    /// 详见 <see cref="RadialWindow.PrepareEntrance"/>。
+    /// </summary>
+    public void PrepareEntrance()
+    {
+        if (Content is not FrameworkElement root) return;
+        if (!Design.MotionPreference.SystemAllows) return;   // 不播动画就别预先缩小
+
+        _entranceScale = new System.Windows.Media.ScaleTransform(EntranceFromScale, EntranceFromScale);
+        root.RenderTransformOrigin = new Point(0.5, 0.5);
+        root.RenderTransform = _entranceScale;
+        root.Opacity = 0;
+    }
+
+    /// <summary>诊断用：入场起始状态是否已经落定（缩放值, 透明度）。</summary>
+    internal (double Scale, double Opacity) EntranceStateForProbe =>
+        (Content is FrameworkElement r ? r.RenderTransform is System.Windows.Media.ScaleTransform s ? s.ScaleX : 1.0 : 1.0,
+         Content is FrameworkElement e ? e.Opacity : 1.0);
+
     public void PlayEntrance()
     {
         // 变换必须挂在**根内容元素**上，不能挂在 Window 上：
@@ -261,12 +287,14 @@ public partial class SettingsPanel : Window
         var duration = TokenResources.Get<TimeSpan>("Motion.Duration");
         var spline = TokenResources.Get<KeySpline>("Motion.Easing");
 
-        var scale = new System.Windows.Media.ScaleTransform(0.94, 0.94);
+        // 复用 PrepareEntrance 建好的那个变换：两处各建一个的话，
+        // 显示的起始状态与动画的起点就会是两个不同的对象，改一处忘一处。
+        var scale = _entranceScale ?? new System.Windows.Media.ScaleTransform(EntranceFromScale, EntranceFromScale);
         root.RenderTransformOrigin = new Point(0.5, 0.5);
         root.RenderTransform = scale;
 
         var scaleAnimation = new DoubleAnimationUsingKeyFrames();
-        scaleAnimation.KeyFrames.Add(new LinearDoubleKeyFrame(0.94, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+        scaleAnimation.KeyFrames.Add(new LinearDoubleKeyFrame(EntranceFromScale, KeyTime.FromTimeSpan(TimeSpan.Zero)));
         scaleAnimation.KeyFrames.Add(new SplineDoubleKeyFrame(1.0, KeyTime.FromTimeSpan(duration), spline));
 
         scale.BeginAnimation(System.Windows.Media.ScaleTransform.ScaleXProperty, scaleAnimation);

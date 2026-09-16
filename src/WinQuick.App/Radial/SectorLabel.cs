@@ -166,6 +166,9 @@ internal sealed class SectorLabel
     /// <summary>整体透明度。子弧展开时图标与文字要跟着扇区厚度一起淡入。</summary>
     public void SetOpacity(double opacity) => _clipHost.Opacity = opacity;
 
+    /// <summary>当前透明度。入场要"记录 → 归零 → 原样恢复"，所以得读得到。</summary>
+    public double Opacity => _clipHost.Opacity;
+
     /// <summary>从视觉树上摘掉自己。子弧收起时必须调用，否则不可见的标签会参与渲染遍历。</summary>
     public void Detach()
     {

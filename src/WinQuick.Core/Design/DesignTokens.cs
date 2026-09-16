@@ -75,6 +75,34 @@ public sealed record DesignTokens
             problems.Add($"motion.entranceEasing 无法解析: {Motion.EntranceEasing}");
         if (MotionTokens.TryParseEasing(Motion.ExitEasing, out _) is false)
             problems.Add($"motion.exitEasing 无法解析: {Motion.ExitEasing}");
+        if (MotionTokens.TryParseEasing(Motion.SectorPopEasing, out _) is false)
+            problems.Add($"motion.sectorPopEasing 无法解析: {Motion.SectorPopEasing}");
+
+        // 入场样式只认两个值。写错会静默退回旧样式 —— 那是最难发现的一类问题：
+        // 界面看着"大概还行"，只是新动画从来没生效过。
+        if (Motion.EntranceStyle is not ("sequential-bulge" or "scale-fade"))
+            problems.Add(
+                $"motion.entranceStyle 只能是 sequential-bulge 或 scale-fade，实际: {Motion.EntranceStyle}");
+
+        // 逐格节奏的范围。上下限取的是"明显不合理"的边界，不是审美判断：
+        // 交错太小等于同时全动（就不是"逐格"了），单项时长太大会让整轮拖沓。
+        if (Motion.SectorStaggerMs is < 10 or > 200)
+            problems.Add($"motion.sectorStaggerMs={Motion.SectorStaggerMs} 应在 10~200ms");
+        if (Motion.SectorPopMs is < 60 or > 600)
+            problems.Add($"motion.sectorPopMs={Motion.SectorPopMs} 应在 60~600ms");
+        if (Motion.SectorSweepMaxMs is < 120 or > 1200)
+            problems.Add($"motion.sectorSweepMaxMs={Motion.SectorSweepMaxMs} 应在 120~1200ms");
+        if (Motion.CenterHintMs is < 0 or > 400)
+            problems.Add($"motion.centerHintMs={Motion.CenterHintMs} 应在 0~400ms");
+        if (Motion.ChildStaggerMs is < 10 or > 200)
+            problems.Add($"motion.childStaggerMs={Motion.ChildStaggerMs} 应在 10~200ms");
+        if (Motion.ChildGrowMs is < 40 or > 400)
+            problems.Add($"motion.childGrowMs={Motion.ChildGrowMs} 应在 40~400ms");
+
+        // 整轮上限必须容得下单项时长，否则压缩会把交错压成 0（等于全部同时长）。
+        if (Motion.SectorSweepMaxMs < Motion.SectorPopMs)
+            problems.Add($"motion.sectorSweepMaxMs={Motion.SectorSweepMaxMs} 小于单项时长 " +
+                         $"sectorPopMs={Motion.SectorPopMs}，交错会被压成 0");
 
         // 子环内缘必须给悬停鼓出留出空间。
         // 带子环的扇区恰恰就是被悬停（因此会鼓出）的那个，两者留不出距离就会重叠。
@@ -289,6 +317,40 @@ public sealed record MotionTokens
     public string ChildArcEasing { get; init; } = "cubic-bezier(0,0,0,1)";
 
     public int TopmostReassertMs { get; init; } = 800;
+
+    /// <summary>
+    /// 入场样式：<c>sequential-bulge</c>（从 12 点那格起顺时针逐格鼓出，默认）
+    /// 或 <c>scale-fade</c>（旧版整窗缩放淡入，保留可切）。
+    /// </summary>
+    public string EntranceStyle { get; init; } = "sequential-bulge";
+
+    /// <summary>逐格入场的相邻两项起始间隔。</summary>
+    public int SectorStaggerMs { get; init; } = 55;
+
+    /// <summary>单个扇区从零厚度长到满的时长。</summary>
+    public int SectorPopMs { get; init; } = 190;
+
+    /// <summary>
+    /// 逐格入场的缓动。默认这条带约 6% 的回弹（y&gt;1）—— 观感上的"鼓出来一下"。
+    /// 嫌跳就换回 <c>cubic-bezier(0,0,0,1)</c>，不用改代码。
+    /// </summary>
+    public string SectorPopEasing { get; init; } = "cubic-bezier(0.34,1.56,0.64,1)";
+
+    /// <summary>逐格入场的整轮时长上限；项多时自动压缩交错（见 StaggerReveal.Plan）。</summary>
+    public int SectorSweepMaxMs { get; init; } = 460;
+
+    /// <summary>中心提示（Esc / 完成）的淡入时长。它是交互锚点，所以最先到。</summary>
+    public int CenterHintMs { get; init; } = 120;
+
+    /// <summary>子环逐项长出的相邻间隔。</summary>
+    public int ChildStaggerMs { get; init; } = 45;
+
+    /// <summary>单个子项长出的时长。</summary>
+    public int ChildGrowMs { get; init; } = 150;
+
+    /// <summary>是否用逐格鼓出这种入场（否则退回整窗缩放淡入）。</summary>
+    public bool SequentialEntrance =>
+        string.Equals(EntranceStyle, "sequential-bulge", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// 解析 CSS 的三次贝塞尔语法 <c>cubic-bezier(x1,y1,x2,y2)</c>。

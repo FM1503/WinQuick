@@ -905,6 +905,15 @@ public sealed class OverlayController : IDisposable
         + $" + 子弧 {Radial.ChildArcAnimator.ActiveHookCount}"
         + $" + 几何压力 {Radial.RadialRingView.ActiveStressHookCount}";
 
+    /// <summary>诊断用：某格当前的逐格入场进度。</summary>
+    internal double EntranceRevealForProbe(int index) => _radial.EntranceRevealForProbe(index);
+
+    internal bool IsEntranceAnimatingForProbe => _radial.IsEntranceAnimatingForProbe;
+
+    internal double EntranceStartDelayForProbe(int index) => _radial.EntranceStartDelayForProbe(index);
+
+    internal double CenterHintRevealForProbe => _radial.CenterHintRevealForProbe;
+
     /// <summary>诊断用：轮盘入场状态（缩放, 不透明度）的读取器。
     /// 返回读取器而不是值，是因为必须在 UI 线程上读、而且要**逐帧**读。</summary>
     internal Func<(double Scale, double Opacity)> RadialEntranceStateForProbe =>

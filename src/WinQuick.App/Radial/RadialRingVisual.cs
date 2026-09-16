@@ -39,7 +39,17 @@ public sealed partial class RadialRingView
     private readonly SectorLabel[] _labels;
     private readonly Image[] _icons;
     private readonly ShapePath?[] _childMarkers;
-    private readonly SectorBulgeAnimator _bulge;
+    /// <summary>
+    /// 悬停鼓出。**在视图构造之后立刻由 Build 补上** —— 它的回调要指向视图的几何写入点
+    /// （内缘不动、外缘 = 基准外缘按入场进度拉开 + 鼓出），而那个写入点是视图的方法，
+    /// 两者互相依赖（子弧那边也是这么建的）。
+    /// </summary>
+    private SectorBulgeAnimator _bulge = null!;
+
+    /// <summary>冻结的基准几何（无鼓出、入场已落定的样子）。静止时直接复用它，逐像素可复现。</summary>
+    private readonly PathGeometry[] _baseGeometry;
+
+    /// <summary>
     private readonly MenuSpec _menu;
     private int _hover = -1;
 
@@ -73,8 +83,9 @@ public sealed partial class RadialRingView
 
     internal RadialRingView(
         Canvas root, DesignTokens tokens, Point center, SectorSpan[] spans,
-        ShapePath[] sectors, SectorLabel[] labels, Image[] icons, ShapePath?[] childMarkers,
-        SectorBulgeAnimator bulge, MenuSpec menu)
+        ShapePath[] sectors, PathGeometry[] baseGeometry,
+        SectorLabel[] labels, Image[] icons, ShapePath?[] childMarkers,
+        MenuSpec menu)
     {
         Root = root;
         _menu = menu;
@@ -82,10 +93,10 @@ public sealed partial class RadialRingView
         _center = center;
         _spans = spans;
         _sectors = sectors;
+        _baseGeometry = baseGeometry;
         _labels = labels;
         _icons = icons;
         _childMarkers = childMarkers;
-        _bulge = bulge;
     }
 
     /// <summary>视觉根。类型是 Canvas 而不是 FrameworkElement —— 子弧需要往它里面增删图形。</summary>
@@ -368,29 +379,59 @@ public sealed partial class RadialRingView
         TextBlock escHint = AddText(root, center, 0, 0, editMode ? "完成" : "Esc",
             TokenBrushes.Brush(colors.Hint, colors.HintAlpha), tokens.Typography.HintFontSize);
 
-        // 一级的鼓出几何写在这里：内缘（死区）不动，外缘向外扩 bulge 像素。
-        // 鼓出接近 0 时直接用冻结的基准几何 —— 动画落定时走这条，
-        // 不必为"没有形变"的扇区重建几何。
-        var bulge = new SectorBulgeAnimator(
-            count,
-            writeGeometry: (i, bulgePx) =>
-            {
-                sectors[i].Data = bulgePx < 0.05
-                    ? baseGeometry[i]
-                    : SectorGeometry.RingSector(
-                        center, radius.DeadZone, radius.Ring1Outer + bulgePx,
-                        spans[i].StartDeg + radius.SectorGapDegrees,
-                        spans[i].EndDeg - radius.SectorGapDegrees);
-            },
-            tokens.Motion.HoverBulgePx, tokens.Motion.EntranceEasing, tokens.Motion.HoverBulgeMs);
-
-        return new RadialRingView(
-            root, tokens, center, spans, sectors, labels, icons, childMarkers, bulge, menu)
+        var view = new RadialRingView(
+            root, tokens, center, spans, sectors, baseGeometry, labels, icons, childMarkers, menu)
         {
             AddSectorIndex = addIndex,
             EditMode = editMode,
             _escHint = escHint,
         };
+
+        // 鼓出动画器在视图建好之后才建：它的回调必须指向视图的几何写入点
+        //（那里把悬停鼓出与逐格入场进度合成在一处，见 WriteRingSectorGeometry）。
+        view._bulge = new SectorBulgeAnimator(
+            count, view.WriteRingSectorGeometry,
+            tokens.Motion.HoverBulgePx, tokens.Motion.EntranceEasing, tokens.Motion.HoverBulgeMs);
+
+        return view;
+    }
+
+    /// <summary>
+    /// **环上几何的唯一写入点**：内缘（死区）不动，外缘 = 基准外缘按入场进度拉开 + 鼓出量。
+    ///
+    /// 合成放在一处是必须的：入场与悬停形变是两条独立的逐帧回调，谁都能在任何一帧动同一个
+    /// 扇区 —— 各写各的，后写的就把前一个的效果抹掉了（子环那边有同一个坑的注释）。
+    ///
+    /// 静止时（进度 1、无鼓出）直接用**冻结的基准几何**：既省下每帧重建，
+    /// 也让"动画结束后与静止态逐像素相同"这条不变量成立（--perf-probe 锁着它）。
+    /// </summary>
+    private void WriteRingSectorGeometry(int index, double bulgePx)
+    {
+        if (index < 0 || index >= _sectors.Length) return;
+
+        var reveal = RevealOf(index);
+        if (reveal >= 1.0 - 1e-6 && bulgePx < 0.05)
+        {
+            _sectors[index].Data = _baseGeometry[index];
+            return;
+        }
+
+        var radius = _tokens.Radius;
+        var span = _spans[index];
+        var outer = radius.DeadZone
+                  + (radius.Ring1Outer - radius.DeadZone) * reveal
+                  + bulgePx;
+
+        // 走 RingSector（新建 + 冻结）而**不是**就地改。
+        //
+        // 试过就地改（同一个 PathGeometry 逐帧改点，省下每帧 5 个对象的分配）：分配降了约 15%，
+        // 但帧分布没有可测差异（8/14/11 对 13/15/13，在噪声内），而可变的几何与冻结几何的
+        // 光栅化结果不一致（亚像素级）—— 于是"换菜单后画面与之前逐像素相同"这类判据会间歇变红。
+        // 收益测不出来、代价是像素不可复现、还多了一种几何形态，所以回退。
+        _sectors[index].Data = SectorGeometry.RingSector(
+            _center, radius.DeadZone, Math.Max(radius.DeadZone, outer),
+            span.StartDeg + radius.SectorGapDegrees,
+            span.EndDeg - radius.SectorGapDegrees);
     }
 
     /// <summary>

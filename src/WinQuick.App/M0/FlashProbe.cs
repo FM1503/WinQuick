@@ -490,6 +490,90 @@ public static class FlashProbe
                 }
             }
 
+            // ---- 逐格入场：顺序、结束态、逐像素不变量 -----------------------
+            // 用户指定的入场：从 12 点那格（索引 0）起顺时针逐格鼓出。
+            // 三件事必须一起核：顺序对不对、结束态干不干净、**结束后画面是否与静止态逐像素相同**
+            //（"长完之后差一点点"是这类动画最典型也最难发现的 bug：不报错，只是看着有点歪）。
+            if (regions.FirstOrDefault(r => r.Name == "轮盘区") is { } entranceRegion)
+            {
+                ProbeOutput.Section("逐格入场（从 12 点那格起）");
+
+                overlay.CloseSettings();
+                await Task.Delay(500);
+                overlay.Show();
+                await Task.Delay(1400);            // 入场走完、画面静下来
+
+                using var sampler = new ScreenSampler(
+                    entranceRegion.X, entranceRegion.Y, entranceRegion.W, entranceRegion.H);
+                var resting = sampler.CaptureFrame();
+
+                // 顺序的证据：入场过程中逐帧读每一格的进度。
+                // 读的是**应用侧**的状态而不是像素 —— 像素只能说明"变了多少"，
+                // 说不出"是哪一格先动的"。
+                var frames = new List<double[]>();
+                var timer = new System.Windows.Threading.DispatcherTimer(
+                    System.Windows.Threading.DispatcherPriority.Render)
+                {
+                    Interval = TimeSpan.FromMilliseconds(8),
+                };
+
+                timer.Tick += (_, _) =>
+                {
+                    var row = new double[overlay.SectorCountForProbe];
+                    for (var i = 0; i < row.Length; i++) row[i] = overlay.EntranceRevealForProbe(i);
+                    frames.Add(row);
+                };
+
+                overlay.Hide();
+                await Task.Delay(600);
+
+                timer.Start();
+                overlay.Show();
+                await Task.Delay(1100);
+                timer.Stop();
+
+                await Task.Delay(500);
+                var after = sampler.CaptureFrame();
+                var (diff, changed, _, _, _, _) = ScreenSampler.CompareDetailed(
+                    resting, after, sampler.Width, sampler.Height);
+
+                // 最先动起来的是哪一格
+                var firstMover = -1;
+                foreach (var row in frames)
+                {
+                    var maxIndex = -1;
+                    var maxValue = 0.0;
+                    for (var i = 0; i < row.Length; i++)
+                    {
+                        if (row[i] > maxValue) { maxValue = row[i]; maxIndex = i; }
+                    }
+
+                    if (maxValue > 0.05) { firstMover = maxIndex; break; }
+                }
+
+                var counts = overlay.SectorCountForProbe;
+                var delays = Enumerable.Range(0, counts).Select(overlay.EntranceStartDelayForProbe).ToList();
+                var monotone = delays.Zip(delays.Skip(1), (a, b) => b >= a - 1e-9).All(ok => ok);
+                var allAtRest = Enumerable.Range(0, counts)
+                    .All(i => overlay.EntranceRevealForProbe(i) >= 1.0 - 1e-6);
+                var stillAnimating = overlay.IsEntranceAnimatingForProbe;
+
+                ProbeOutput.Kv("起始延迟（毫秒，按索引）", string.Join(" ", delays.Select(d => $"{d:0}")));
+                ProbeOutput.Kv("最先动起来的扇区", firstMover >= 0 ? $"索引 {firstMover}" : "（没采到）");
+                ProbeOutput.Kv("结束后是否全部落定 / 是否仍在动画", $"{allAtRest} / {stillAnimating}");
+                ProbeOutput.Kv("结束后与静止态的差异", $"差 {diff}，变化像素 {changed}");
+                ProbeOutput.Kv("回调残留", OverlayController.HookCountsForProbe);
+
+                results.Add(("逐格入场的顺序：起始延迟随索引递增（＝从 12 点顺时针）",
+                    monotone, string.Join(" ", delays.Select(d => $"{d:0}"))));
+                results.Add(("最先动起来的是索引 0（12 点那格）",
+                    firstMover == 0, firstMover >= 0 ? $"索引 {firstMover}" : "没采到"));
+                results.Add(("入场结束后每格都落定、且已不在动画中",
+                    allAtRest && !stillAnimating, $"落定={allAtRest}，仍在动画={stillAnimating}"));
+                results.Add(("入场结束后轮盘与静止态逐像素相同",
+                    diff < 50_000, $"差 {diff}，变化像素 {changed}"));
+            }
+
             // ---- 实验五：加一项 —— 文件对话框的进出 -------------------------
             if (exposed is { } band)
             {

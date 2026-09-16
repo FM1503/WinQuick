@@ -641,9 +641,29 @@ public sealed class RadialWindow : Window
         _scale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
         _view.Root.BeginAnimation(UIElement.OpacityProperty, null);
 
+        if (_tokens.Motion.SequentialEntrance)
+        {
+            // 逐格入场：窗口整体立刻在场，只有环在逐格长出来。
+            // 起始状态落定在**视图**上（每格零厚度、图标文字透明）；
+            // 窗口层的不透明度必须留 1，否则会连"还没长出来的那几格"一起淡入。
+            _scale.ScaleX = _scale.ScaleY = 1.0;
+            _view.Root.Opacity = 1.0;
+            _view.PrepareEntrance();
+            return;
+        }
+
         _scale.ScaleX = _scale.ScaleY = _tokens.Motion.EntranceFromScale;
         _view.Root.Opacity = 0;
     }
+
+    /// <summary>诊断用：某格当前的逐格入场进度（0 = 还没长出来）。</summary>
+    internal double EntranceRevealForProbe(int index) => _view.EntranceRevealOf(index);
+
+    internal bool IsEntranceAnimatingForProbe => _view.IsEntranceAnimating;
+
+    internal double EntranceStartDelayForProbe(int index) => _view.EntranceStartDelayOf(index);
+
+    internal double CenterHintRevealForProbe => _view.CenterHintReveal;
 
     /// <summary>诊断用：入场起始状态是否已经落定（缩放值, 透明度）。</summary>
     internal (double Scale, double Opacity) EntranceStateForProbe => (_scale.ScaleX, _view.Root.Opacity);
@@ -656,6 +676,12 @@ public sealed class RadialWindow : Window
         if (!AnimationsEnabled())
         {
             ResetAnimationState();
+            return;
+        }
+
+        if (motion.SequentialEntrance)
+        {
+            _view.PlaySequentialEntrance();
             return;
         }
 
@@ -707,6 +733,10 @@ public sealed class RadialWindow : Window
         _view.Root.BeginAnimation(UIElement.OpacityProperty, null);
         _scale.ScaleX = _scale.ScaleY = 1.0;
         _view.Root.Opacity = 1.0;
+
+        // 逐格入场的状态在**视图**上（扇区几何 + 图标文字透明度），也要一起复位：
+        // 否则"隐藏 → 再唤出"之间会留着上一轮长到一半的圆盘。
+        _view.CompleteEntranceImmediate();
     }
 
     /// <summary>

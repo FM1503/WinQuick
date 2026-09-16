@@ -558,8 +558,14 @@ public sealed class OverlayController : IDisposable
         // 2）**窗口映射那一帧本身要 30~50ms**（实测，且与动画无关：整窗缩放同样如此）。
         //    若动画从那一刻起跑，最开始的几帧就会卡一下。
         // 而那一帧轮盘还是空的（起始状态已落定），等它过去再开始长，观感反而连续。
+        // 直接排到下一批就起跑，**不再等"第一帧合成过去"**。
+        //
+        // 那一等本来是躲"窗口映射那一帧（30~60ms）"的：动画若与它挤在一起，开头会卡一下。
+        // 现在窗口改成停放（Park）之后不再卸载/重新映射，那一帧小多了；而这一等
+        // 每次唤出都要花掉 16~30ms —— 用户反馈"太拖沓"，这 30ms 就是白等的。
+        // 代价：若线程在起跑后仍忙一阵，第一格的进度会略微超出（其余各格不受影响）。
         _radial.Dispatcher.BeginInvoke(
-            DispatcherPriority.Loaded, new Action(StartEntranceAfterFirstFrame));
+            DispatcherPriority.Loaded, new Action(() => _radial.PlayEntrance()));
 
         // 操作条晚一步再显示：它是角落里的次要控件，而显示这一帧已经背着
         // 窗口映射、首次呈现、遮罩与 z 序的活。挪到下一批（Loaded 优先级）

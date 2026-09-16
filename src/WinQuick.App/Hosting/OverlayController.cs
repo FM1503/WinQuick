@@ -536,12 +536,20 @@ public sealed class OverlayController : IDisposable
 
         foreach (var dim in _dims) dim.Show();
 
-        // 先摆位置再让 WPF 显示 —— 顺序反了会先在旧位置闪一帧。
+        // **先把入场起始状态落定，再摆位置。**
+        //
+        // 窗口现在是"停放"（保持映射）而不是卸载的 —— 它身上留着上一轮结束时的画面
+        // （静止的完整圆盘）。所以一旦挪到屏上，那幅画面立刻可见；若先挪位置再清空，
+        // 合成器就能在这两步之间取走一帧，用户看到的是"先出现一个完整圆盘，
+        // 然后它才消失、重新逐格长出来" —— 用户报的正是这个。
+        //
+        // 顺序对调之后：清空发生在窗口还在屏幕外的时候，谁看不见；等它挪回屏上时
+        // 第一帧已经是"空的"（全部零厚度、透明度 0），随后的逐格长出才是可见的第一印象。
+        _radial.PrepareEntrance();
+
         if (_preserveRadialPosition is { } bounds) _radial.PlaceAt(bounds.X, bounds.Y, bounds.Width, bounds.Height);
         else _radial.PlaceAtCursor();
 
-        // 先落定入场起始状态再显示：顺序反了会先闪一帧终态。
-        _radial.PrepareEntrance();
         _radial.Show();
 
         // **一次整栈批量重申**，而不是每个窗口各发一串 SetWindowPos。
@@ -879,6 +887,10 @@ public sealed class OverlayController : IDisposable
         _radial.ResetAnimationState();
         _radial.ResetInteraction();
         _radial.IsHitTestVisible = true;
+
+        // 最后把环清空：休眠中的窗口里装着"空的环"，这样下次把它挪回屏上时
+        // 不可能露出上一轮的完整圆盘（分层窗口显示的是上一次提交的位图）。
+        _radial.ClearForDormancy();
     }
 
     private static bool AnimationsEnabled() => Design.MotionPreference.SystemAllows;

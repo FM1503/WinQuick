@@ -520,6 +520,11 @@ public static class FlashProbe
                 // 同时记下**最后一个扇区**的进度与它的分组箭头透明度：
                 // 用户报的 bug 正是"圆盘还在长，有子项的扇区上那支箭头已经亮了"。
                 var markerFrames = new List<(double Reveal, double Marker)>();
+
+                // 同时采一帧像素：用来核"轮盘出现的第一帧不能已经是终态"。
+                // 只看应用侧状态抓不到这个 bug —— 它是**渲染**出来的旧画面
+                //（窗口改为停放到屏幕外之后，挪回屏上的一瞬间会露出上一轮的完整圆盘）。
+                var pixelFrames = new List<(double MaxReveal, long DiffVsResting)>();
                 var lastIndex = overlay.SectorCountForProbe - 1;
 
                 timer.Tick += (_, _) =>
@@ -529,6 +534,11 @@ public static class FlashProbe
                     frames.Add(row);
 
                     markerFrames.Add((row[lastIndex], overlay.MarkerOpacityForProbe(lastIndex)));
+
+                    var frame = sampler.CaptureFrame();
+                    var (pixelDiff, _, _, _, _, _) = ScreenSampler.CompareDetailed(
+                        resting, frame, sampler.Width, sampler.Height);
+                    pixelFrames.Add((row.Max(), pixelDiff));
                 };
 
                 overlay.Hide();
@@ -579,6 +589,21 @@ public static class FlashProbe
                     allAtRest && !stillAnimating, $"落定={allAtRest}，仍在动画={stillAnimating}"));
                 results.Add(("入场结束后轮盘与静止态逐像素相同",
                     diff < 50_000, $"差 {diff}，变化像素 {changed}"));
+
+                // **轮盘出现的第一帧不能已经是终态。**
+                // 判据：在入场还没怎么推进时（最高进度 < 0.5），画面必须与"静止的完整圆盘"
+                // 明显不同 —— 相同就说明渲染出来的是上一轮留下的终态，动画在其后才开始。
+                var staleFrames = pixelFrames
+                    .Where(f => f.MaxReveal < 0.5 && f.DiffVsResting < 50_000)
+                    .ToList();
+
+                ProbeOutput.Kv("入场早期是否有「已经是终态」的帧",
+                    staleFrames.Count == 0
+                        ? "没有（正确）"
+                        : $"有 {staleFrames.Count} 帧（最高进度 {staleFrames.Min(f => f.MaxReveal):0.##}）");
+
+                results.Add(("轮盘出现的第一帧不是终态（不会先闪一个完整圆盘）",
+                    staleFrames.Count == 0, $"疑似终态的帧数 {staleFrames.Count}"));
 
                 // 分组箭头必须跟着自己那一格：在该格还没长出来时，箭头不得可见。
                 var leakedAt = markerFrames

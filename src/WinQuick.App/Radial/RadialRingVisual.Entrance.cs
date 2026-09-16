@@ -58,11 +58,18 @@ public sealed partial class RadialRingView
         _reveal = new double[_sectors.Length];
         for (var i = 0; i < _sectors.Length; i++) WriteRingSectorGeometry(i, 0);
 
-        _iconOpacityBefore = _icons.Select(icon => icon.Opacity).ToArray();
-        _labelOpacityBefore = _labels.Select(label => label.Opacity).ToArray();
-        _markerOpacityBefore = _childMarkers
-            .Select(marker => marker?.Opacity ?? 0)
-            .ToArray();
+        // **只在还没有记录过的时候记录。**
+        // 休眠时也会调用本方法（让停在屏幕外的窗口里装着"空的环"），
+        // 若无条件记录，第二次会把"刚被清零的值"记成原值 —— 于是入场结束后
+        // 图标与文字会保持全透明。记录一直保留到 RestoreRestingVisuals 收尾。
+        if (_iconOpacityBefore.Length != _icons.Length)
+        {
+            _iconOpacityBefore = _icons.Select(icon => icon.Opacity).ToArray();
+            _labelOpacityBefore = _labels.Select(label => label.Opacity).ToArray();
+            _markerOpacityBefore = _childMarkers
+                .Select(marker => marker?.Opacity ?? 0)
+                .ToArray();
+        }
 
         for (var i = 0; i < _icons.Length; i++) _icons[i].Opacity = 0;
         for (var i = 0; i < _labels.Length; i++) _labels[i].SetOpacity(0);

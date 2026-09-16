@@ -618,6 +618,19 @@ public sealed class RadialWindow : Window
     private const int ParkedX = -32000;
     private const int ParkedY = -32000;
 
+    /// <summary>
+    /// 让休眠中的窗口里装着**空的环**（而不是静止的完整圆盘）。
+    ///
+    /// 为什么必须这样：分层窗口在屏幕上显示的是**上一次提交的那张位图**。
+    /// 清空视觉树只是"标脏"——真正重绘要等下一个渲染帧。所以在它重绘之前把窗口
+    /// 挪回屏上，露出的仍是上一轮留下的完整圆盘：用户看到的就是
+    /// "先出现一个完整圆盘，然后它才消失、重新逐格长出来"（实测确实抓到 1 帧）。
+    ///
+    /// 而在休眠期间清空则完全没有时序问题：从休眠到下次唤出至少隔几十毫秒，
+    /// 那次重绘早就提交了；等下次把窗口挪回屏上时，位图里本来就是空的。
+    /// </summary>
+    public void ClearForDormancy() => _view.PrepareEntrance();
+
     public void StopInteraction()
     {
         _pointerPoll.Stop();

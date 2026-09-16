@@ -517,11 +517,18 @@ public static class FlashProbe
                     Interval = TimeSpan.FromMilliseconds(8),
                 };
 
+                // 同时记下**最后一个扇区**的进度与它的分组箭头透明度：
+                // 用户报的 bug 正是"圆盘还在长，有子项的扇区上那支箭头已经亮了"。
+                var markerFrames = new List<(double Reveal, double Marker)>();
+                var lastIndex = overlay.SectorCountForProbe - 1;
+
                 timer.Tick += (_, _) =>
                 {
                     var row = new double[overlay.SectorCountForProbe];
                     for (var i = 0; i < row.Length; i++) row[i] = overlay.EntranceRevealForProbe(i);
                     frames.Add(row);
+
+                    markerFrames.Add((row[lastIndex], overlay.MarkerOpacityForProbe(lastIndex)));
                 };
 
                 overlay.Hide();
@@ -572,6 +579,21 @@ public static class FlashProbe
                     allAtRest && !stillAnimating, $"落定={allAtRest}，仍在动画={stillAnimating}"));
                 results.Add(("入场结束后轮盘与静止态逐像素相同",
                     diff < 50_000, $"差 {diff}，变化像素 {changed}"));
+
+                // 分组箭头必须跟着自己那一格：在该格还没长出来时，箭头不得可见。
+                var leakedAt = markerFrames
+                    .Where(f => f.Reveal < 0.05 && f.Marker > 0.05)
+                    .ToList();
+                var markerAtRest = overlay.MarkerOpacityForProbe(lastIndex);
+
+                ProbeOutput.Kv("最后一格未长出来时箭头是否已可见",
+                    leakedAt.Count == 0 ? "否（正确）" : $"是（{leakedAt.Count} 帧，透明度最高 {leakedAt.Max(f => f.Marker):0.##}）");
+                ProbeOutput.Kv("结束后的箭头透明度", $"{markerAtRest:0.##}");
+
+                results.Add(("分组箭头不会在所属扇区长出来之前显示",
+                    leakedAt.Count == 0, $"提前可见的帧数 {leakedAt.Count}"));
+                results.Add(("入场结束后箭头透明度回到原值",
+                    markerAtRest >= 0 && markerAtRest > 0.9, $"结束态 {markerAtRest:0.##}"));
             }
 
             // ---- 实验五：加一项 —— 文件对话框的进出 -------------------------

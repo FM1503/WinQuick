@@ -23,12 +23,13 @@ public sealed partial class RadialRingView
     private double _centerHintReveal = 1;
 
     /// <summary>
-    /// 入场前图标与文字各自的透明度。**记录而不是套常量**：静止态的那个值依赖历史 ——
-    /// 刚建好的环图标是 1.0，悬停过一次之后就变成 0.94（ApplySectorStyle 里那个非悬停值）。
-    /// 套常量必然在两种历史下错一种，表现是"入场结束后图标比以前亮/暗一点点"。
+    /// 入场前图标、文字、以及分组箭头各自的透明度。**记录而不是套常量**：静止态的那个值
+    /// 依赖历史 —— 刚建好的环图标是 1.0，悬停过一次之后就变成 0.94（ApplySectorStyle 里
+    /// 那个非悬停值）。套常量必然在两种历史下错一种，表现是"入场结束后比以前亮/暗一点点"。
     /// </summary>
     private double[] _iconOpacityBefore = [];
     private double[] _labelOpacityBefore = [];
+    private double[] _markerOpacityBefore = [];
 
     /// <summary>诊断用：某格当前的入场进度（0 = 还没长出来，1 = 已落定）。</summary>
     internal double EntranceRevealOf(int index) => RevealOf(index);
@@ -59,9 +60,18 @@ public sealed partial class RadialRingView
 
         _iconOpacityBefore = _icons.Select(icon => icon.Opacity).ToArray();
         _labelOpacityBefore = _labels.Select(label => label.Opacity).ToArray();
+        _markerOpacityBefore = _childMarkers
+            .Select(marker => marker?.Opacity ?? 0)
+            .ToArray();
 
         for (var i = 0; i < _icons.Length; i++) _icons[i].Opacity = 0;
         for (var i = 0; i < _labels.Length; i++) _labels[i].SetOpacity(0);
+        for (var i = 0; i < _childMarkers.Length; i++)
+        {
+            // **分组箭头必须跟着自己那一格出现。** 漏掉它的表现是：圆盘还在逐格长，
+            // 有子项的扇区上那支箭头却已经全亮着 —— 用户一眼就看出来了。
+            if (_childMarkers[i] is { } marker) marker.Opacity = 0;
+        }
 
         _escHint.Opacity = 0;
         _centerHintReveal = 0;
@@ -96,6 +106,7 @@ public sealed partial class RadialRingView
 
         _iconOpacityBefore = [];
         _labelOpacityBefore = [];
+        _markerOpacityBefore = [];
 
         _centerHintReveal = 1;
         _escHint.Opacity = 1;
@@ -121,6 +132,9 @@ public sealed partial class RadialRingView
         var opacity = Math.Clamp(progress, 0, 1);
         if (index < _icons.Length) _icons[index].Opacity = opacity * OriginalIconOpacity(index);
         if (index < _labels.Length) _labels[index].SetOpacity(opacity * OriginalLabelOpacity(index));
+
+        if (index < _childMarkers.Length && _childMarkers[index] is { } marker)
+            marker.Opacity = opacity * OriginalMarkerOpacity(index);
     }
 
     /// <summary>中心提示是交互锚点，要在最前面淡入，不参与逐格序列。</summary>
@@ -140,6 +154,12 @@ public sealed partial class RadialRingView
         RestoreRestingVisuals();
     }
 
+    /// <summary>诊断用：某个扇区分组箭头当前的透明度（-1 = 该项没有子项）。</summary>
+    internal double MarkerOpacityForProbe(int index) =>
+        index >= 0 && index < _childMarkers.Length && _childMarkers[index] is { } marker
+            ? marker.Opacity
+            : -1;
+
     /// <summary>诊断用：入场前的图标透明度快照（核对"原样恢复"）。</summary>
     internal double IconOpacityBeforeEntrance(int index) => OriginalIconOpacity(index);
 
@@ -156,7 +176,15 @@ public sealed partial class RadialRingView
 
         for (var i = 0; i < _labels.Length; i++)
             _labels[i].SetOpacity(OriginalLabelOpacity(i));
+
+        for (var i = 0; i < _childMarkers.Length; i++)
+        {
+            if (_childMarkers[i] is { } marker) marker.Opacity = OriginalMarkerOpacity(i);
+        }
     }
+
+    private double OriginalMarkerOpacity(int index) =>
+        _markerOpacityBefore.Length == _childMarkers.Length ? _markerOpacityBefore[index] : 1.0;
 
     private double OriginalIconOpacity(int index) =>
         _iconOpacityBefore.Length == _icons.Length ? _iconOpacityBefore[index] : _icons[index].Opacity;

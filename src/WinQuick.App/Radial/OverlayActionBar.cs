@@ -172,6 +172,22 @@ public sealed class OverlayActionBar : Window
     }
 
     /// <summary>摆到光标所在屏的左上角。物理像素计算，避免 DIP 换算误差。</summary>
+    /// <summary>
+    /// 休眠：停到屏幕外，**不 Hide**（理由同轮盘窗口：卸载会让下次显示付一次窗口映射）。
+    /// 显示时由 PlaceAtMonitorCorner 重新摆回屏上（它末尾有 SetWindowPos），
+    /// 所以这里不需要记住位置。
+    /// </summary>
+    public void Park()
+    {
+        if (!IsVisible) return;
+
+        PInvoke.SetWindowPos((HWND)HandleValue, default, -32000, -32000, 0, 0,
+            SET_WINDOW_POS_FLAGS.SWP_NOSIZE |
+            SET_WINDOW_POS_FLAGS.SWP_NOZORDER |
+            SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE |
+            SET_WINDOW_POS_FLAGS.SWP_NOOWNERZORDER);
+    }
+
     public void PlaceAtMonitorCorner()
     {
         ApplyExtendedStyles();

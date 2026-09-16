@@ -167,9 +167,18 @@ public sealed class RawDimWindow : IDisposable
         return PInvoke.DefWindowProc(hwnd, msg, wParam, lParam);
     }
 
+    private bool _parked;
+    private (int X, int Y, int Width, int Height)? _bounds;
+
+    /// <summary>休眠时停放的坐标。取一个任何显示器布局都到不了的位置。</summary>
+    private const int ParkedX = -32000;
+    private const int ParkedY = -32000;
+
     public void SetPhysicalBounds(int x, int y, int width, int height)
     {
         if (!IsValid) return;
+
+        _bounds = (x, y, width, height);
         SurfaceOps.SetWindowPos("遮罩摆位");
         PInvoke.SetWindowPos(_hwnd, default, x, y, width, height,
             SET_WINDOW_POS_FLAGS.SWP_NOZORDER |
@@ -177,8 +186,38 @@ public sealed class RawDimWindow : IDisposable
             SET_WINDOW_POS_FLAGS.SWP_NOOWNERZORDER);
     }
 
-    public void Show() => ShowOrHide(true);
-    public void Hide() => ShowOrHide(false);
+    public void Show()
+    {
+        SurfaceOps.DimVisible();
+
+        // 已显示时 ShowWindow 是空操作，成本可忽略；这里不省它，是为了第一次显示仍走正常路径。
+        ShowOrHide(true);
+
+        if (!_parked) return;
+
+        // 回到原来的位置即重新参与合成 —— 比"卸载再映射"快得多（全屏映射是几十毫秒级）。
+        _parked = false;
+        if (_bounds is { } b) SetPhysicalBounds(b.X, b.Y, b.Width, b.Height);
+    }
+
+    /// <summary>
+    /// 休眠：停到屏幕外，**不 Hide**。
+    ///
+    /// 全屏分层窗口的卸载与重新映射是每次唤出都要付的一笔（实测那几帧 30~60ms 里
+    /// 有它一份，与动画无关）。挪到屏幕外的视觉效果一样（遮罩消失），成本几乎为零。
+    /// </summary>
+    public void Hide()
+    {
+        SurfaceOps.DimVisible();
+        if (!IsValid) return;
+
+        _parked = true;
+        PInvoke.SetWindowPos(_hwnd, default, ParkedX, ParkedY, 0, 0,
+            SET_WINDOW_POS_FLAGS.SWP_NOSIZE |
+            SET_WINDOW_POS_FLAGS.SWP_NOZORDER |
+            SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE |
+            SET_WINDOW_POS_FLAGS.SWP_NOOWNERZORDER);
+    }
 
     private void ShowOrHide(bool visible)
     {

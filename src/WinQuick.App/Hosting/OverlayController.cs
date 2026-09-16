@@ -1,5 +1,6 @@
 ﻿using System.Windows;
 using System.Windows.Interop;
+using System.Windows.Media;
 using System.Windows.Threading;
 using WinQuick.App.Design;
 using WinQuick.App.Diagnostics;
@@ -109,7 +110,10 @@ public sealed class OverlayController : IDisposable
         // 设置面板盖住操作条，操作条盖住轮盘，轮盘盖住遮罩。
         _zOrder.AddLayer("设置面板", () => _settingsPanel is { IsVisible: true } ? [_settingsPanel.HandleValue] : []);
         _zOrder.AddLayer("操作条", () => _actionBar.IsVisible ? [_actionBar.HandleValue] : []);
-        _zOrder.AddLayer("轮盘", () => _radial.IsVisible ? [_radial.HandleValue] : []);
+        // 看覆盖层自己的逻辑状态，**不看 _radial.IsVisible** ——
+        // 休眠（Park）期间窗口仍是"可见"的（只是停在屏幕外），按可见性判断会把它
+        // 一直算进 z 序栈里。
+        _zOrder.AddLayer("轮盘", () => IsVisible ? [_radial.HandleValue] : []);
         _zOrder.AddLayer("遮罩", () => _dims.Where(d => d.IsValid).Select(d => d.HandleValue).ToList());
 
         // 设置改为开在覆盖层会话里（面板与轮盘同时在场），所以这里不再收掉覆盖层 ——
@@ -186,6 +190,33 @@ public sealed class OverlayController : IDisposable
             SetTopmostInterval(TopmostReassertInterval);
         }
     }
+
+    /// <summary>等第一帧合成过去之后再放入场动画。</summary>
+    private void StartEntranceAfterFirstFrame()
+    {
+        // 回调**必须挂在一个字段上**：CompositionTarget.Rendering 是静态事件，
+        // 用局部闭包挂上去、又没有渲染发生的话，它会一直留在那儿（这个坑本项目踩过）。
+        if (_pendingEntranceStart is null)
+        {
+            _pendingEntranceStart = (_, _) =>
+            {
+                if (_pendingEntranceStart is null) return;
+                CompositionTarget.Rendering -= _pendingEntranceStart;
+                _pendingEntranceStart = null;
+
+                if (!IsVisible) return;    // 期间被关掉了就别再放了
+
+                // 排到下一批：这样动画的第一帧落在**下一个**渲染帧上，
+                // 而不是与刚过去的那一帧（映射那一帧）挤在一起。
+                _radial.Dispatcher.BeginInvoke(
+                    DispatcherPriority.Loaded, new Action(() => _radial.PlayEntrance()));
+            };
+        }
+
+        CompositionTarget.Rendering += _pendingEntranceStart;
+    }
+
+    private EventHandler? _pendingEntranceStart;
 
     /// <summary>同时打开的系统对话框层数（正常只可能是 0 或 1）。</summary>
     private int _modalDialogDepth;
@@ -457,8 +488,17 @@ public sealed class OverlayController : IDisposable
         _radial.Left = -32000;
         _radial.Top = -32000;
         _radial.Show();
-        _radial.Hide();
+        _radial.Park();          // 首次映射的成本留在启动时，别留给第一次唤出
         _radial.ShowActivated = true;
+
+        // 操作条同样先渲染一次：它的首次映射（创建渲染目标、量文字）否则会落在
+        // 显示那一刻 —— 而那正是全流程最拥挤的一帧（见 Show 里的说明）。
+        _actionBar.ShowActivated = false;
+        _actionBar.Left = -32000;
+        _actionBar.Top = -32000;
+        _actionBar.Show();
+        _actionBar.Park();          // 同样以休眠收尾：首次映射留在启动时
+        _actionBar.ShowActivated = false;   // 操作条本来就永不激活
 
         // 窗口句柄此时才存在，所以消息钩子只能在这里挂。
         // 显示器拓扑变化后遮罩窗口的尺寸全都会失效，必须重建窗口池。
@@ -494,11 +534,7 @@ public sealed class OverlayController : IDisposable
 
         _focus.Save();
 
-        foreach (var dim in _dims)
-        {
-            dim.ReassertTopmost();
-            dim.Show();
-        }
+        foreach (var dim in _dims) dim.Show();
 
         // 先摆位置再让 WPF 显示 —— 顺序反了会先在旧位置闪一帧。
         if (_preserveRadialPosition is { } bounds) _radial.PlaceAt(bounds.X, bounds.Y, bounds.Width, bounds.Height);
@@ -507,21 +543,34 @@ public sealed class OverlayController : IDisposable
         // 先落定入场起始状态再显示：顺序反了会先闪一帧终态。
         _radial.PrepareEntrance();
         _radial.Show();
-        _radial.ReassertTopmost();
 
-        // 动画**排到 Loaded 优先级**再起跑，不在这里同步调。
+        // **一次整栈批量重申**，而不是每个窗口各发一串 SetWindowPos。
+        // 实测显示那一刻最长的帧（50ms 上下）就落在这一段：逐窗重申是 4~6 次调用，
+        // 每次都让合成器重新取一遍表面。整栈一次提交（DeferWindowPos）既少又原子。
+        ReassertTopmost();
+
+        // 动画**等显示那一帧真的合成过去之后再起跑**（见 StartEntranceAfterFirstFrame）。
         //
-        // 同步调的话时钟立刻起跑，而接下来 UI 线程还要忙一阵（操作条、遮罩、
-        // 焦点、托盘、z 序重申），等第一帧真正呈现时动画已经走过大半 ——
-        // 实测不透明度第一帧就到 0.71，一次 167ms 的缩放淡入被压成"啪地出现"，
-        // 观感就是闪一下。Loaded 低于 Render/Normal，等这批工作做完才轮到他，
-        // 于是动画从"真的开始有画面"的那一刻起算。
+        // 两件事要一起避开：
+        // 1）同步调的话时钟立刻起跑，而 UI 线程还要忙一阵（遮罩、焦点、托盘、z 序），
+        //    等第一帧真正呈现时动画已走过大半 —— 实测不透明度首帧就到 0.71，
+        //    一次 167ms 的缩放淡入被压成"啪地出现"。
+        // 2）**窗口映射那一帧本身要 30~50ms**（实测，且与动画无关：整窗缩放同样如此）。
+        //    若动画从那一刻起跑，最开始的几帧就会卡一下。
+        // 而那一帧轮盘还是空的（起始状态已落定），等它过去再开始长，观感反而连续。
         _radial.Dispatcher.BeginInvoke(
-            DispatcherPriority.Loaded, new Action(() => _radial.PlayEntrance()));
+            DispatcherPriority.Loaded, new Action(StartEntranceAfterFirstFrame));
 
-        _actionBar.PlaceAtMonitorCorner();
-        _actionBar.Show();
-        _actionBar.ReassertTopmost();
+        // 操作条晚一步再显示：它是角落里的次要控件，而显示这一帧已经背着
+        // 窗口映射、首次呈现、遮罩与 z 序的活。挪到下一批（Loaded 优先级）
+        // 不影响可用性 —— 用户此刻在看圆盘 —— 却把它从那最拥挤的一帧里拿掉。
+        _radial.Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() =>
+        {
+            _actionBar.PlaceAtMonitorCorner();
+            _actionBar.Show();
+            ReassertTopmost();          // 操作条进来之后整栈再定一次序
+        }));
+
         _radial.StartInteraction();
 
         // 拿键盘焦点，否则 Esc 收不到。这里同步调用是刻意的（见方法注释）。
@@ -558,6 +607,12 @@ public sealed class OverlayController : IDisposable
 
         _topmostTimer.Stop();
 
+        if (_pendingEntranceStart is not null)
+        {
+            CompositionTarget.Rendering -= _pendingEntranceStart;
+            _pendingEntranceStart = null;
+        }
+
         // 关闭覆盖层同时退出编辑态：编辑态是"当前这次唤出"里的状态，
         // 下次按热键应当是干净的日常盘面（否则一按热键就看到「＋」和拖拽态）。
         _radial.SetEditMode(false);
@@ -565,7 +620,7 @@ public sealed class OverlayController : IDisposable
         // 指针轮询必须停 —— 它每 25ms 唤醒一次 UI 线程，窗口不可见时纯属浪费。
         _radial.StopInteraction();
         foreach (var dim in _dims) dim.Hide();
-        _actionBar.Hide();
+        _actionBar.Park();
         // 记住面板状态：显隐往返（改设置、重建菜单、显示器变化）之后要恢复它，
         // 否则用户正在填的表单会毫无预兆地消失。
         _settingsWasOpen = _settingsPanel is { IsVisible: true };
@@ -813,7 +868,8 @@ public sealed class OverlayController : IDisposable
         // 期间若已被重新显示（Hide 之后紧接着 Show），这次的收尾就作废。
         if (IsVisible) return;
 
-        _radial.Hide();
+        // **休眠而不是卸载**：卸载会让下次唤出付一次 30~60ms 的窗口映射（实测）。
+        _radial.Park();
         _radial.ResetAnimationState();
         _radial.ResetInteraction();
         _radial.IsHitTestVisible = true;
@@ -909,6 +965,9 @@ public sealed class OverlayController : IDisposable
     internal double EntranceRevealForProbe(int index) => _radial.EntranceRevealForProbe(index);
 
     internal bool IsEntranceAnimatingForProbe => _radial.IsEntranceAnimatingForProbe;
+
+    /// <summary>诊断用：某个扇区分组箭头的透明度（-1 = 没有子项）。</summary>
+    internal double MarkerOpacityForProbe(int index) => _radial.MarkerOpacityForProbe(index);
 
     internal double EntranceStartDelayForProbe(int index) => _radial.EntranceStartDelayForProbe(index);
 

@@ -585,6 +585,39 @@ public sealed class RadialWindow : Window
     }
 
     /// <summary>停止轮询。窗口隐藏时必须调用。</summary>
+    /// <summary>
+    /// 休眠：把窗口挪到屏幕外，**不卸载它**。
+    ///
+    /// 为什么不用 <c>Hide()</c>：WPF 的 <c>Window.Hide()</c> 会销毁 HWND 与渲染目标，
+    /// 下次 <c>Show()</c> 要重建 —— 实测那一帧要 **30~60ms**（纯映射成本，
+    /// 与动画无关：整窗缩放、逐格入场、甚至不做动画都一样），而每次唤出都要付一次。
+    /// 那正是"动画不够流畅"里最大的单个卡顿，而它落在动画最开始的几帧上。
+    ///
+    /// 挪到屏幕外只是一个 <c>SetWindowPos</c>：画面消失的效果一样，成本几乎为零。
+    /// 注意窗口仍然是"可见"的，所以凡是按可见性判断的调用方（z 序层）要改用
+    /// 覆盖层自己的逻辑状态，不能再看 <c>IsVisible</c>。
+    /// </summary>
+    public void Park()
+    {
+        if (!IsVisible) return;          // 还没映射过：交给首次 Show
+
+        StopInteraction();
+        ResetInteraction();
+
+        var handle = (HWND)HandleValue;
+        if (handle == default) return;
+
+        PInvoke.SetWindowPos(handle, default, ParkedX, ParkedY, 0, 0,
+            SET_WINDOW_POS_FLAGS.SWP_NOSIZE |
+            SET_WINDOW_POS_FLAGS.SWP_NOZORDER |
+            SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE |
+            SET_WINDOW_POS_FLAGS.SWP_NOOWNERZORDER);
+    }
+
+    /// <summary>休眠时停放的坐标。取一个任何显示器布局都到不了的位置。</summary>
+    private const int ParkedX = -32000;
+    private const int ParkedY = -32000;
+
     public void StopInteraction()
     {
         _pointerPoll.Stop();
@@ -660,6 +693,8 @@ public sealed class RadialWindow : Window
     internal double EntranceRevealForProbe(int index) => _view.EntranceRevealOf(index);
 
     internal bool IsEntranceAnimatingForProbe => _view.IsEntranceAnimating;
+
+    internal double MarkerOpacityForProbe(int index) => _view.MarkerOpacityForProbe(index);
 
     internal double EntranceStartDelayForProbe(int index) => _view.EntranceStartDelayOf(index);
 

@@ -31,7 +31,7 @@ internal static class SurfaceOps
 {
     private static int _resizeWheel, _resizePanel, _resizeBar;
     private static int _visibleWheel, _visiblePanel, _visibleBar;
-    private static int _menuRebuild, _contentSwap, _dimRebuild, _dimAlpha, _setPos;
+    private static int _menuRebuild, _contentSwap, _dimRebuild, _dimAlpha, _dimVisible, _setPos;
 
     /// <summary>最后一次 SetWindowPos 是谁发的。用来分辨"是计时器在重申"还是"有人在摆位"。</summary>
     private static volatile string _lastSetPosSite = "（无）";
@@ -66,6 +66,9 @@ internal static class SurfaceOps
     /// <summary>只改了遮罩的 alpha（就地更新，不重建表面）。</summary>
     public static void DimAlpha() => Interlocked.Increment(ref _dimAlpha);
 
+    /// <summary>遮罩显示/隐藏了一次（全屏分层窗口的卸载与重新映射 —— 这个不便宜）。</summary>
+    public static void DimVisible() => Interlocked.Increment(ref _dimVisible);
+
     /// <summary>发了一次 SetWindowPos。<paramref name="site"/> 是调用点。</summary>
     public static void SetWindowPos(string site)
     {
@@ -77,7 +80,7 @@ internal static class SurfaceOps
         Volatile.Read(ref _resizeWheel), Volatile.Read(ref _resizePanel), Volatile.Read(ref _resizeBar),
         Volatile.Read(ref _visibleWheel), Volatile.Read(ref _visiblePanel), Volatile.Read(ref _visibleBar),
         Volatile.Read(ref _menuRebuild), Volatile.Read(ref _contentSwap),
-        Volatile.Read(ref _dimRebuild), Volatile.Read(ref _dimAlpha),
+        Volatile.Read(ref _dimRebuild), Volatile.Read(ref _dimAlpha), Volatile.Read(ref _dimVisible),
         Volatile.Read(ref _setPos), _lastSetPosSite, _lastResize);
 
     private static ref int Counter(SurfaceOwner owner, bool visible)
@@ -93,7 +96,7 @@ internal readonly record struct SurfaceSnapshot(
     int WheelResize, int PanelResize, int BarResize,
     int WheelVisible, int PanelVisible, int BarVisible,
     int MenuRebuild, int ContentSwap,
-    int DimRebuild, int DimAlpha,
+    int DimRebuild, int DimAlpha, int DimVisible,
     int SetPos, string LastSetPosSite, string LastResize)
 {
     /// <summary>重建整块表面的操作数（改尺寸 + 换内容对象 + 显隐 + 重建遮罩）。</summary>
@@ -121,6 +124,7 @@ internal readonly record struct SurfaceSnapshot(
         Add("换内容对象", ContentSwap, b.ContentSwap);
         Add("重建遮罩", DimRebuild, b.DimRebuild);
         Add("只改遮罩alpha", DimAlpha, b.DimAlpha);
+        Add("遮罩显隐", DimVisible, b.DimVisible);
         Add("SetWindowPos", SetPos, b.SetPos);
 
         if (parts.Count == 0) return "无";

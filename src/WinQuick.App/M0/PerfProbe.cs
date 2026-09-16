@@ -125,12 +125,17 @@ public static class PerfProbe
             // 这是在**静止的窗口**上量的 —— 于是它只反映几何本身的代价；
             // 入场时还要叠加分层窗口整块表面每帧重新提交的固定开销，
             // 所以最后再量一条"入场 + 4 个扇区同时在动"。
+            // 上一个测量里长帧出现的位置（由 MeasureAsync 填）。只用于打印。
+            string LastLongFrames = "";
+
             async Task<FrameStats> MeasureAsync(int ms, Func<Task> drive)
             {
                 var rec = new FrameRecorder();
                 CompositionTarget.Rendering += rec.OnRendering;
+                double triggerAt;
                 try
                 {
+                    triggerAt = rec.WallMs;
                     await drive();
                     await Task.Delay(ms);
                 }
@@ -140,14 +145,18 @@ public static class PerfProbe
                     overlay.StopGeometryStressForProbe();
                 }
 
+                var stats = rec.Summarize();
+                LastLongFrames = rec.LongFrames(triggerAt);
+
                 await Task.Delay(300);
-                return rec.Summarize();
+                return stats;
             }
 
-            static string Describe(FrameStats s) =>
+            string Describe(FrameStats s) =>
                 $"p50 {s.P50:0.0} / p95 {s.P95:0.0} / p99 {s.P99:0.0} / max {s.Max:0.0} ms；"
                 + $">{20}ms {s.Over20Ms}/{s.Count}；分配 "
-                + $"{s.AllocatedBytes / 1024.0 / Math.Max(0.001, s.WallMs / 1000.0):0} KB/s";
+                + $"{s.AllocatedBytes / 1024.0 / Math.Max(0.001, s.WallMs / 1000.0):0} KB/s"
+                + LastLongFrames;
 
             // 顺手把一条不变量也锁住：**动完之后必须逐像素回到静止态**。
             // 这正是入场动画结束时要守住的同一条 —— 入场最容易出的隐蔽 bug
@@ -249,6 +258,7 @@ public static class PerfProbe
             ProbeOutput.Section("入场动画（整窗缩放淡入，可叠加几何并发）");
             for (var round = 0; round < 3; round++)
             {
+                var surfaceBefore = SurfaceOps.Now();
                 var entrance = await MeasureAsync(900, async () =>
                 {
                     overlay.Hide();
@@ -257,6 +267,7 @@ public static class PerfProbe
                 });
 
                 ProbeOutput.Kv($"唤出 ×1（第 {round + 1} 次）", Describe(entrance));
+                ProbeOutput.Line("      窗口级操作：" + SurfaceOps.Now().DeltaFrom(surfaceBefore));
             }
 
             {
@@ -302,6 +313,10 @@ public static class PerfProbe
     private sealed class FrameRecorder
     {
         private readonly List<double> _intervalsMs = [];
+
+        /// <summary>每帧的（相对采集开始的时刻, 间隔）。用来回答"长帧落在哪一段"。</summary>
+        private readonly List<(double AtMs, double IntervalMs)> _timeline = [];
+
         private readonly Stopwatch _wall = Stopwatch.StartNew();
         private long _lastTicks;
         private long _allocatedAtStart;
@@ -321,6 +336,23 @@ public static class PerfProbe
 
             // 首帧的间隔与第一帧之前的准备工作无关，丢掉。
             _intervalsMs.Add(ms);
+            _timeline.Add((now * 1000.0 / Stopwatch.Frequency, ms));
+        }
+
+        /// <summary>采集过程中的当前时刻（毫秒）。触发动作前记一下，长帧就能对上位置。</summary>
+        public double WallMs => _wall.Elapsed.TotalMilliseconds;
+
+        /// <summary>列出超过阈值的帧，附上"相对触发时刻"的偏移。全都没超就返回空串。</summary>
+        public string LongFrames(double triggerAtMs, double thresholdMs = 20, int max = 10)
+        {
+            var longOnes = _timeline.Where(f => f.IntervalMs > thresholdMs).ToList();
+            if (longOnes.Count == 0) return "";
+
+            var parts = longOnes.Take(max)
+                .Select(f => $"{f.AtMs - triggerAtMs:+0;-0}ms({f.IntervalMs:0})");
+
+            return "；长帧位置 " + string.Join(" ", parts)
+                 + (longOnes.Count > max ? $" …共 {longOnes.Count} 个" : "");
         }
 
         public FrameStats Summarize()

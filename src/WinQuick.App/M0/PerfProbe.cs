@@ -117,6 +117,163 @@ public static class PerfProbe
             ProbeOutput.Kv("测量期间托管分配", $"{stats.AllocatedBytes / 1024.0:0.#} KB");
             ProbeOutput.Kv("换算到每秒", $"{stats.AllocatedBytes / 1024.0 / Math.Max(0.001, stats.WallMs / 1000.0):0.#} KB/s");
 
+            // ---- 几何并发压力 --------------------------------------------
+            // 入场若要改成"逐个扇区鼓出"，同一时刻会有多个扇区在改几何。
+            // 把这笔开销单独量出来：它决定交错间隔与单扇区时长能放开到什么程度
+            //（同时在动的扇区数 ≈ 单扇区时长 ÷ 交错间隔）。
+            //
+            // 这是在**静止的窗口**上量的 —— 于是它只反映几何本身的代价；
+            // 入场时还要叠加分层窗口整块表面每帧重新提交的固定开销，
+            // 所以最后再量一条"入场 + 4 个扇区同时在动"。
+            async Task<FrameStats> MeasureAsync(int ms, Func<Task> drive)
+            {
+                var rec = new FrameRecorder();
+                CompositionTarget.Rendering += rec.OnRendering;
+                try
+                {
+                    await drive();
+                    await Task.Delay(ms);
+                }
+                finally
+                {
+                    CompositionTarget.Rendering -= rec.OnRendering;
+                    overlay.StopGeometryStressForProbe();
+                }
+
+                await Task.Delay(300);
+                return rec.Summarize();
+            }
+
+            static string Describe(FrameStats s) =>
+                $"p50 {s.P50:0.0} / p95 {s.P95:0.0} / p99 {s.P99:0.0} / max {s.Max:0.0} ms；"
+                + $">{20}ms {s.Over20Ms}/{s.Count}；分配 "
+                + $"{s.AllocatedBytes / 1024.0 / Math.Max(0.001, s.WallMs / 1000.0):0} KB/s";
+
+            // 顺手把一条不变量也锁住：**动完之后必须逐像素回到静止态**。
+            // 这正是入场动画结束时要守住的同一条 —— 入场最容易出的隐蔽 bug
+            // 就是"动画结束后几何差一点点"，而它不会报错、只会看着有点歪。
+            // 这里把下面那组压力当成"最坏情况的动画"来用它。
+            // **先把画面真正静下来再拍参照帧。**
+            // 扫描段最后一次 HoverForProbe(-1) 之后只等了 120ms，而鼓出缩回要 130ms ——
+            // 参照帧里会留下一点残余形变（表现为边缘的亚像素位移）。
+            // 第一次跑这条检查时报"几何没还原干净 1692 像素"，其实是我拍早了：
+            // 对照（什么都不做再拍一张）差得一模一样，指向的是参照帧而不是还原逻辑。
+            overlay.HoverForProbe(-1);
+            await Task.Delay(700);
+
+            var wheelBounds = overlay.RadialPhysicalBounds;
+            ScreenSampler? wheelSampler = null;
+            byte[]? restingFrame = null;
+            if (wheelBounds is { } wb && wb.Width > 200 && wb.Height > 200)
+            {
+                var size = Math.Min(440, Math.Min(wb.Width, wb.Height));
+                wheelSampler = new ScreenSampler(
+                    wb.X + (wb.Width - size) / 2, wb.Y + (wb.Height - size) / 2, size, size);
+                restingFrame = wheelSampler.CaptureFrame();
+            }
+
+            ProbeOutput.Section("几何并发压力（每帧重建 N 个扇区的几何）");
+            ProbeOutput.Kv("静止（N=0）", Describe(await MeasureAsync(1200, () => Task.CompletedTask)));
+
+            var sectorCount = overlay.SectorCountForProbe;
+            foreach (var n in new[] { 1, 3, 6, 12, 20 })
+            {
+                if (n > sectorCount) continue;
+
+                var burst = await MeasureAsync(1500, () =>
+                {
+                    overlay.StartGeometryStressForProbe(n, 1500);
+                    return Task.CompletedTask;
+                });
+
+                ProbeOutput.Kv($"每帧重建 {n} 个扇区", Describe(burst));
+            }
+
+            if (wheelSampler is not null && restingFrame is not null)
+            {
+                // 先做一条**对照**：什么都不做，只过一小会儿再拍一张。
+                // 它给出"这套测量本身的复现精度" —— 没有这条，"回到静止态"那个差值
+                // 就没法判读：是没还原干净，还是量具自己就不稳。
+                await Task.Delay(400);
+                var controlFrame = wheelSampler.CaptureFrame();
+                var control = ScreenSampler.CompareDetailed(
+                    restingFrame, controlFrame, wheelSampler.Width, wheelSampler.Height);
+                ProbeOutput.Kv("对照：什么都不做，隔一会儿再拍",
+                    $"差 {control.Diff}，变化像素 {control.Changed}"
+                    + (control.Changed > 0
+                        ? $"（行 {control.MinRow}..{control.MaxRow} 列 {control.MinCol}..{control.MaxCol}）"
+                        : ""));
+
+                await Task.Delay(400);
+                var afterFrame = wheelSampler.CaptureFrame();
+                var after = ScreenSampler.CompareDetailed(
+                    restingFrame, afterFrame, wheelSampler.Width, wheelSampler.Height);
+                wheelSampler.Dispose();
+
+                var where = after.Changed > 0
+                    ? $"；变化在 行 {after.MinRow}..{after.MaxRow} 列 {after.MinCol}..{after.MaxCol}"
+                      + $"（取样区 {wheelSampler.Width}×{wheelSampler.Height}）"
+                    : "";
+
+                ProbeOutput.Kv("压力结束后是否逐像素回到静止态",
+                    after.Diff < 50_000
+                        ? $"是（差 {after.Diff}，变化像素 {after.Changed}）"
+                        : $"否（差 {after.Diff}，变化像素 {after.Changed}）—— 几何没还原干净{where}");
+            }
+
+            // 12 项要单独造一份菜单：默认菜单只有 8 项，而 12 是上限，
+            // 也是几何最重的场景（每帧重建 12 个扇区 ≈ 逐扇区入场的最坏并发）。
+            {
+                var wide = menu with
+                {
+                    Items = Enumerable.Range(1, 12)
+                        .Select(i => new MenuItemSpec { Label = $"第 {i} 项" })
+                        .ToList(),
+                };
+
+                overlay.RebuildForMenu(wide);
+                await Task.Delay(500);
+
+                var burst12 = await MeasureAsync(1500, () =>
+                {
+                    overlay.StartGeometryStressForProbe(12, 1500);
+                    return Task.CompletedTask;
+                });
+
+                ProbeOutput.Kv("每帧重建 12 个扇区（12 项菜单）", Describe(burst12));
+
+                overlay.RebuildForMenu(menu);
+                await Task.Delay(500);
+            }
+
+            ProbeOutput.Section("入场动画（整窗缩放淡入，可叠加几何并发）");
+            for (var round = 0; round < 3; round++)
+            {
+                var entrance = await MeasureAsync(900, async () =>
+                {
+                    overlay.Hide();
+                    await Task.Delay(400);
+                    overlay.Show();
+                });
+
+                ProbeOutput.Kv($"唤出 ×1（第 {round + 1} 次）", Describe(entrance));
+            }
+
+            {
+                // 拟议中的逐扇区入场：整窗动画 + 同时有 4 个扇区在动。
+                var combined = await MeasureAsync(1000, async () =>
+                {
+                    overlay.Hide();
+                    await Task.Delay(400);
+                    overlay.Show();
+                    overlay.StartGeometryStressForProbe(4, 1000);
+                });
+
+                ProbeOutput.Kv("唤出 + 4 个扇区同时在动", Describe(combined));
+            }
+
+            ProbeOutput.Kv("回调残留（应为 0）", OverlayController.HookCountsForProbe);
+
             ProbeOutput.Section("怎么读这些数");
             ProbeOutput.Line("  · p50 ≈ 16.7ms：跟着合成器节奏走，正常。");
             ProbeOutput.Line("  · p95 明显高于 16.7：有掉帧，需要看是不是几何重建/分配造成的。");

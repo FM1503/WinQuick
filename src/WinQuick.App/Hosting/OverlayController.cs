@@ -888,6 +888,23 @@ public sealed class OverlayController : IDisposable
     /// </summary>
     private void ReassertTopmost() => _zOrder.Reassert();
 
+    /// <summary>诊断用：环上的扇区数。</summary>
+    internal int SectorCountForProbe => _radial.SectorCountForProbe;
+
+    /// <summary>诊断用：几何并发压力。</summary>
+    internal void StartGeometryStressForProbe(int sectorCount, int durationMs) =>
+        _radial.StartGeometryStressForProbe(sectorCount, durationMs);
+
+    internal void StopGeometryStressForProbe() => _radial.StopGeometryStressForProbe();
+
+    internal bool IsGeometryStressRunningForProbe => _radial.IsGeometryStressRunningForProbe;
+
+    /// <summary>诊断用：残留的逐帧回调数（形变 / 子弧 / 几何压力）。</summary>
+    internal static string HookCountsForProbe =>
+        $"形变 {Radial.SectorBulgeAnimator.ActiveHookCount}"
+        + $" + 子弧 {Radial.ChildArcAnimator.ActiveHookCount}"
+        + $" + 几何压力 {Radial.RadialRingView.ActiveStressHookCount}";
+
     /// <summary>诊断用：轮盘入场状态（缩放, 不透明度）的读取器。
     /// 返回读取器而不是值，是因为必须在 UI 线程上读、而且要**逐帧**读。</summary>
     internal Func<(double Scale, double Opacity)> RadialEntranceStateForProbe =>

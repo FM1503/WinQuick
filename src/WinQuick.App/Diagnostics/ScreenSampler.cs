@@ -57,6 +57,12 @@ internal sealed class ScreenSampler : IDisposable
     }
 
     /// <summary>抓一帧，返回与上一帧的差异（像素差总和，以及"明显变了"的像素数）。</summary>
+    /// <summary>取样区的宽（物理像素）。</summary>
+    public int Width => _w;
+
+    /// <summary>取样区的高（物理像素）。</summary>
+    public int Height => _h;
+
     /// <summary>最近一次采样中"变化像素"的包围盒（行/列范围），没变化时是 null。</summary>
     public (int MinRow, int MaxRow, int MinCol, int MaxCol)? LastChangedBounds { get; private set; }
 
@@ -115,6 +121,45 @@ internal sealed class ScreenSampler : IDisposable
     {
         Sample();                       // 先抓一帧进 _current
         return (byte[])_current.Clone();
+    }
+
+    /// <summary>
+    /// 两帧的差别，外加**变化像素的包围盒** —— 只报"差了多少"说明不了"差在哪儿"，
+    /// 而"哪儿"往往直接指向原因（整块＝表面被取走，一小条＝某一行文字/某个图标）。
+    /// </summary>
+    public static (long Diff, int Changed, int MinRow, int MaxRow, int MinCol, int MaxCol) CompareDetailed(
+        byte[] a, byte[] b, int width, int height)
+    {
+        long diff = 0;
+        var changed = 0;
+        var minRow = int.MaxValue;
+        var maxRow = int.MinValue;
+        var minCol = int.MaxValue;
+        var maxCol = int.MinValue;
+
+        for (var row = 0; row < height; row += Step)
+        {
+            var offset = row * width * 4;
+            for (var col = 0; col < width; col += Step)
+            {
+                var i = offset + col * 4;
+                var pixel = Math.Abs(a[i] - b[i])
+                          + Math.Abs(a[i + 1] - b[i + 1])
+                          + Math.Abs(a[i + 2] - b[i + 2]);
+
+                diff += pixel;
+                if (pixel > 24)
+                {
+                    changed++;
+                    if (row < minRow) minRow = row;
+                    if (row > maxRow) maxRow = row;
+                    if (col < minCol) minCol = col;
+                    if (col > maxCol) maxCol = col;
+                }
+            }
+        }
+
+        return (diff, changed, minRow, maxRow, minCol, maxCol);
     }
 
     /// <summary>两帧之间有多少差别（与相邻帧差同一个度量，可直接和噪声底比）。</summary>

@@ -498,6 +498,17 @@ public sealed class RadialWindow : Window
     }
 
     /// <summary>诊断用：只按下（不抬起），用来核对"按下不该执行"。</summary>
+    /// <summary>诊断用：当前环上的扇区数。</summary>
+    internal int SectorCountForProbe => _view.SectorCount;
+
+    /// <summary>诊断用：每帧重建 N 个扇区几何的压力（量并发开销）。</summary>
+    internal void StartGeometryStressForProbe(int sectorCount, int durationMs) =>
+        _view.StartGeometryStressForProbe(sectorCount, durationMs);
+
+    internal void StopGeometryStressForProbe() => _view.StopGeometryStressForProbe();
+
+    internal bool IsGeometryStressRunningForProbe => _view.IsGeometryStressRunning;
+
     internal HitResult PressForProbe(Point localPoint)
     {
         // 同时把 _lastPointer 摆到按下点：真实使用里指针必然在那里，

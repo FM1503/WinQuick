@@ -12,6 +12,7 @@ using WinQuick.Core.Config;
 using WinQuick.Core.Design;
 using WinQuick.Core.Geometry;
 using WinQuick.Core.Interaction;
+using WinQuick.Core.Motion;
 using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.UI.WindowsAndMessaging;
@@ -723,23 +724,37 @@ public sealed class RadialWindow : Window
             return;
         }
 
-        // 缩放（带轻回弹）与旋转（转进到位）各自独立时长与曲线，同时进行。
-        var scaleMs = TimeSpan.FromMilliseconds(motion.EntranceScaleMs);
-        var scaleSpline = BuildKeySpline(motion.EntranceScaleEasing);
-        _scale.BeginAnimation(ScaleTransform.ScaleXProperty,
-            FromTo(motion.EntranceFromScale, 1.0, scaleMs, scaleSpline));
-        _scale.BeginAnimation(ScaleTransform.ScaleYProperty,
-            FromTo(motion.EntranceFromScale, 1.0, scaleMs, scaleSpline));
+        // 时长与曲线来自 Core 的入场计划（`EntrancePlan`）—— 那边有单测锁住
+        // "每条通道的终点都是终态"与"关掉动画时计划为空"，这里只负责把通道映射到 WPF 属性。
+        var channels = EntrancePlan.Channels(motion, animationsEnabled: true);
 
-        if (Math.Abs(motion.EntranceFromRotateDeg) > 0.01)
+        if (channels.Any(c => c.Name == EntrancePlan.ScaleChannel))
         {
-            var rotateMs = TimeSpan.FromMilliseconds(motion.EntranceRotateMs);
-            _rotate.BeginAnimation(RotateTransform.AngleProperty,
-                FromTo(motion.EntranceFromRotateDeg, 0.0, rotateMs,
-                    BuildKeySpline(motion.EntranceRotateEasing)));
+            var channel = channels.Single(c => c.Name == EntrancePlan.ScaleChannel);
+            var spline = MotionSplines.FromToken(channel.Easing);
+            var duration = TimeSpan.FromMilliseconds(channel.DurationMs);
+
+            _scale.BeginAnimation(ScaleTransform.ScaleXProperty,
+                MotionSplines.FromTo(channel.From, channel.To, duration, spline));
+            _scale.BeginAnimation(ScaleTransform.ScaleYProperty,
+                MotionSplines.FromTo(channel.From, channel.To, duration, spline));
         }
 
-        // 淡入照旧用较短的一段：它决定"什么时候看得见"，不该被缩放/旋转的尾巴拖住。
+        if (channels.Any(c => c.Name == EntrancePlan.RotateChannel))
+        {
+            var channel = channels.Single(c => c.Name == EntrancePlan.RotateChannel);
+            _rotate.BeginAnimation(RotateTransform.AngleProperty,
+                MotionSplines.FromTo(channel.From, channel.To,
+                    TimeSpan.FromMilliseconds(channel.DurationMs), MotionSplines.FromToken(channel.Easing)));
+        }
+
+        if (channels.Any(c => c.Name == EntrancePlan.FadeChannel))
+        {
+            var channel = channels.Single(c => c.Name == EntrancePlan.FadeChannel);
+            _view.Root.BeginAnimation(UIElement.OpacityProperty,
+                MotionSplines.FromTo(channel.From, channel.To,
+                    TimeSpan.FromMilliseconds(channel.DurationMs), MotionSplines.FromToken(channel.Easing)));
+        }
         _view.Root.BeginAnimation(UIElement.OpacityProperty,
             FromTo(0.0, 1.0, TimeSpan.FromMilliseconds(motion.EntranceDurationMs),
                 BuildKeySpline(motion.EntranceEasing)));

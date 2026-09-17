@@ -8,6 +8,7 @@ using WinQuick.App.Interop;
 using WinQuick.App.Radial;
 using WinQuick.Core.Config;
 using WinQuick.Core.Hotkey;
+using WinQuick.Core.Motion;
 using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.UI.WindowsAndMessaging;
@@ -550,44 +551,51 @@ public sealed class OverlayController : IDisposable
 
         foreach (var dim in _dims) dim.Show();
 
-        // **先把入场起始状态落定，再摆位置。**
+        // **唤出的顺序是规格。**
         //
-        // 窗口现在是"停放"（保持映射）而不是卸载的 —— 它身上留着上一轮结束时的画面
-        // （静止的完整圆盘）。所以一旦挪到屏上，那幅画面立刻可见；若先挪位置再清空，
-        // 合成器就能在这两步之间取走一帧，用户看到的是"先出现一个完整圆盘，
-        // 然后它才消失、重新逐格长出来" —— 用户报的正是这个。
-        //
-        // 顺序对调之后：清空发生在窗口还在屏幕外的时候，谁看不见；等它挪回屏上时
-        // 第一帧已经是"空的"（全部零厚度、透明度 0），随后的逐格长出才是可见的第一印象。
-        _radial.PrepareEntrance();
+        // 顺序被抽到 Core 的 `SummonSequence` 里，并有单测锁住 —— 其中一条是
+        // "落定显示之前的状态必须早于把窗口挪到屏上"：窗口从"停放"恢复时，
+        // 屏幕上显示的是上一次提交的位图，顺序反了就会先闪一帧完整圆盘。
+        // 这里只负责把每个步骤映射到具体动作，不再自己排列。
+        foreach (var step in SummonSequence.Steps(AnimationsEnabled()))
+        {
+            switch (step)
+            {
+                case SummonStep.LeaveDormancy:
+                    // 今天不需要额外动作：停放态的不透明度已经是 0，而下一步的落定会把
+                    // 窗口层缩放/角度一并写死（见 RadialWindow.PrepareEntrance）。
+                    break;
 
-        if (_preserveRadialPosition is { } bounds) _radial.PlaceAt(bounds.X, bounds.Y, bounds.Width, bounds.Height);
-        else _radial.PlaceAtCursor();
+                case SummonStep.SettlePreShowState:
+                    _radial.PrepareEntrance();
+                    break;
 
-        _radial.Show();
+                case SummonStep.ShowAtCursor:
+                    if (_preserveRadialPosition is { } bounds)
+                        _radial.PlaceAt(bounds.X, bounds.Y, bounds.Width, bounds.Height);
+                    else
+                        _radial.PlaceAtCursor();
 
-        // **一次整栈批量重申**，而不是每个窗口各发一串 SetWindowPos。
-        // 实测显示那一刻最长的帧（50ms 上下）就落在这一段：逐窗重申是 4~6 次调用，
-        // 每次都让合成器重新取一遍表面。整栈一次提交（DeferWindowPos）既少又原子。
-        ReassertTopmost();
+                    _radial.Show();
+                    break;
 
-        // 动画**等显示那一帧真的合成过去之后再起跑**（见 StartEntranceAfterFirstFrame）。
-        //
-        // 两件事要一起避开：
-        // 1）同步调的话时钟立刻起跑，而 UI 线程还要忙一阵（遮罩、焦点、托盘、z 序），
-        //    等第一帧真正呈现时动画已走过大半 —— 实测不透明度首帧就到 0.71，
-        //    一次 167ms 的缩放淡入被压成"啪地出现"。
-        // 2）**窗口映射那一帧本身要 30~50ms**（实测，且与动画无关：整窗缩放同样如此）。
-        //    若动画从那一刻起跑，最开始的几帧就会卡一下。
-        // 而那一帧轮盘还是空的（起始状态已落定），等它过去再开始长，观感反而连续。
-        // 直接排到下一批就起跑，**不再等"第一帧合成过去"**。
-        //
-        // 那一等本来是躲"窗口映射那一帧（30~60ms）"的：动画若与它挤在一起，开头会卡一下。
-        // 现在窗口改成停放（Park）之后不再卸载/重新映射，那一帧小多了；而这一等
-        // 每次唤出都要花掉 16~30ms —— 用户反馈"太拖沓"，这 30ms 就是白等的。
-        // 代价：若线程在起跑后仍忙一阵，第一格的进度会略微超出（其余各格不受影响）。
-        _radial.Dispatcher.BeginInvoke(
-            DispatcherPriority.Loaded, new Action(() => _radial.PlayEntrance()));
+                case SummonStep.ReassertTopmost:
+                    // **一次整栈批量提交**，而不是每个窗口各发一串 SetWindowPos：
+                    // 实测显示那一刻最长的帧（50ms 上下）就落在这一段，
+                    // 而逐窗重申会在中间态被合成器取走一帧（那正是"整屏压暗"的来源）。
+                    ReassertTopmost();
+                    break;
+
+                case SummonStep.PlayEntrance:
+                    // 排到下一批再起跑，不在这里同步调：同步调的话时钟立刻起跑，
+                    // 而 UI 线程随后还要忙一阵（操作条、遮罩、焦点、托盘），
+                    // 等第一帧真正呈现时动画已走过大半 —— 实测不透明度首帧就到 0.71，
+                    // 一次 167ms 的缩放淡入被压成"啪地出现"。
+                    _radial.Dispatcher.BeginInvoke(
+                        DispatcherPriority.Loaded, new Action(() => _radial.PlayEntrance()));
+                    break;
+            }
+        }
 
         // 操作条晚一步再显示：它是角落里的次要控件，而显示这一帧已经背着
         // 窗口映射、首次呈现、遮罩与 z 序的活。挪到下一批（Loaded 优先级）
@@ -632,6 +640,12 @@ public sealed class OverlayController : IDisposable
     {
         if (!IsVisible) return;
         IsVisible = false;
+
+        // 退场的顺序同样是规格，见 Core 的 `DismissSequence`：
+        // 焦点归还与遮罩消失必须排在"等退场动画"之前 —— 退场动画**不得阻塞动作执行**
+        //（Kando #650：退场淡出之后才启动应用，用户投诉延迟；本项目也把它写进了令牌注释）。
+        // 这里没有改成按步骤表执行：现有控制流（动画 + 退场计时器）已经被探针与人眼验证过，
+        // 为了对齐一张清单去重排它，风险大于收益。顺序由那边的手册 + 这行注释共同约束。
 
         _topmostTimer.Stop();
 

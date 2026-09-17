@@ -182,8 +182,78 @@ public sealed partial class RadialRingView
             writeGeometry: WriteChildSectorGeometry,
             tokens.Motion.HoverBulgePx, tokens.Motion.EntranceEasing, tokens.Motion.HoverBulgeMs);
 
-        if (immediate) SetChildArcImmediate(true);
-        else _childAnimator.Expand();
+        if (immediate)
+        {
+            SetChildArcImmediate(true);
+        }
+        else
+        {
+            StartChildSlideOut(parentCenter, iconRadius, labelRadius, band.Outer);
+            _childAnimator.Expand();
+        }
+    }
+
+    /// <summary>
+    /// 子项的**径向滑出**（用户从 preview/childring-preview.html 选定的 ③）：
+    /// 每项从"父项方向、半径更小"处滑到自己的位置。
+    ///
+    /// 为什么这样：整条弧带一起长（原来的做法）没有方向感，而上位菜单的子项**来自**父项，
+    /// 让它从父项那一侧"流"出来，等于把层级关系画了出来（Fluent 的 Connected 原则）。
+    ///
+    /// 只动 <c>RenderTransform</c>，不碰 <c>Canvas.Left/Top</c>（后者每帧走布局）。
+    /// **淡入仍由子弧进度负责** —— 一个机制一个写入者，不叠两套（这条在本项目摔过跤）。
+    /// </summary>
+    private void StartChildSlideOut(double parentCenterDeg, double iconRadius, double labelRadius, double markerRadius)
+    {
+        var motion = TokenStore.Current.Motion;
+        if (motion.ChildSlideMs <= 0 || motion.ChildSlidePx <= 0) return;
+
+        var duration = TimeSpan.FromMilliseconds(motion.ChildSlideMs);
+        var spline = MotionSplines.FromToken(motion.ChildSlideEasing);
+        var slide = motion.ChildSlidePx;
+
+        for (var i = 0; i < _childSpans.Length; i++)
+        {
+            var ownAngle = _childSpans[i].CenterDeg;
+
+            SlideFromParent(_childIcons[i], iconRadius, ownAngle, parentCenterDeg, slide, duration, spline);
+            SlideFromParent(_childLabels[i], labelRadius, ownAngle, parentCenterDeg, slide, duration, spline);
+
+            if (i < _childChildMarkers.Count && _childChildMarkers[i] is { } marker)
+                SlideFromParent(marker, markerRadius, ownAngle, parentCenterDeg, slide, duration, spline);
+        }
+    }
+
+    /// <summary>把一个元素从"父项方向、半径小 <paramref name="slidePx"/>"滑到它自己的位置。</summary>
+    private void SlideFromParent(
+        UIElement element, double ownRadius, double ownAngleDeg, double parentCenterDeg,
+        double slidePx, TimeSpan duration, System.Windows.Media.Animation.KeySpline spline)
+    {
+        var from = PolarOf(ownRadius - slidePx, parentCenterDeg);
+        var to = PolarOf(ownRadius, ownAngleDeg);
+        var dx = from.X - to.X;
+        var dy = from.Y - to.Y;
+
+        var transform = new TranslateTransform(dx, dy);
+        element.RenderTransform = transform;
+        transform.BeginAnimation(TranslateTransform.XProperty, MotionSplines.FromTo(dx, 0, duration, spline));
+        transform.BeginAnimation(TranslateTransform.YProperty, MotionSplines.FromTo(dy, 0, duration, spline));
+    }
+
+    private void SlideFromParent(
+        SectorLabel label, double ownRadius, double ownAngleDeg, double parentCenterDeg,
+        double slidePx, TimeSpan duration, System.Windows.Media.Animation.KeySpline spline)
+    {
+        var from = PolarOf(ownRadius - slidePx, parentCenterDeg);
+        var to = PolarOf(ownRadius, ownAngleDeg);
+        label.SlideIn(from.X - to.X, from.Y - to.Y, duration, spline);
+    }
+
+    /// <summary>环内的极坐标 → 窗口内坐标（与几何用的是同一套约定：0° 正上、顺时针）。</summary>
+    private (double X, double Y) PolarOf(double radius, double angleDeg)
+    {
+        var offset = Vec2.FromPolar(radius, angleDeg);
+        return (_center.X + offset.X, _center.Y + offset.Y);
     }
 
     /// <summary>收起子弧（带动画）。</summary>

@@ -88,6 +88,16 @@ public sealed record DesignTokens
             problems.Add($"motion.entranceFromRotateDeg={Motion.EntranceFromRotateDeg} 应在 -150~150（再大就不是「落位」而是「翻滚」了）");
         if (Motion.EntranceFromScale is < 0.3 or > 1.2)
             problems.Add($"motion.entranceFromScale={Motion.EntranceFromScale} 应在 0.3~1.2");
+        if (MotionTokens.TryParseEasing(Motion.ChildSlideEasing, out _) is false)
+            problems.Add($"motion.childSlideEasing 无法解析: {Motion.ChildSlideEasing}");
+
+        // 边界取"明显不合理"的值：滑出距离超过子环带宽会滑到圆心里去，时长太短则看不出方向感。
+        if (Motion.ChildSlideMs is < 0 or > 900)
+            problems.Add($"motion.childSlideMs={Motion.ChildSlideMs} 应在 0~900ms（0 = 不滑）");
+        // 这里不能用模式比较（is < 0 or > x）：模式右侧必须是常量，而带宽是算出来的。
+        var childBandWidth = Radius.Ring2Outer - Radius.Ring2Inner;
+        if (Motion.ChildSlidePx < 0 || Motion.ChildSlidePx > childBandWidth)
+            problems.Add($"motion.childSlidePx={Motion.ChildSlidePx} 应在 0~{childBandWidth}（子环带宽）");
 
         // 子环内缘必须给悬停鼓出留出空间。
         // 带子环的扇区恰恰就是被悬停（因此会鼓出）的那个，两者留不出距离就会重叠。
@@ -310,6 +320,15 @@ public sealed record MotionTokens
 
     /// <summary>鼓出动画时长。比颜色高亮略长，因为它是有形的位移，太快会显得跳。</summary>
     public int HoverBulgeMs { get; init; } = 130;
+
+    /// <summary>子项"径向滑出"的时长（子环展开时每项从父项方向滑到自己位置）。</summary>
+    public int ChildSlideMs { get; init; } = 260;
+
+    /// <summary>径向滑出的缓动。取 Material 3 空间弹簧家族的曲线（起步快、收得稳）。</summary>
+    public string ChildSlideEasing { get; init; } = "cubic-bezier(0.16,1,0.3,1)";
+
+    /// <summary>径向滑出的起点：比原位更靠近圆心多少像素。0 表示不滑（退回旧观感）。</summary>
+    public int ChildSlidePx { get; init; } = 60;
 
     /// <summary>子弧展开/收起时长。用官方规范里「已有元素点对点」的 167ms。</summary>
     public int ChildArcDurationMs { get; init; } = 167;

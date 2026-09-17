@@ -169,6 +169,32 @@ internal sealed class SectorLabel
     /// <summary>当前透明度。入场要"记录 → 归零 → 原样恢复"，所以得读得到。</summary>
     public double Opacity => _clipHost.Opacity;
 
+    /// <summary>
+    /// 入场位移：从 (dx, dy) 滑到原位（子环"径向滑出"用）。
+    ///
+    /// 用 <c>RenderTransform</c> 而不是改 <c>Canvas.Left/Top</c> —— 后者每帧都会走一次布局，
+    /// 而这只该是一次渲染变换。结束后变换停在 0（与"没有位移"等价）。
+    /// </summary>
+    public void SlideIn(double dx, double dy, TimeSpan duration, System.Windows.Media.Animation.KeySpline spline)
+    {
+        var transform = new TranslateTransform(dx, dy);
+        _clipHost.RenderTransform = transform;
+        transform.BeginAnimation(TranslateTransform.XProperty,
+            Design.MotionSplines.FromTo(dx, 0, duration, spline));
+        transform.BeginAnimation(TranslateTransform.YProperty,
+            Design.MotionSplines.FromTo(dy, 0, duration, spline));
+    }
+
+    /// <summary>清掉入场位移（离屏渲染与"立即展开"要的是终态）。</summary>
+    public void ClearSlide()
+    {
+        if (_clipHost.RenderTransform is not TranslateTransform transform) return;
+
+        transform.BeginAnimation(TranslateTransform.XProperty, null);
+        transform.BeginAnimation(TranslateTransform.YProperty, null);
+        _clipHost.RenderTransform = null;
+    }
+
     /// <summary>从视觉树上摘掉自己。子弧收起时必须调用，否则不可见的标签会参与渲染遍历。</summary>
     public void Detach()
     {

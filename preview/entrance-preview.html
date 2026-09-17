@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>WinQuick · 入场动画候选（HTML 最小成本模拟）</title>
+<style>
+  :root {
+    --dim: rgba(0, 0, 0, 0.42);
+    --sector-fill: rgba(255, 255, 255, 0.085);
+    --sector-stroke: rgba(255, 255, 255, 0.22);
+    --text: #e8eaf0;
+    --muted: #9aa3b2;
+    --accent: #6ea8fe;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: #14161c;
+    color: var(--text);
+    font: 14px/1.6 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  }
+
+  header { padding: 18px 22px 10px; }
+  h1 { margin: 0 0 6px; font-size: 17px; font-weight: 600; }
+  header p { margin: 0; color: var(--muted); }
+  code { background: #ffffff12; padding: 1px 5px; border-radius: 4px; font-size: 12.5px; }
+
+  .layout {
+    display: flex;
+    gap: 20px;
+    align-items: flex-start;
+    padding: 12px 22px 26px;
+    flex-wrap: wrap;
+  }
+
+  /* ---- 候选列表 ---- */
+  #list { width: 430px; flex: 0 0 auto; }
+  .card {
+    border: 1px solid #ffffff1a;
+    border-radius: 10px;
+    padding: 10px 12px;
+    margin-bottom: 9px;
+    background: #ffffff06;
+    cursor: pointer;
+    transition: border-color .12s, background .12s;
+  }
+  .card:hover { border-color: #ffffff40; background: #ffffff0d; }
+  .card.on { border-color: var(--accent); background: #6ea8fe14; }
+  .card .name { font-weight: 600; }
+  .card .params { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+  .card .cost { font-size: 12.5px; margin-top: 2px; }
+  .cost.low { color: #7fd18f; }
+  .cost.mid { color: #e2c56a; }
+  .cost.high { color: #e08a7a; }
+  .card .src { color: #7b8496; font-size: 12px; margin-top: 2px; }
+
+  /* ---- 舞台 ---- */
+  #stage {
+    position: relative;
+    width: 520px;
+    height: 520px;
+    border-radius: 12px;
+    overflow: hidden;
+    background:
+      linear-gradient(135deg, #2a2f3a 0%, #1b1f27 60%, #232833 100%);
+    flex: 0 0 auto;
+  }
+  #dim {
+    position: absolute; inset: 0;
+    background: var(--dim);
+    opacity: 0;
+  }
+  #dim.on { animation: k-dim 83ms linear both; }
+  @keyframes k-dim { from { opacity: 0 } to { opacity: 1 } }
+
+  #wheel {
+    position: absolute;
+    left: 50%; top: 50%;
+    width: 444px; height: 444px;      /* 740 × 0.6，比例与应用一致 */
+    margin: -222px 0 0 -222px;
+    transform-origin: 50% 50%;
+    opacity: 0;
+  }
+  #wheel.playing { opacity: 1; }
+
+  #svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .sector { fill: var(--sector-fill); stroke: var(--sector-stroke); stroke-width: .6; }
+  .label {
+    fill: #dfe4ee; font-size: 9px; text-anchor: middle; dominant-baseline: middle;
+  }
+  #hint {
+    position: absolute; left: 50%; top: 50%;
+    transform: translate(-50%, -50%);
+    color: #cfd6e4; font-size: 10.5px; letter-spacing: .5px;
+  }
+
+  /* ---------------- 候选动画 ---------------- */
+  /* 1. 整窗缩放淡入（现状） */
+  #wheel.a-scale.on { animation: k-scale 167ms cubic-bezier(0,0,0,1) both; }
+  @keyframes k-scale {
+    from { transform: scale(.9); opacity: 0 }
+    to   { transform: scale(1);  opacity: 1 }
+  }
+
+  /* 2. 缩放回弹 */
+  #wheel.a-spring.on { animation: k-spring 300ms cubic-bezier(.34,1.56,.64,1) both; }
+  @keyframes k-spring {
+    from { transform: scale(.86); opacity: 0 }
+    to   { transform: scale(1);   opacity: 1 }
+  }
+
+  /* 3. 模糊到清晰 */
+  #wheel.a-blur.on { animation: k-blur 320ms cubic-bezier(.2,0,0,1) both; }
+  @keyframes k-blur {
+    from { transform: scale(1.04); opacity: 0; filter: blur(10px) }
+    to   { transform: scale(1);    opacity: 1; filter: blur(0) }
+  }
+
+  /* 4. 旋转落位 */
+  #wheel.a-spin.on { animation: k-spin 380ms cubic-bezier(.16,1,.3,1) both; }
+  @keyframes k-spin {
+    from { transform: rotate(-24deg) scale(.9); opacity: 0 }
+    to   { transform: rotate(0deg)   scale(1);  opacity: 1 }
+  }
+
+  /* 5. 圆形撑开（iris） */
+  #wheel.a-iris.on { animation: k-iris 300ms cubic-bezier(.2,.8,.2,1) both; opacity: 1; }
+  @keyframes k-iris {
+    from { clip-path: circle(0% at 50% 50%) }
+    to   { clip-path: circle(80% at 50% 50%) }
+  }
+
+  /* 6. 从光标位置放大展开 */
+  #wheel.a-cursor.on { animation: k-cursor 340ms cubic-bezier(.22,1,.36,1) both; }
+  @keyframes k-cursor {
+    from { transform: scale(.15); opacity: 0 }
+    to   { transform: scale(1);   opacity: 1 }
+  }
+
+  /* ---- 控制条与说明 ---- */
+  #meta { margin-top: 14px; width: 980px; max-width: 100%; }
+  #meta h2 { font-size: 15px; margin: 0 0 4px; }
+  #meta p { margin: 2px 0; color: var(--muted); }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+  button {
+    background: #ffffff10; color: var(--text);
+    border: 1px solid #ffffff26; border-radius: 8px;
+    padding: 6px 12px; font: inherit; cursor: pointer;
+  }
+  button:hover { background: #ffffff1c; }
+  .hint { color: #7b8496; font-size: 12.5px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>WinQuick · 入场动画候选</h1>
+  <p>这是<b>最小成本模拟</b>：只用来比较"整圈怎么出场"，不含顺时针逐格那套。
+     舞台尺寸、扇区几何、遮罩浓度都与真实程序一致（740 DIP 窗口按 0.6 缩放）。
+     点左边的候选即可播放；<code>依次播放全部</code> 可以背靠背对比。</p>
+</header>
+
+<div class="layout">
+  <aside id="list"></aside>
+
+  <main>
+    <div id="stage">
+      <div id="dim"></div>
+      <div id="wheel">
+        <svg id="svg" viewBox="0 0 740 740" preserveAspectRatio="xMidYMid meet"></svg>
+        <div id="hint">Esc</div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div id="meta">
+  <div class="row">
+    <button id="replay">重播当前</button>
+    <button id="all">依次播放全部</button>
+    <span class="hint" id="tip">把鼠标停在舞台上，再点「从光标位置放大」，它会从光标处展开（模拟真实触发点）。</span>
+  </div>
+  <h2 id="m-name"></h2>
+  <p id="m-params"></p>
+  <p id="m-cost"></p>
+  <p id="m-src"></p>
+</div>
+
+<script>
+// ---------------- 扇区几何：与程序同一套约定 ----------------
+// θ=0 是 12 点方向、θ 增大即屏幕顺时针；死区 56、外缘 200、扇区间隙 1.2°（都是 DIP，与应用一致）。
+const CX = 370, CY = 370, INNER = 56, OUTER = 200, GAP = 1.2, COUNT = 8;
+const NAMES = ["编辑器", "浏览器", "终端", "截图", "音乐", "下载", "文件夹", "设置"];
+
+function polar(r, deg) {
+  const rad = deg * Math.PI / 180;
+  return [CX + r * Math.sin(rad), CY - r * Math.cos(rad)];
+}
+
+function ringSector(inner, outer, startDeg, endDeg) {
+  const large = (endDeg - startDeg) > 180 ? 1 : 0;
+  const [ax, ay] = polar(outer, startDeg);
+  const [bx, by] = polar(outer, endDeg);
+  const [cx2, cy2] = polar(inner, endDeg);
+  const [dx, dy] = polar(inner, startDeg);
+  return [
+    `M ${ax} ${ay}`,
+    `A ${outer} ${outer} 0 ${large} 1 ${bx} ${by}`,
+    `L ${cx2} ${cy2}`,
+    `A ${inner} ${inner} 0 ${large} 0 ${dx} ${dy}`,
+    "Z",
+  ].join(" ");
+}
+
+function buildWheel() {
+  const svg = document.getElementById("svg");
+  let html = "";
+  for (let i = 0; i < COUNT; i++) {
+    const sweep = 360 / COUNT;
+    const mid = i * sweep;                       // 索引 0 居中在 12 点
+    html += `<path class="sector" d="${ringSector(INNER, OUTER, mid - sweep / 2 + GAP, mid + sweep / 2 - GAP)}"></path>`;
+    const [lx, ly] = polar(OUTER * 0.65, mid);
+    html += `<text class="label" x="${lx}" y="${ly}">${NAMES[i]}</text>`;
+  }
+  svg.innerHTML = html;
+}
+
+// ---------------- 候选清单 ----------------
+// cost：实现成本（在分层窗口上）
+//   低 = 只动 Transform / Opacity（WPF 动画直接支持）
+//   中 = 需要逐帧改滤镜或几何（分层窗口整块重栅格化）
+const CANDIDATES = [
+  {
+    id: "scale", name: "① 整窗缩放淡入（现状·兜底）",
+    dur: "167ms", ease: "cubic-bezier(0,0,0,1)", from: "scale 0.9 → 1，完全不透明 → 1",
+    cost: "低（现状，零改动）", costLevel: "low",
+    src: "来源：Windows/Fluent 官方 Motion 参数表的 Direct Entrance（167ms + 该曲线）。",
+  },
+  {
+    id: "spring", name: "② 缩放 + 轻回弹",
+    dur: "300ms", ease: "cubic-bezier(0.34,1.56,0.64,1)", from: "scale 0.86 → 1（过冲约 +8%）",
+    cost: "低（换一条曲线即可）", costLevel: "low",
+    src: "来源：社区 popIn 常用值；注意社区共识是回弹要克制（「到处回弹读起来廉价」）。",
+  },
+  {
+    id: "blur", name: "③ 模糊到清晰",
+    dur: "320ms", ease: "cubic-bezier(0.2,0,0,1)", from: "scale 1.04 → 1，blur 10px → 0",
+    cost: "中（WPF 的 BlurEffect 逐帧改 Radius 代价明显）", costLevel: "mid",
+    src: "来源：iOS 长按菜单那类「从模糊到清晰」的观感（业界常见做法；本轮联网检索额度已用尽，未取到官方参数）。",
+  },
+  {
+    id: "spin", name: "④ 旋转落位",
+    dur: "380ms", ease: "cubic-bezier(0.16,1,0.3,1)", from: "rotate -24° → 0，scale 0.9 → 1",
+    cost: "低（与缩放同一个 Transform）", costLevel: "low",
+    src: "来源：径向菜单常见语汇（把「转」与「径向」对应起来）；曲线取自 Material 3 的空间弹簧家族。",
+  },
+  {
+    id: "iris", name: "⑤ 圆形撑开（iris）",
+    dur: "300ms", ease: "cubic-bezier(0.2,0.8,0.2,1)", from: "从圆心向外圆形裁切 0% → 80%",
+    cost: "高（裁切要逐帧改几何/遮罩，分层窗口整块重绘）", costLevel: "high",
+    src: "来源：Fluent「从原点生长」/ Material container transform 家族；也是 Windows 开始菜单磁贴的常见观感。",
+  },
+  {
+    id: "cursor", name: "⑥ 从光标位置放大展开",
+    dur: "340ms", ease: "cubic-bezier(0.22,1,0.36,1)", from: "以光标为原点 scale 0.15 → 1",
+    cost: "低（只改变换原点：RenderTransformOrigin 取光标在窗口内的位置）", costLevel: "low",
+    src: "来源：Material container transform 与 iOS 菜单「从触点长出」的做法；与「轮盘跟着光标出现」的交互最贴合。",
+  },
+];
+
+// ---------------- 播放 ----------------
+const wheel = document.getElementById("wheel");
+const dim = document.getElementById("dim");
+const stage = document.getElementById("stage");
+let current = CANDIDATES[0];
+let cursorOrigin = "50% 50%";
+
+stage.addEventListener("mousemove", (e) => {
+  const r = wheel.getBoundingClientRect();
+  const x = ((e.clientX - r.left) / r.width) * 100;
+  const y = ((e.clientY - r.top) / r.height) * 100;
+  cursorOrigin = `${x.toFixed(1)}% ${y.toFixed(1)}%`;
+});
+
+function play(c) {
+  current = c;
+  document.querySelectorAll(".card").forEach((el) => el.classList.toggle("on", el.dataset.id === c.id));
+
+  // 重置：去掉所有动画类，强制一次重排，再加回目标类（否则同名动画不会重播）
+  wheel.className = "";
+  wheel.style.transformOrigin = c.id === "cursor" ? cursorOrigin : "50% 50%";
+  void wheel.offsetWidth;
+  wheel.classList.add("a-" + c.id, "on");
+
+  dim.className = "";
+  void dim.offsetWidth;
+  dim.classList.add("on");
+
+  document.getElementById("m-name").textContent = c.name;
+  document.getElementById("m-params").textContent = `时长 ${c.dur}　缓动 ${c.ease}　形态 ${c.from}`;
+  document.getElementById("m-cost").textContent = "实现成本：" + c.cost;
+  document.getElementById("m-src").textContent = c.src;
+}
+
+function buildList() {
+  const list = document.getElementById("list");
+  list.innerHTML = CANDIDATES.map((c, i) => `
+    <div class="card" data-id="${c.id}">
+      <div class="name">${c.name}</div>
+      <div class="params">${c.dur}　${c.ease}</div>
+      <div class="params">${c.from}</div>
+      <div class="cost ${c.costLevel}">成本：${c.cost}</div>
+      <div class="src">${c.src}</div>
+    </div>`).join("");
+
+  list.querySelectorAll(".card").forEach((el) => {
+    el.addEventListener("click", () => play(CANDIDATES.find((c) => c.id === el.dataset.id)));
+  });
+}
+
+document.getElementById("replay").addEventListener("click", () => play(current));
+
+document.getElementById("all").addEventListener("click", async () => {
+  for (const c of CANDIDATES) {
+    play(c);
+    await new Promise((r) => setTimeout(r, 1150));
+  }
+});
+
+buildWheel();
+buildList();
+play(CANDIDATES[0]);
+</script>
+</body>
+</html>

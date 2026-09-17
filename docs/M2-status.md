@@ -132,4 +132,4 @@ src\WinQuick.App\bin\Release\net10.0-windows\WinQuick.exe
 - **退场是否顺滑**，以及按下扇区后是否**立刻**切回原窗口（不该等动画）
 - 图标与文字在扇区里的位置是否协调（图标偏内 r=102、文字偏外 r=168）
 
-不按热键直接看：`WinQuick.exe --overlay-probe --hold=30`
+不按热键直接看：`WinQuick.Probes.exe --overlay-probe --hold=30`

@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- 探针的独立进程。为什么分开（docs/review-2026-09.md 的 P1）：
+       探针里有「能改注册表（shell-probe 会装/卸右键菜单）、能移动真实鼠标（add-sector-probe）」
+       这类能力，而它们原本和产品命令并列在同一个 exe 里 —— 任何进程都能用这些开关调用产品 exe。
+       分开之后：产品 exe 只剩常驻与右键菜单入口，探针照旧可用但只在这个 exe 里。
+       （注意：XML 注释里不能出现连续两个减号，所以这里不写开关的全名。） -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>WinQuick.Probes</RootNamespace>
+    <AssemblyName>WinQuick.Probes</AssemblyName>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\WinQuick.App\WinQuick.App.csproj" />
+  </ItemGroup>
+
+</Project>

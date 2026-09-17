@@ -2,6 +2,7 @@
   <Folder Name="/src/">
     <Project Path="src/WinQuick.App/WinQuick.App.csproj" />
     <Project Path="src/WinQuick.Core/WinQuick.Core.csproj" />
+    <Project Path="src/WinQuick.Probes/WinQuick.Probes.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/WinQuick.Core.Tests/WinQuick.Core.Tests.csproj" />

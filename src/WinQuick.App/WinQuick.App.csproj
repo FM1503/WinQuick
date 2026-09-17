@@ -29,6 +29,13 @@
     <ProjectReference Include="..\WinQuick.Core\WinQuick.Core.csproj" />
   </ItemGroup>
 
+  <!-- 探针项目的可见性来源。
+       为什么不让那些 *ForProbe 成员变成 public：它们是**测试接缝**，不是产品接口 ——
+       放进 public 就等于承诺长期维护它们（见 docs/review-2026-09.md 的 P2/P3）。 -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="WinQuick.Probes" />
+  </ItemGroup>
+
   <!-- CsWin32 reads this to decide which Win32 APIs to project. Keeping the list
        explicit means generated signatures can't drift out from under us. -->
   <ItemGroup>

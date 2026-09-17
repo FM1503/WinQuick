@@ -13,36 +13,12 @@ public sealed class CliOptions
     public const string HelpText = """
         用法: WinQuick.exe <命令> [--key=value ...]
 
-          --env                     打印环境与显示器/DPI 报告（需 DPI-aware 进程才是真值）
-          --mem-probe               空闲内存实测：托盘 + 预热窗口 + 隐藏遮罩
-              --warmup=秒           稳定等待时长，默认 12
-              --cycles=N            唤出/关闭循环次数，默认 0（只测冷启动空闲）
-              --visible=秒          唤出后停留秒数，默认 3
-          --hook-probe              热键实测：RegisterHotKey 可用性 + LL 钩子能否截获
-              --inject              用 SendInput 注入 Win+W 观察钩子是否看到
-              --interactive=秒      等待用户物理按键，默认 0（不等待）
-          --zorder-probe            核对真实 z 序与落点（WindowFromPoint），诊断"看得见却点不动"
-          --settings-probe          设置界面：XAML 加载、保存路径、留空语义、非法输入反馈
-          --config-probe            配置系统：默认文件创建、非法配置的容错、合法配置生效
-          --apps-probe              枚举 shell:AppsFolder，核对 UWP 应用的 AUMID 与图标
-          --action-probe            核对动作执行：Process.Start 是否成功、参数是否传对
-          --overlay-probe           核对覆盖层：窗口真实可见性、位置钳制、前台焦点还原、点击扇区
-              --hold=N              显示出轮盘并保持 N 秒供肉眼查看（Esc 可关闭）
+          无参数                   启动托盘常驻（开机自启走的也是这条）
           --add-to=值 路径          由文件右键菜单调用：把该路径加进指定目的地
                                       （值形如 root 或 group:分组名）
-          --shell-probe             右键菜单集成：注册→逐键核对→注销后无残留
-          --particle-probe          粒子动画代价：在真窗口上逐帧动 N 个图形/一张位图，量帧间隔
-              --seconds=N           每档采样秒数，默认 3
-          --label-probe             标签：超长文本的截断方式、悬停是否位移、中心读出完整文字
-          --perf-probe              帧间隔分布：扫过扇区与子弧动画，测流畅度的可比值
-              --ms=N                每个扇区停留毫秒，默认 90
-              --repeat=N            重复轮数，默认 3
-          --add-sector-probe        核对环里的「＋」扇区：命中、点击分派、12 项上限、加项后位置
-          --flicker-probe           刷新闪烁：逐动作数窗口级操作，纯内容刷新应当一项都不涨
-          --flash-probe             闪烁本身：抓屏幕像素，量某个动作到底闪不闪
-          --render-preview          离屏渲染出 PNG，做几何与配色的数值自检
-              --out=路径            输出 PNG，默认 artifacts/m0/preview.png
-              --state=名字          渲染状态，默认 default
+
+        探针（--env / --*-probe / --render-preview）已拆到独立进程：
+        publish\probes\WinQuick.Probes.exe --help-all
         """;
 
     public static CliOptions Parse(string[] args)

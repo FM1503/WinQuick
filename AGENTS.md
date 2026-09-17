@@ -86,6 +86,10 @@ Start-Process publish\WinQuick.exe
 
 ## 6. 其它既有约定
 
+- **探针在独立进程里**：`src/WinQuick.Probes`（发布后是 `publish\probes\WinQuick.Probes.exe`）。
+  产品 exe（`WinQuick.exe`）只有常驻与右键菜单入口 —— 探针里那些"会改注册表、会移动真实鼠标"
+  的能力不该出现在产品二进制里（详见 `docs/review-2026-09.md` 的 P1）。
+  探针文件的命名空间仍是 `WinQuick.App.M0`（搬迁时刻意不改，靠 `InternalsVisibleTo` 拿接缝）。
 - 探针命名 `--xxx-probe`，输出走 `ProbeOutput`，结论必须**能失败**（含至少一条对照检查）。
 - 注释解释**为什么**（尤其是"为什么不是看起来更直接的那种写法"），不解释"这一行做了什么"。
 - 界面文案与注释里的引号用「」，不要用 ASCII 双引号（历史上多次因此编译不过）。

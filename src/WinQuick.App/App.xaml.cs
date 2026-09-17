@@ -32,96 +32,10 @@ public partial class App : Application
 
         switch (cli.Command)
         {
-            case "--env":
-                M0.EnvProbe.Run();
-                ExitSoon();
-                break;
-
-            // 下面两个探针需要消息循环在跑（DispatcherTimer / await Task.Delay），
-            // 但 OnStartup 阶段 WPF 的调度器还没开始泵消息，
-            // 所以必须投递出去、等 Run() 把循环跑起来之后再执行。
-            case "--mem-probe":
-                RunDetached(() => M0.MemoryProbe.RunAsync(cli));
-                break;
-
-            case "--hook-probe":
-                RunDetached(() => M0.HookProbe.RunAsync(cli));
-                break;
-
-            case "--zorder-probe":
-                // 需要消息循环与真实的窗口创建/显示。
-                RunDetached(() => M0.ZOrderProbe.RunAsync(cli));
-                break;
-
-            case "--settings-probe":
-                // 需要消息循环：要真的把窗口显示出来核对。
-                RunDetached(() => M0.SettingsProbe.RunAsync(cli));
-                break;
-
-            case "--config-probe":
-                // 需要消息循环：热重载靠 DispatcherTimer 触发防抖。
-                RunDetached(() => M0.ConfigProbe.RunAsync(cli));
-                break;
-
-            case "--apps-probe":
-                M0.AppsProbe.Run(cli);
-                ExitSoon();
-                break;
-
-            case "--action-probe":
-                RunDetached(() => M0.ActionProbe.RunAsync(cli));
-                break;
-
-            case "--particle-probe":
-                // 需要消息循环与真实窗口：要在真的分层窗口上逐帧更新一堆图形。
-                RunDetached(() => M0.ParticleProbe.RunAsync(cli));
-                break;
-
-            case "--label-probe":
-                // 需要消息循环与真实窗口：要核对悬停前后的排版属性。
-                RunDetached(() => M0.LabelProbe.RunAsync(cli));
-                break;
-
-            case "--shell-probe":
-                // 不需要消息循环：只读写注册表与文件。
-                M0.ShellProbe.Run(cli);
-                ExitSoon();
-                break;
-
             case "--add-to":
                 // 文件右键菜单调用的入口。**不创建任何窗口、不弹东西** ——
                 // 用户只是想加一项，不该因此看到任何界面。
                 RunAddToRequest(cli);
-                break;
-
-            case "--perf-probe":
-                // 需要消息循环：帧间隔靠 CompositionTarget.Rendering 采。
-                RunDetached(() => M0.PerfProbe.RunAsync(cli));
-                break;
-
-            case "--flicker-probe":
-                // 需要消息循环与真实窗口：要真的显示覆盖层、打开面板、再逐个动作地刷新。
-                RunDetached(() => M0.FlickerProbe.RunAsync(cli));
-                break;
-
-            case "--flash-probe":
-                // 需要消息循环与真实窗口：要真的显示覆盖层并抓屏幕像素。
-                RunDetached(() => M0.FlashProbe.RunAsync(cli));
-                break;
-
-            case "--add-sector-probe":
-                // 需要消息循环与真实窗口：要真的显示覆盖层并走点击分派。
-                RunDetached(() => M0.AddSectorProbe.RunAsync(cli));
-                break;
-
-            case "--overlay-probe":
-                // 需要消息循环（Show/Hide 之后要等实际合成），走投递路径。
-                RunDetached(() => M0.OverlayProbe.RunAsync(cli));
-                break;
-
-            case "--render-preview":
-                M0.RenderPreview.Run(cli);
-                ExitSoon();
                 break;
 
             case "":
@@ -132,6 +46,9 @@ public partial class App : Application
                 Diagnostics.ProbeOutput.Initialize("usage");
                 Diagnostics.ProbeOutput.Line($"未知命令: {cli.Command}");
                 Diagnostics.ProbeOutput.Line(CliOptions.HelpText);
+                Diagnostics.ProbeOutput.Line();
+                Diagnostics.ProbeOutput.Line("探针（env / 各 *-probe / render-preview）不在本 exe 里，" +
+                                             "见 publish 目录下 probes 子目录中的 WinQuick.Probes.exe。");
                 Diagnostics.ProbeOutput.Flush();
                 ExitSoon();
                 break;

@@ -139,7 +139,7 @@ src/WinQuick.App/bin/Release/net10.0-windows/WinQuick.exe
 ### 4.2 不按热键直接看视觉效果
 
 ```
-WinQuick.exe --overlay-probe --hold=30
+WinQuick.Probes.exe --overlay-probe --hold=30
 ```
 
 直接显示轮盘并保持 30 秒（Esc 可关闭），用于纯粹看外观。改完视觉参数后重复这条命令即可快速迭代。
@@ -179,13 +179,13 @@ M2 会先做视觉规格定稿。我可以按不同风格渲染几版 PNG 给你
 
 ```
 WinQuick.exe                         托盘常驻（默认）
-WinQuick.exe --env                   DPI-aware 环境报告
-WinQuick.exe --hook-probe --inject   热键注册能力 + 钩子截获能力
-WinQuick.exe --hook-probe --interactive=15   人工按键复核
-WinQuick.exe --mem-probe --hold=20   分阶段内存回归 + 保持存活供任务管理器核对
-WinQuick.exe --overlay-probe         覆盖层行为自动核对
-WinQuick.exe --overlay-probe --hold=30       显示出轮盘供肉眼查看
-WinQuick.exe --render-preview        离屏渲染成 PNG
+WinQuick.Probes.exe --env                   DPI-aware 环境报告
+WinQuick.Probes.exe --hook-probe --inject   热键注册能力 + 钩子截获能力
+WinQuick.Probes.exe --hook-probe --interactive=15   人工按键复核
+WinQuick.Probes.exe --mem-probe --hold=20   分阶段内存回归 + 保持存活供任务管理器核对
+WinQuick.Probes.exe --overlay-probe         覆盖层行为自动核对
+WinQuick.Probes.exe --overlay-probe --hold=30       显示出轮盘供肉眼查看
+WinQuick.Probes.exe --render-preview        离屏渲染成 PNG
 tools/analyze-render.ps1 -Path <png> 对渲染结果做数值验证
 ```
 

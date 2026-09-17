@@ -31,6 +31,11 @@ $ErrorActionPreference = 'Stop'
 $project = Join-Path $PSScriptRoot '..\src\WinQuick.App\WinQuick.App.csproj'
 $outDir = Join-Path $PSScriptRoot "..\$Output"
 
+# 探针是**独立进程**（docs/review-2026-09.md 的 P1）：产品 exe 不该带着能改注册表、
+# 能移动真实鼠标的能力。这里把它一起发布到 publish\probes\，两者都能开箱运行。
+$probesProject = Join-Path $PSScriptRoot '..\src\WinQuick.Probes\WinQuick.Probes.csproj'
+$probesOutDir = Join-Path $outDir 'probes'
+
 $common = @(
     'publish', $project,
     '-c', 'Release',
@@ -55,6 +60,21 @@ else {
 
 if ($LASTEXITCODE -ne 0) {
     throw "dotnet publish 失败，退出码 $LASTEXITCODE"
+}
+
+# ---- 探针（独立进程）----
+if ($FrameworkDependent) {
+    dotnet publish $probesProject -c Release -r win-x64 -o $probesOutDir -p:DebugType=none -p:PublishSingleFile=false | Out-Host
+}
+else {
+    dotnet publish $probesProject -c Release -r win-x64 -o $probesOutDir `
+        --self-contained true -p:PublishSingleFile=true `
+        -p:EnableCompressionInSingleFile=false `
+        -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=none | Out-Host
+}
+
+if ($LASTEXITCODE -ne 0) {
+    throw "探针发布失败，退出码 $LASTEXITCODE"
 }
 
 $exe = Join-Path $outDir 'WinQuick.exe'

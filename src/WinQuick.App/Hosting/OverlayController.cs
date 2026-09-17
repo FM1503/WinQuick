@@ -979,6 +979,16 @@ public sealed class OverlayController : IDisposable
         + $" + 子弧 {Radial.ChildArcAnimator.ActiveHookCount}"
         + $" + 几何压力 {Radial.RadialRingView.ActiveStressHookCount}";
 
+    /// <summary>
+    /// 诊断用：冻结指针轮询。
+    ///
+    /// 像素级的"与之前逐像素相同"核对会被**人手的鼠标移动**打破：指针扫过轮盘时
+    /// 悬停扇区会被高亮，那一块整片像素都变（实测约 2.5 万像素 ≈ 一个扇区的面积），
+    /// 于是核对随机变红、还被误读成产品缺陷。探针期间的悬停不是被测对象，冻结它。
+    /// （每次 Show() 都会重新启动轮询，所以 Show 之后要再调一次。）
+    /// </summary>
+    internal void FreezePointerForProbe() => _radial.StopInteraction();
+
     /// <summary>诊断用：某格当前的逐格入场进度。</summary>
     internal double EntranceRevealForProbe(int index) => _radial.EntranceRevealForProbe(index);
 

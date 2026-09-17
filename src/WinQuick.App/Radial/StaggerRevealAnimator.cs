@@ -59,17 +59,25 @@ internal sealed class StaggerRevealAnimator
     /// <summary>第 i 项的起始延迟（探针用它核对"从 12 点那格开始、按索引递增"）。</summary>
     public double StartDelayOf(int index) => index * _staggerMs;
 
-    public double ProgressOf(int index) => index >= 0 && index < _count ? _progress[index] : 1.0;
+    public double ProgressOf(int index) =>
+        index >= 0 && index < _count ? Math.Max(0, _progress[index]) : 1.0;
 
     public double ElapsedMs => _running ? Environment.TickCount64 - _startedAtMs : TotalMs;
+
+    /// <summary>
+    /// "还没轮到"的哨兵值。视图把它翻译成"不显示"（零厚度、全透明），
+    /// 与"轮到但进度为 0"（＝首态，见视图里的残影映射）区分开 ——
+    /// 少了这个区分，没轮到的格会以首态提前出现在盘面上。
+    /// </summary>
+    public const double NotStarted = -1;
 
     public void Start()
     {
         // 起始状态由动画器自己落定：调用方不必记得先清一遍（漏了就会先闪一帧满环）。
         for (var i = 0; i < _count; i++)
         {
-            _progress[i] = 0;
-            _write(i, 0);
+            _progress[i] = NotStarted;
+            _write(i, NotStarted);
         }
 
         _startedAtMs = Environment.TickCount64;
@@ -119,6 +127,9 @@ internal sealed class StaggerRevealAnimator
 
         for (var i = 0; i < _count; i++)
         {
+            // 还没轮到它的格保持"不在"：既不动、也不写。
+            if (elapsed < StartDelayOf(i)) continue;
+
             var raw = StaggerReveal.RawProgress(i, elapsed, _staggerMs, _itemMs);
 
             if (raw >= 1)

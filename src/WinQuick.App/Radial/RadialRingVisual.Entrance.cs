@@ -47,6 +47,21 @@ public sealed partial class RadialRingView
         index >= 0 && index < _reveal.Length ? _reveal[index] : 1.0;
 
     /// <summary>
+    /// 首态（"残影"）映射：把动画器的原始进度翻成**实际画出来的完整度**。
+    ///
+    /// 原始进度 0（＝刚轮到它）不是"什么都没有"，而是用户指定的首态：
+    /// 25% 厚度 + 50% 不透明度；原始进度 1 才是完整实态。
+    /// 这样做的好处：每格不必从零长起 —— 它一出现就已经"存在"了，
+    /// 于是格距可以压到很小、整轮因此短得多，而"新出现一格"仍是可读的离散事件。
+    /// 原始进度小于 0（还没轮到）才是不显示。
+    /// </summary>
+    private double ApplyGhostReveal(double raw) =>
+        StaggerReveal.ApplyGhost(raw, _tokens.Motion.SectorGhostReveal);
+
+    private double ApplyGhostOpacity(double raw) =>
+        StaggerReveal.ApplyGhost(raw, _tokens.Motion.SectorGhostOpacity);
+
+    /// <summary>
     /// 把入场起始状态落定：全部扇区零厚度、图标文字与中心提示全透明。
     /// **必须在 <c>Show()</c> 之前调用** —— 否则会先以终态渲染一两帧再开始长，
     /// 看起来是"先闪一下整个圆盘"。这条在设置面板上出过一次事故。
@@ -55,7 +70,9 @@ public sealed partial class RadialRingView
     {
         StopEntrance();
 
+        // 全部先"不在"（-1）：不是残影首态 —— 还没轮到的格不该出现在盘面上。
         _reveal = new double[_sectors.Length];
+        for (var i = 0; i < _reveal.Length; i++) _reveal[i] = StaggerRevealAnimator.NotStarted;
         for (var i = 0; i < _sectors.Length; i++) WriteRingSectorGeometry(i, 0);
 
         // **只在还没有记录过的时候记录。**
@@ -129,14 +146,16 @@ public sealed partial class RadialRingView
     {
         if (index < 0 || index >= _reveal.Length) return;
 
-        _reveal[index] = progress;
+        // 存**实际完整度**（残影已计入）：探针读它就是"这格现在有多完整"。
+        var reveal = ApplyGhostReveal(progress);
+        _reveal[index] = reveal;
 
         // 几何走统一写入点（与悬停鼓出合成）。
         WriteRingSectorGeometry(index, 0);
 
-        // 图标与文字跟着自己那一格到。透明度必须夹住：缓动带约 6% 回弹，
-        // 不夹的话会算出 1.06 的透明度。
-        var opacity = Math.Clamp(progress, 0, 1);
+        // 图标与文字跟着自己那一格到。透明度必须夹住：缓动带一点回弹，
+        // 不夹的话会算出大于 1 的透明度。
+        var opacity = ApplyGhostOpacity(progress);
         if (index < _icons.Length) _icons[index].Opacity = opacity * OriginalIconOpacity(index);
         if (index < _labels.Length) _labels[index].SetOpacity(opacity * OriginalLabelOpacity(index));
 

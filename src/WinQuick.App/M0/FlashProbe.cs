@@ -30,6 +30,15 @@ namespace WinQuick.App.M0;
 ///
 /// 有一条对照检查「藏掉轮盘必须被检出」：检测器必须能失败，否则它说明不了任何事。
 ///
+/// **测量限度（读结果前务必知道）**：
+/// 1. 像素类核对会被**人手的鼠标移动**打破 —— 指针扫过轮盘时悬停扇区整片高亮
+///    （约 2.5 万采样像素 ≈ 一个扇区的面积）。探针因此冻结指针轮询
+///    （<c>FreezePointerForProbe</c>），但若在别处重新启动了轮询，核对仍会随机报红。
+/// 2. 机器繁忙时窗口会被合成到旧内容，像素差值同样会随机变大。
+///    所以**像素类失败要先排除这两点再当成缺陷**；真正稳定的判据是应用侧那几条
+///    （顺序、首态、结束态、耗时、回调残留）。
+/// 3. 视觉观感（"好不好看"）不由本探针判定 —— 那部分交给人眼验收。
+///
 /// 用法：--flash-probe
 /// </summary>
 public static class FlashProbe
@@ -81,6 +90,7 @@ public static class FlashProbe
             await Task.Delay(300);
 
             overlay.Show();
+                overlay.FreezePointerForProbe();
             await Task.Delay(1200);
             overlay.OpenSettings();
             await Task.Delay(1200);
@@ -190,6 +200,7 @@ public static class FlashProbe
                     $"{primary} 触发后峰值 {log.PeakAfter}，变化帧 {log.SpikeCount}"));
 
                 overlay.Show();
+                overlay.FreezePointerForProbe();
                 await Task.Delay(1200);
                 overlay.OpenSettings();
                 await Task.Delay(1200);
@@ -325,12 +336,18 @@ public static class FlashProbe
                     return (opacityAfterTrigger, scales);
                 }
 
-                if (overlay.SettingsPanelForProbe is { } settingsPanel)
+                // **只对"整窗缩放淡入"这种风格判定。**
+                // 逐格入场（sequential-bulge）按设计**不动**窗口级缩放与不透明度
+                //（它只让环上的扇区逐格长出来），所以那两项恒为 1 —— 拿它们做判据
+                // 会恒定报红。逐格入场的"首帧不是终态"由另外两条核：环上每格的首态
+                //（残影 0.25）与像素级"早期不得出现终态画面"。
+                if (overlay.SettingsPanelForProbe is { } settingsPanel && UsesScaleFadeEntrance())
                 {
                     // 面板：先把覆盖层与面板都藏起来，走一次真实的"打开面板"。
                     overlay.Hide();
                     await Task.Delay(700);
                     overlay.Show();
+                overlay.FreezePointerForProbe();
                     await Task.Delay(1200);
 
                     var (opacities, _) = await SampleEntranceAsync(
@@ -358,6 +375,7 @@ public static class FlashProbe
                 await SampleEntranceAsync("打开覆盖层", () => radialEntrance(), () =>
                 {
                     overlay.Show();
+                overlay.FreezePointerForProbe();
                     return Task.CompletedTask;
                 });
 
@@ -436,6 +454,11 @@ public static class FlashProbe
                 return (firstVisible, (int)peak, monotonic, string.Join(" ", series));
             }
 
+            if (!UsesScaleFadeEntrance())
+            {
+                ProbeOutput.Line("（跳过「第一帧不透明度」那两条：逐格入场按设计不动窗口级缩放/不透明度）");
+            }
+
             {
                 ProbeOutput.Section("打开时的入场：第一帧是不是终态");
                 overlay.CloseSettings();
@@ -450,6 +473,7 @@ public static class FlashProbe
                         () =>
                         {
                             overlay.Show();
+                overlay.FreezePointerForProbe();
                             return Task.CompletedTask;
                         },
                         "打开覆盖层");
@@ -484,6 +508,7 @@ public static class FlashProbe
                     overlay.Hide();
                     await Task.Delay(900);
                     overlay.Show();
+                overlay.FreezePointerForProbe();
                     await Task.Delay(1200);
                     overlay.OpenSettings();
                     await Task.Delay(1200);
@@ -501,6 +526,7 @@ public static class FlashProbe
                 overlay.CloseSettings();
                 await Task.Delay(500);
                 overlay.Show();
+                overlay.FreezePointerForProbe();
                 await Task.Delay(1400);            // 入场走完、画面静下来
 
                 using var sampler = new ScreenSampler(
@@ -526,6 +552,7 @@ public static class FlashProbe
                 //（窗口改为停放到屏幕外之后，挪回屏上的一瞬间会露出上一轮的完整圆盘）。
                 var pixelFrames = new List<(double MaxReveal, long DiffVsResting)>();
                 var lastIndex = overlay.SectorCountForProbe - 1;
+                var tick = 0;
 
                 timer.Tick += (_, _) =>
                 {
@@ -535,10 +562,15 @@ public static class FlashProbe
 
                     markerFrames.Add((row[lastIndex], overlay.MarkerOpacityForProbe(lastIndex)));
 
-                    var frame = sampler.CaptureFrame();
-                    var (pixelDiff, _, _, _, _, _) = ScreenSampler.CompareDetailed(
-                        resting, frame, sampler.Width, sampler.Height);
-                    pixelFrames.Add((row.Max(), pixelDiff));
+                    // 像素采样每 3 拍一次：单格只有几十毫秒，若每拍都抓像素（1~3ms），
+                    // 进度采样会被拖到 11ms 左右 —— 那样"某格的首态"就采不到了（实测漏过）。
+                    if (tick++ % 3 == 0)
+                    {
+                        var frame = sampler.CaptureFrame();
+                        var (pixelDiff, _, _, _, _, _) = ScreenSampler.CompareDetailed(
+                            resting, frame, sampler.Width, sampler.Height);
+                        pixelFrames.Add((row.Max(), pixelDiff));
+                    }
                 };
 
                 overlay.Hide();
@@ -546,6 +578,7 @@ public static class FlashProbe
 
                 timer.Start();
                 overlay.Show();
+                overlay.FreezePointerForProbe();
                 await Task.Delay(1100);
                 timer.Stop();
 
@@ -604,6 +637,12 @@ public static class FlashProbe
 
                 results.Add(("轮盘出现的第一帧不是终态（不会先闪一个完整圆盘）",
                     staleFrames.Count == 0, $"疑似终态的帧数 {staleFrames.Count}"));
+
+                // 残影首态这一条**不再靠采样核对**：单格只有 32ms，而采样间隔约 11ms，
+                // 捕不到早期帧（同一二进制一次报 0.25、一次报 0.93）—— 间歇的核对没有价值。
+                // 改成 Core 里的纯函数 + 单测（StaggerReveal.ApplyGhost 的 4 条用例），
+                // 观感部分交给人工验收。
+                ProbeOutput.Kv("残影首态", "由单测锁住（StaggerReveal.ApplyGhost），此处不采样");
 
                 // 分组箭头必须跟着自己那一格：在该格还没长出来时，箭头不得可见。
                 var leakedAt = markerFrames
@@ -743,6 +782,10 @@ public static class FlashProbe
 
     /// <summary>两个时间戳之间差多少毫秒。<b>两个都是时间戳</b> —— 早先这里只收一个参数，
     /// 结果调用方把"差值"传了进来，被又减了一次当前时间，印出四亿毫秒。</summary>
+    /// <summary>当前是不是"整窗缩放淡入"风格（窗口级判据只对它有意义）。</summary>
+    private static bool UsesScaleFadeEntrance() =>
+        !WinQuick.App.Design.TokenStore.Current.Motion.SequentialEntrance;
+
     private static double MsBetween(long from, long to) =>
         (to - from) * 1000.0 / Stopwatch.Frequency;
 

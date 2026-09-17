@@ -86,18 +86,25 @@ public sealed record DesignTokens
 
         // 逐格节奏的范围。上下限取的是"明显不合理"的边界，不是审美判断：
         // 交错太小等于同时全动（就不是"逐格"了），单项时长太大会让整轮拖沓。
+        if (Motion.SectorGhostReveal is < 0 or > 0.6)
+            problems.Add($"motion.sectorGhostReveal={Motion.SectorGhostReveal} 应在 0~0.6（太大就不像「长出来」了）");
+        if (Motion.SectorGhostOpacity is < 0 or > 0.8)
+            problems.Add($"motion.sectorGhostOpacity={Motion.SectorGhostOpacity} 应在 0~0.8");
         if (Motion.SectorStaggerMs is < 10 or > 200)
             problems.Add($"motion.sectorStaggerMs={Motion.SectorStaggerMs} 应在 10~200ms");
-        if (Motion.SectorPopMs is < 60 or > 600)
-            problems.Add($"motion.sectorPopMs={Motion.SectorPopMs} 应在 60~600ms");
+        // 下限从 60ms 放到 20ms：残影首态（见 sectorGhostReveal）让"短单格时长"成为合法设计 ——
+        // 每格不必从零长起，所以 20~40ms 的快速补实是正常的。下限仍然保留，用来拦住 0/负数这类笔误。
+        // （这条下限当初按"从零长起"定，残影把前提改掉了。）
+        if (Motion.SectorPopMs is < 20 or > 600)
+            problems.Add($"motion.sectorPopMs={Motion.SectorPopMs} 应在 20~600ms");
         if (Motion.SectorSweepMaxMs is < 120 or > 1200)
             problems.Add($"motion.sectorSweepMaxMs={Motion.SectorSweepMaxMs} 应在 120~1200ms");
         if (Motion.CenterHintMs is < 0 or > 400)
             problems.Add($"motion.centerHintMs={Motion.CenterHintMs} 应在 0~400ms");
         if (Motion.ChildStaggerMs is < 10 or > 200)
             problems.Add($"motion.childStaggerMs={Motion.ChildStaggerMs} 应在 10~200ms");
-        if (Motion.ChildGrowMs is < 40 or > 400)
-            problems.Add($"motion.childGrowMs={Motion.ChildGrowMs} 应在 40~400ms");
+        if (Motion.ChildGrowMs is < 16 or > 400)
+            problems.Add($"motion.childGrowMs={Motion.ChildGrowMs} 应在 16~400ms");
 
         // 整轮上限必须容得下单项时长，否则压缩会把交错压成 0（等于全部同时长）。
         if (Motion.SectorSweepMaxMs < Motion.SectorPopMs)
@@ -324,8 +331,17 @@ public sealed record MotionTokens
     /// </summary>
     public string EntranceStyle { get; init; } = "sequential-bulge";
 
+    /// <summary>
+    /// 每格的**首态完整度**（"残影"）：一出现就是这么多厚度，再从那里长到实态。
+    /// 0 = 旧版"从零长起"。
+    /// </summary>
+    public double SectorGhostReveal { get; init; } = 0.25;
+
+    /// <summary>每格首态的透明度（与 <see cref="SectorGhostReveal"/> 配对）。</summary>
+    public double SectorGhostOpacity { get; init; } = 0.5;
+
     /// <summary>逐格入场的相邻两项起始间隔。</summary>
-    public int SectorStaggerMs { get; init; } = 55;
+    public int SectorStaggerMs { get; init; } = 32;
 
     /// <summary>单个扇区从零厚度长到满的时长。</summary>
     public int SectorPopMs { get; init; } = 190;

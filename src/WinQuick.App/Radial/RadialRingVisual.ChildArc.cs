@@ -414,13 +414,14 @@ public sealed partial class RadialRingView
 
         _childRevealAnimation?.Stop();
         _childReveal = new double[_childSectors.Count];
+        for (var i = 0; i < _childReveal.Length; i++) _childReveal[i] = StaggerRevealAnimator.NotStarted;
 
         _childRevealAnimation = new StaggerRevealAnimator(
             _childSectors.Count, plan.StaggerMs, motion.ChildGrowMs, motion.SectorPopEasing,
             write: (i, progress) =>
             {
                 if (i < 0 || i >= _childReveal.Length) return;
-                _childReveal[i] = progress;
+                _childReveal[i] = progress < 0 ? StaggerRevealAnimator.NotStarted : progress;
                 RebuildChildGeometry();
             },
             onCompleted: () => _childReveal = []);
@@ -428,8 +429,9 @@ public sealed partial class RadialRingView
         _childRevealAnimation.Start();
     }
 
+    /// <summary>子项也走同一套首态映射（未轮到＝0，轮到即残影，1＝实态）。</summary>
     private double ChildRevealOf(int index) =>
-        index >= 0 && index < _childReveal.Length ? _childReveal[index] : 1.0;
+        index >= 0 && index < _childReveal.Length ? ApplyGhostReveal(_childReveal[index]) : 1.0;
 
     /// <summary>
     /// 收起时**冻结**（不重置）：残余的进度跟着弧级进度一起缩回去，

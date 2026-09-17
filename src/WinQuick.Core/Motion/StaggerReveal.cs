@@ -35,6 +35,27 @@ public static class StaggerReveal
         return (stagger, stagger * (count - 1) + itemMs);
     }
 
+    /// <summary>
+    /// 把动画器的原始进度翻成**实际画出来的完整度**（"残影首态"）。
+    ///
+    /// 原始进度 0（＝刚轮到它）不是"什么都没有"，而是首态：由 <paramref name="ghost"/> 给定的
+    /// 那一份厚度/不透明度；原始进度 1 才是完整实态。好处是每格不必从零长起 ——
+    /// 它一出现就已经"存在"，于是格距可以压得很小、整轮短得多，而"新出现一格"
+    /// 仍是可读的离散事件。
+    ///
+    /// 原始进度小于 0（＝还没轮到）才是不显示。<paramref name="ghost"/> 为 0 时退化成旧版。
+    ///
+    /// 抽成纯函数是为了能被单测锁住：观感类的东西没法自动判，但这条映射可以 ——
+    /// 而它一旦写错（比如把 0 也映射成"不显示"），残影就形同虚设、且肉眼不一定看得出来。
+    /// </summary>
+    public static double ApplyGhost(double raw, double ghost)
+    {
+        if (raw < 0) return 0;
+
+        ghost = Math.Clamp(ghost, 0, 0.9);
+        return ghost + (1 - ghost) * Math.Clamp(raw, 0, 1);
+    }
+
     /// <summary>第 <paramref name="index"/> 项在 <paramref name="elapsedMs"/> 时刻的线性进度（0..1，未加缓动）。</summary>
     public static double RawProgress(int index, double elapsedMs, double staggerMs, double itemMs)
     {

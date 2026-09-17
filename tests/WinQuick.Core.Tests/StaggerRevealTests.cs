@@ -76,4 +76,37 @@ public class StaggerRevealTests
         Assert.Equal(0.0, StaggerReveal.RawProgress(0, -50, 55, 190), 1e-9);
         Assert.Equal(1.0, StaggerReveal.RawProgress(0, 100_000, 55, 190), 1e-9);
     }
+
+    [Fact]
+    public void ApplyGhost_MapsRawProgressOntoTheFirstState()
+    {
+        // 原始进度 0 ＝ 首态（残影），不是"什么都没有"：这是用户提的设计
+        Assert.Equal(0.25, StaggerReveal.ApplyGhost(0, 0.25), 1e-9);
+        Assert.Equal(0.1, StaggerReveal.ApplyGhost(0, 0.1), 1e-9);
+
+        // 1 ＝ 完整实态（映射必须端点精确，否则入场结束后几何回不到静止态）
+        Assert.Equal(1.0, StaggerReveal.ApplyGhost(1, 0.25), 1e-9);
+
+        // 中间线性插值
+        Assert.Equal(0.625, StaggerReveal.ApplyGhost(0.5, 0.25), 1e-9);
+    }
+
+    [Fact]
+    public void ApplyGhost_TreatsNotStartedAsInvisible()
+    {
+        // 小于 0 ＝ 还没轮到它：必须彻底不显示。
+        // 若这一条写错（把"没轮到"也映射成残影），盘面上会**同时亮着所有格的残影** ——
+        // 那就不是"逐格出现"了，而肉眼未必看得出是 bug。
+        // 约定：负值表示"还没轮到"（App 侧 StaggerRevealAnimator.NotStarted = -1）。
+        Assert.Equal(0.0, StaggerReveal.ApplyGhost(-1, 0.25), 1e-9);
+        Assert.Equal(0.0, StaggerReveal.ApplyGhost(-0.001, 0.25), 1e-9);
+    }
+
+    [Fact]
+    public void ApplyGhost_DegradesToTheOldBehaviourWhenGhostIsZero()
+    {
+        // ghost = 0 就是旧版"从零长起"
+        Assert.Equal(0.0, StaggerReveal.ApplyGhost(0, 0), 1e-9);
+        Assert.Equal(1.0, StaggerReveal.ApplyGhost(1, 0), 1e-9);
+    }
 }

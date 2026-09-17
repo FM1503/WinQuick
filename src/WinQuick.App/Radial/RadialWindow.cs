@@ -701,6 +701,17 @@ public sealed class RadialWindow : Window
         _rotate.BeginAnimation(RotateTransform.AngleProperty, null);
         _view.Root.BeginAnimation(UIElement.OpacityProperty, null);
 
+        // **把环恢复成静止态。**
+        //
+        // 休眠期间窗口里装的是"空的环"（见 ClearForDormancy：分层窗口显示的是上一次
+        // 提交的位图，装着完整圆盘会把"终态"漏成开场那一帧）。而整窗缩放这条路线
+        // **没有"逐格重新长出来"的过程** —— 它只动窗口的缩放/透明度。
+        // 所以这里必须显式恢复，否则第二次唤出会看到一个空轮盘（用户报的现象）。
+        //
+        // 本方法在 PlaceAt 之前调用，所以恢复发生在窗口还在屏幕外的时候：
+        // 等它挪回屏上，位图里已经是"完整的环 + 全透明"，随后的缩放淡入才接得上。
+        _view.CompleteEntranceImmediate();
+
         // 窗口整体从"略小 + 转了个角度 + 全透明"起步。
         _scale.ScaleX = _scale.ScaleY = _tokens.Motion.EntranceFromScale;
         _rotate.Angle = _tokens.Motion.EntranceFromRotateDeg;

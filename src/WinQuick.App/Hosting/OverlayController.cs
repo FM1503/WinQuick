@@ -989,6 +989,9 @@ public sealed class OverlayController : IDisposable
     /// </summary>
     internal void FreezePointerForProbe() => _radial.StopInteraction();
 
+    /// <summary>诊断用：某扇区图形当前的透明度。</summary>
+    internal double SectorOpacityForProbe(int index) => _radial.SectorOpacityForProbe(index);
+
     /// <summary>诊断用：某格当前的逐格入场进度。</summary>
     internal double EntranceRevealForProbe(int index) => _radial.EntranceRevealForProbe(index);
 

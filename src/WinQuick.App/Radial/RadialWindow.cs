@@ -687,23 +687,20 @@ public sealed class RadialWindow : Window
         _scale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
         _view.Root.BeginAnimation(UIElement.OpacityProperty, null);
 
-        if (_tokens.Motion.SequentialEntrance)
-        {
-            // 逐格入场：窗口整体立刻在场，只有环在逐格长出来。
-            // 起始状态落定在**视图**上（每格零厚度、图标文字透明）；
-            // 窗口层的不透明度必须留 1，否则会连"还没长出来的那几格"一起淡入。
-            _scale.ScaleX = _scale.ScaleY = 1.0;
-            _view.Root.Opacity = 1.0;
-            _view.PrepareEntrance();
-            return;
-        }
-
+        // 窗口整体从"略小 + 全透明"起步（这是原有的缩放淡入）。
         _scale.ScaleX = _scale.ScaleY = _tokens.Motion.EntranceFromScale;
         _view.Root.Opacity = 0;
+
+        // 逐格入场时**额外**把环上每一格也落定成"还没出现"。
+        // 两者叠加：画面整体放大淡入的同时，圆盘一格格亮起来 ——
+        // 用户明确要求保留缩放动画（此前逐格风格把它跳过了）。
+        if (_tokens.Motion.SequentialEntrance) _view.PrepareEntrance();
     }
 
     /// <summary>诊断用：某格当前的逐格入场进度（0 = 还没长出来）。</summary>
     internal double EntranceRevealForProbe(int index) => _view.EntranceRevealOf(index);
+
+    internal double SectorOpacityForProbe(int index) => _view.SectorOpacityForProbe(index);
 
     internal bool IsEntranceAnimatingForProbe => _view.IsEntranceAnimating;
 
@@ -727,11 +724,8 @@ public sealed class RadialWindow : Window
             return;
         }
 
-        if (motion.SequentialEntrance)
-        {
-            _view.PlaySequentialEntrance();
-            return;
-        }
+        // 逐格出场：先起跑环上的逐格序列，再照常播整窗缩放淡入（两者同时进行）。
+        if (motion.SequentialEntrance) _view.PlaySequentialEntrance();
 
         var duration = TimeSpan.FromMilliseconds(motion.EntranceDurationMs);
         var spline = BuildKeySpline(motion.EntranceEasing);

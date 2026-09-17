@@ -358,6 +358,10 @@ public sealed partial class RadialRingView
         for (var i = 0; i < _childIcons.Count; i++)
         {
             var opacity = Math.Clamp(_childArcProgress * ChildRevealOf(i), 0, 1);
+
+            // 子扇区图形自身也跟同一份透明度（与第一层一致：首态是"淡淡的"）。
+            if (i < _childSectors.Count) _childSectors[i].Opacity = opacity;
+
             _childIcons[i].Opacity = opacity * (i == _hoveredChild ? 1.0 : 0.94);
             _childLabels[i].SetOpacity(opacity);
         }

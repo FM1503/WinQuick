@@ -341,7 +341,7 @@ public static class FlashProbe
                 //（它只让环上的扇区逐格长出来），所以那两项恒为 1 —— 拿它们做判据
                 // 会恒定报红。逐格入场的"首帧不是终态"由另外两条核：环上每格的首态
                 //（残影 0.25）与像素级"早期不得出现终态画面"。
-                if (overlay.SettingsPanelForProbe is { } settingsPanel && UsesScaleFadeEntrance())
+                if (overlay.SettingsPanelForProbe is { } settingsPanel)
                 {
                     // 面板：先把覆盖层与面板都藏起来，走一次真实的"打开面板"。
                     overlay.Hide();
@@ -452,11 +452,6 @@ public static class FlashProbe
                 ProbeOutput.Line("      逐帧幅度：" + string.Join(" ", series));
 
                 return (firstVisible, (int)peak, monotonic, string.Join(" ", series));
-            }
-
-            if (!UsesScaleFadeEntrance())
-            {
-                ProbeOutput.Line("（跳过「第一帧不透明度」那两条：逐格入场按设计不动窗口级缩放/不透明度）");
             }
 
             {
@@ -643,6 +638,20 @@ public static class FlashProbe
                 // 改成 Core 里的纯函数 + 单测（StaggerReveal.ApplyGhost 的 4 条用例），
                 // 观感部分交给人工验收。
                 ProbeOutput.Kv("残影首态", "由单测锁住（StaggerReveal.ApplyGhost），此处不采样");
+
+                // 扇区**图形自身**的透明度：起始必须为 0（"还没出现"），结束必须回到 1。
+                // 用户报过一次"扇区独立透明度变化没有实现"——那时只做了图标/文字/箭头，
+                // 扇区图形本身一直满不透明，首态看起来只是"薄"而不是"淡"。
+                var sectorOpacityAtRest = Enumerable.Range(0, counts)
+                    .Select(overlay.SectorOpacityForProbe)
+                    .ToList();
+
+                ProbeOutput.Kv("结束后的扇区自身透明度（应为 1）",
+                    string.Join(" ", sectorOpacityAtRest.Select(o => o.ToString("0.##"))));
+
+                results.Add(("入场结束后扇区自身透明度回到 1（说明它确实参与过动画）",
+                    sectorOpacityAtRest.All(o => o >= 0.999),
+                    $"最小 {sectorOpacityAtRest.DefaultIfEmpty(0).Min():0.##}"));
 
                 // 分组箭头必须跟着自己那一格：在该格还没长出来时，箭头不得可见。
                 var leakedAt = markerFrames

@@ -31,6 +31,13 @@ public sealed partial class RadialRingView
     private double[] _labelOpacityBefore = [];
     private double[] _markerOpacityBefore = [];
 
+    /// <summary>
+    /// 入场前**扇区图形自身**的透明度。用户报过"扇区独立透明度变化没有实现" ——
+    /// 之前只让图标/文字/箭头跟进度，扇区图形本身一直是满不透明，
+    /// 于是首态看起来只是"薄"，不是"淡淡的"。
+    /// </summary>
+    private double[] _sectorOpacityBefore = [];
+
     /// <summary>诊断用：某格当前的入场进度（0 = 还没长出来，1 = 已落定）。</summary>
     internal double EntranceRevealOf(int index) => RevealOf(index);
 
@@ -88,6 +95,12 @@ public sealed partial class RadialRingView
                 .ToArray();
         }
 
+        if (_sectorOpacityBefore.Length != _sectors.Length)
+        {
+            _sectorOpacityBefore = _sectors.Select(sector => sector.Opacity).ToArray();
+        }
+
+        for (var i = 0; i < _sectors.Length; i++) _sectors[i].Opacity = 0;
         for (var i = 0; i < _icons.Length; i++) _icons[i].Opacity = 0;
         for (var i = 0; i < _labels.Length; i++) _labels[i].SetOpacity(0);
         for (var i = 0; i < _childMarkers.Length; i++)
@@ -131,6 +144,7 @@ public sealed partial class RadialRingView
         _iconOpacityBefore = [];
         _labelOpacityBefore = [];
         _markerOpacityBefore = [];
+        _sectorOpacityBefore = [];
 
         _centerHintReveal = 1;
         _escHint.Opacity = 1;
@@ -156,6 +170,10 @@ public sealed partial class RadialRingView
         // 图标与文字跟着自己那一格到。透明度必须夹住：缓动带一点回弹，
         // 不夹的话会算出大于 1 的透明度。
         var opacity = ApplyGhostOpacity(progress);
+
+        // **扇区图形自身**也按同一份透明度走：首态是"淡淡的、薄的"，然后一起补实。
+        if (index < _sectors.Length) _sectors[index].Opacity = opacity;
+
         if (index < _icons.Length) _icons[index].Opacity = opacity * OriginalIconOpacity(index);
         if (index < _labels.Length) _labels[index].SetOpacity(opacity * OriginalLabelOpacity(index));
 
@@ -207,7 +225,17 @@ public sealed partial class RadialRingView
         {
             if (_childMarkers[i] is { } marker) marker.Opacity = OriginalMarkerOpacity(i);
         }
+
+        for (var i = 0; i < _sectors.Length; i++)
+            _sectors[i].Opacity = OriginalSectorOpacity(i);
     }
+
+    private double OriginalSectorOpacity(int index) =>
+        _sectorOpacityBefore.Length == _sectors.Length ? _sectorOpacityBefore[index] : 1.0;
+
+    /// <summary>诊断用：某扇区图形当前的透明度。</summary>
+    internal double SectorOpacityForProbe(int index) =>
+        index >= 0 && index < _sectors.Length ? _sectors[index].Opacity : -1;
 
     private double OriginalMarkerOpacity(int index) =>
         _markerOpacityBefore.Length == _childMarkers.Length ? _markerOpacityBefore[index] : 1.0;

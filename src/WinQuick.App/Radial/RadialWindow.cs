@@ -33,6 +33,14 @@ public sealed class RadialWindow : Window
     private readonly DesignTokens _tokens;
     private readonly ScaleTransform _scale = new(1, 1);
 
+    /// <summary>
+    /// 入场的旋转（"转进到位"）。与缩放一起挂在根内容的 <see cref="TransformGroup"/> 上 ——
+    /// 分成两个 Transform 是为了让它们的时长与曲线各自独立（缩放带轻回弹、旋转收得稍缓）。
+    /// </summary>
+    private readonly RotateTransform _rotate = new(0);
+
+    private readonly TransformGroup _transform = new();
+
     /// <summary>当前视觉树。换菜单/切编辑态时**就地替换它**，窗口本身不动。</summary>
     private RadialRingView _view;
 
@@ -73,8 +81,12 @@ public sealed class RadialWindow : Window
 
         // 入场缩放挂在以圆心为原点的 ScaleTransform 上。
         // RenderTransformOrigin 必须是 0.5,0.5，否则圆盘会从左上角放大。
+        // 变换必须挂在**根内容元素**上（Window 会强制转换 RenderTransform 并抛异常），
+        // 且用 TransformGroup 把缩放与旋转都带上 —— 两者入场时同时进行、时长不同。
+        _transform.Children.Add(_scale);
+        _transform.Children.Add(_rotate);
         _view.Root.RenderTransformOrigin = new Point(0.5, 0.5);
-        _view.Root.RenderTransform = _scale;
+        _view.Root.RenderTransform = _transform;
 
         _hoverMachine = new SubmenuHoverMachine(_tokens.Interaction);
 
@@ -277,7 +289,7 @@ public sealed class RadialWindow : Window
         ResetAnimationState();
 
         fresh.Root.RenderTransformOrigin = new Point(0.5, 0.5);
-        fresh.Root.RenderTransform = _scale;
+        fresh.Root.RenderTransform = _transform;
 
         UnwireViewEvents(_view);
         _view = fresh;
@@ -683,12 +695,15 @@ public sealed class RadialWindow : Window
         }
 
         // 先清掉可能残留的 HoldEnd（上一轮退场动画留下的），再把起始值写死。
+        // **三个属性一个都不能漏**：漏掉哪个，它就会在动画开始前先以"终态"闪一帧。
         _scale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
         _scale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+        _rotate.BeginAnimation(RotateTransform.AngleProperty, null);
         _view.Root.BeginAnimation(UIElement.OpacityProperty, null);
 
-        // 窗口整体从"略小 + 全透明"起步（这是原有的缩放淡入）。
+        // 窗口整体从"略小 + 转了个角度 + 全透明"起步。
         _scale.ScaleX = _scale.ScaleY = _tokens.Motion.EntranceFromScale;
+        _rotate.Angle = _tokens.Motion.EntranceFromRotateDeg;
         _view.Root.Opacity = 0;
 
         // 逐格入场时**额外**把环上每一格也落定成"还没出现"。
@@ -727,15 +742,26 @@ public sealed class RadialWindow : Window
         // 逐格出场：先起跑环上的逐格序列，再照常播整窗缩放淡入（两者同时进行）。
         if (motion.SequentialEntrance) _view.PlaySequentialEntrance();
 
-        var duration = TimeSpan.FromMilliseconds(motion.EntranceDurationMs);
-        var spline = BuildKeySpline(motion.EntranceEasing);
-
+        // 缩放（带轻回弹）与旋转（转进到位）各自独立时长与曲线，同时进行。
+        var scaleMs = TimeSpan.FromMilliseconds(motion.EntranceScaleMs);
+        var scaleSpline = BuildKeySpline(motion.EntranceScaleEasing);
         _scale.BeginAnimation(ScaleTransform.ScaleXProperty,
-            FromTo(motion.EntranceFromScale, 1.0, duration, spline));
+            FromTo(motion.EntranceFromScale, 1.0, scaleMs, scaleSpline));
         _scale.BeginAnimation(ScaleTransform.ScaleYProperty,
-            FromTo(motion.EntranceFromScale, 1.0, duration, spline));
+            FromTo(motion.EntranceFromScale, 1.0, scaleMs, scaleSpline));
+
+        if (Math.Abs(motion.EntranceFromRotateDeg) > 0.01)
+        {
+            var rotateMs = TimeSpan.FromMilliseconds(motion.EntranceRotateMs);
+            _rotate.BeginAnimation(RotateTransform.AngleProperty,
+                FromTo(motion.EntranceFromRotateDeg, 0.0, rotateMs,
+                    BuildKeySpline(motion.EntranceRotateEasing)));
+        }
+
+        // 淡入照旧用较短的一段：它决定"什么时候看得见"，不该被缩放/旋转的尾巴拖住。
         _view.Root.BeginAnimation(UIElement.OpacityProperty,
-            FromTo(0.0, 1.0, duration, spline));
+            FromTo(0.0, 1.0, TimeSpan.FromMilliseconds(motion.EntranceDurationMs),
+                BuildKeySpline(motion.EntranceEasing)));
     }
 
     /// <summary>
@@ -772,8 +798,10 @@ public sealed class RadialWindow : Window
     {
         _scale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
         _scale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+        _rotate.BeginAnimation(RotateTransform.AngleProperty, null);
         _view.Root.BeginAnimation(UIElement.OpacityProperty, null);
         _scale.ScaleX = _scale.ScaleY = 1.0;
+        _rotate.Angle = 0;                 // 旋转也必须归零：残留角度会让整圈永久歪着
         _view.Root.Opacity = 1.0;
 
         // 逐格入场的状态在**视图**上（扇区几何 + 图标文字透明度），也要一起复位：

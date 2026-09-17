@@ -77,6 +77,19 @@ public sealed record DesignTokens
             problems.Add($"motion.exitEasing 无法解析: {Motion.ExitEasing}");
         if (MotionTokens.TryParseEasing(Motion.SectorPopEasing, out _) is false)
             problems.Add($"motion.sectorPopEasing 无法解析: {Motion.SectorPopEasing}");
+        if (MotionTokens.TryParseEasing(Motion.EntranceScaleEasing, out _) is false)
+            problems.Add($"motion.entranceScaleEasing 无法解析: {Motion.EntranceScaleEasing}");
+        if (MotionTokens.TryParseEasing(Motion.EntranceRotateEasing, out _) is false)
+            problems.Add($"motion.entranceRotateEasing 无法解析: {Motion.EntranceRotateEasing}");
+
+        if (Motion.EntranceScaleMs is < 60 or > 900)
+            problems.Add($"motion.entranceScaleMs={Motion.EntranceScaleMs} 应在 60~900ms");
+        if (Motion.EntranceRotateMs is < 60 or > 1200)
+            problems.Add($"motion.entranceRotateMs={Motion.EntranceRotateMs} 应在 60~1200ms");
+        if (Motion.EntranceFromRotateDeg is < -150 or > 150)
+            problems.Add($"motion.entranceFromRotateDeg={Motion.EntranceFromRotateDeg} 应在 -150~150（再大就不是「落位」而是「翻滚」了）");
+        if (Motion.EntranceFromScale is < 0.3 or > 1.2)
+            problems.Add($"motion.entranceFromScale={Motion.EntranceFromScale} 应在 0.3~1.2");
 
         // 入场样式只认两个值。写错会静默退回旧样式 —— 那是最难发现的一类问题：
         // 界面看着"大概还行"，只是新动画从来没生效过。
@@ -303,9 +316,25 @@ public sealed record TypographyTokens
 
 public sealed record MotionTokens
 {
+    /// <summary>入场的淡入时长。**刻意比缩放短** —— 让画面先"看得见"，不拖住可读的时间点。</summary>
     public int EntranceDurationMs { get; init; } = 167;
-    public double EntranceFromScale { get; init; } = 0.9;
+
+    public double EntranceFromScale { get; init; } = 0.86;
     public string EntranceEasing { get; init; } = "cubic-bezier(0,0,0,1)";
+
+    /// <summary>缩放的时长（与淡入、旋转各自独立）。</summary>
+    public int EntranceScaleMs { get; init; } = 300;
+
+    /// <summary>缩放曲线。默认带约 8% 过冲 —— 用户选的就是"轻回弹"。</summary>
+    public string EntranceScaleEasing { get; init; } = "cubic-bezier(0.34,1.56,0.64,1)";
+
+    /// <summary>入场的起始旋转角度（负值＝逆时针转进来）。0 表示不旋转。</summary>
+    public double EntranceFromRotateDeg { get; init; } = -24;
+
+    /// <summary>旋转的时长。比缩放略长，收得更稳。</summary>
+    public int EntranceRotateMs { get; init; } = 380;
+
+    public string EntranceRotateEasing { get; init; } = "cubic-bezier(0.16,1,0.3,1)";
     public int ExitDurationMs { get; init; } = 167;
     public double ExitToScale { get; init; } = 0.96;
     public string ExitEasing { get; init; } = "cubic-bezier(0,0,0,1)";

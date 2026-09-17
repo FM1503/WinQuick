@@ -516,3 +516,32 @@
 （**本轮联网检索额度已用尽，③未取到官方参数**，按"业界常见"标注）。
 
 选定后按选中的那一档实现（成本栏已标出实现方式），并只做针对该改动的最简检查。
+
+## 15. 定稿：②+④ 组合（缩放轻回弹 + 旋转落位）
+
+用户从 HTML 原型里选定 **②+④ 组合**，已实现并发布。
+
+| 通道 | 起点 → 终点 | 时长 | 曲线 |
+|---|---|---|---|
+| 缩放 | 0.86 → 1（过冲约 +8%） | 300ms | `cubic-bezier(0.34,1.56,0.64,1)` |
+| 旋转 | −24° → 0 | 380ms | `cubic-bezier(0.16,1,0.3,1)` |
+| 淡入 | 0 → 1 | **167ms** | `cubic-bezier(0,0,0,1)` |
+
+三个通道**各自独立时长与曲线**，同时进行：缩放与旋转挂在根内容的 `TransformGroup` 上
+（`ScaleTransform` + `RotateTransform`），淡入仍用较短的一段 —— 它决定"什么时候看得见"，
+不该被缩放/旋转的尾巴拖住。
+
+实现要点（都是踩过坑的地方）：
+
+1. 变换必须挂在**根内容元素**上（Window 会强制转换 `RenderTransform` 并抛异常），
+   且换菜单重建视觉树时要重新挂同一个 `TransformGroup`。
+2. `PrepareEntrance` 里**三个属性一个都不能漏清**（ScaleX/ScaleY/Angle/Opacity）：
+   漏掉哪个，它就会在动画开始前先以"终态"闪一帧。
+3. `ResetAnimationState` 必须把**角度归零**：残留角度会让整圈永久歪着 ——
+   这类"动画结束后属性没归位"的问题在本项目已经出过两次（缩放与面板透明度）。
+4. 退场**不加旋转**：保持 167ms 收缩 + 淡出（退场要快，Kando #650 的教训）。
+
+可调令牌（`design/tokens.json` 的 `motion` 段）：
+`entranceFromScale`（起点大小）、`entranceScaleMs` / `entranceScaleEasing`（缩放节奏与回弹幅度）、
+`entranceFromRotateDeg`（起始角度，设 0 即不旋转）、`entranceRotateMs` / `entranceRotateEasing`、
+`entranceDurationMs`（淡入快慢）。

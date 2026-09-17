@@ -397,20 +397,17 @@ public sealed partial class RadialRingView
     }
 
     /// <summary>
-    /// **环上几何的唯一写入点**：内缘（死区）不动，外缘 = 基准外缘按入场进度拉开 + 鼓出量。
+    /// **环上几何的唯一写入点**：内缘（死区）不动，外缘按鼓出量外扩。
+    /// 合成放在一处是必须的：这是逐帧回调唯一被允许改扇区几何的地方。
     ///
-    /// 合成放在一处是必须的：入场与悬停形变是两条独立的逐帧回调，谁都能在任何一帧动同一个
-    /// 扇区 —— 各写各的，后写的就把前一个的效果抹掉了（子环那边有同一个坑的注释）。
-    ///
-    /// 静止时（进度 1、无鼓出）直接用**冻结的基准几何**：既省下每帧重建，
-    /// 也让"动画结束后与静止态逐像素相同"这条不变量成立（--perf-probe 锁着它）。
+    /// 静止时直接用**冻结的基准几何**：既省下每帧重建，
+    /// 也让"静止态逐像素可复现"这条不变量成立（--perf-probe 锁着它）。
     /// </summary>
     private void WriteRingSectorGeometry(int index, double bulgePx)
     {
         if (index < 0 || index >= _sectors.Length) return;
 
-        var reveal = RevealOf(index);
-        if (reveal >= 1.0 - 1e-6 && bulgePx < 0.05)
+        if (bulgePx < 0.05)
         {
             _sectors[index].Data = _baseGeometry[index];
             return;
@@ -418,9 +415,7 @@ public sealed partial class RadialRingView
 
         var radius = _tokens.Radius;
         var span = _spans[index];
-        var outer = radius.DeadZone
-                  + (radius.Ring1Outer - radius.DeadZone) * reveal
-                  + bulgePx;
+        var outer = radius.Ring1Outer + bulgePx;
 
         // 走 RingSector（新建 + 冻结）而**不是**就地改。
         //
@@ -429,7 +424,7 @@ public sealed partial class RadialRingView
         // 光栅化结果不一致（亚像素级）—— 于是"换菜单后画面与之前逐像素相同"这类判据会间歇变红。
         // 收益测不出来、代价是像素不可复现、还多了一种几何形态，所以回退。
         _sectors[index].Data = SectorGeometry.RingSector(
-            _center, radius.DeadZone, Math.Max(radius.DeadZone, outer),
+            _center, radius.DeadZone, outer,
             span.StartDeg + radius.SectorGapDegrees,
             span.EndDeg - radius.SectorGapDegrees);
     }

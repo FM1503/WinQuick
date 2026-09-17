@@ -44,10 +44,6 @@ public sealed partial class RadialRingView
     private int _hoveredChild = -1;
     private double _childArcProgress;
 
-    /// <summary>每个子项自己的长出进度（空数组＝全部已落定）。</summary>
-    private double[] _childReveal = [];
-
-    private StaggerRevealAnimator? _childRevealAnimation;
     private ChildArcAnimator? _childAnimator;
     private bool _childArcRemoving;
 
@@ -187,11 +183,7 @@ public sealed partial class RadialRingView
             tokens.Motion.HoverBulgePx, tokens.Motion.EntranceEasing, tokens.Motion.HoverBulgeMs);
 
         if (immediate) SetChildArcImmediate(true);
-        else
-        {
-            StartChildReveal();
-            _childAnimator.Expand();
-        }
+        else _childAnimator.Expand();
     }
 
     /// <summary>收起子弧（带动画）。</summary>
@@ -335,8 +327,7 @@ public sealed partial class RadialRingView
         var span = _childSpans[index];
 
         // 弧级进度 × 该子项自己的长出进度：整条弧在张开的同时，各项按顺序一格格长满。
-        var progress = _childArcProgress * ChildRevealOf(index);
-        var outer = band.Inner + band.Width * progress + bulgePx;
+        var outer = band.Inner + band.Width * _childArcProgress + bulgePx;
 
         _childSectors[index].Data = SectorGeometry.RingSector(
             _center, band.Inner, outer,
@@ -354,13 +345,10 @@ public sealed partial class RadialRingView
             WriteChildSectorGeometry(i, _childBulge?.CurrentBulgeOf(i) ?? 0);
 
         // 图标与文字的透明度跟随进度，否则它们会在扇区还很薄的时候先冒出来。
-        // 逐项长出时按各自的进度算 —— 否则第一项还没长出来，后面的图标就先冒头了。
+        var opacity = Math.Clamp(_childArcProgress, 0, 1);
         for (var i = 0; i < _childIcons.Count; i++)
         {
-            var opacity = Math.Clamp(_childArcProgress * ChildRevealOf(i), 0, 1);
-
-            // 子扇区图形自身也跟同一份透明度（与第一层一致：首态是"淡淡的"）。
-            if (i < _childSectors.Count) _childSectors[i].Opacity = opacity;
+            if (i < _childSectors.Count) _childSectors[i].Opacity = 1.0;
 
             _childIcons[i].Opacity = opacity * (i == _hoveredChild ? 1.0 : 0.94);
             _childLabels[i].SetOpacity(opacity);
@@ -404,54 +392,9 @@ public sealed partial class RadialRingView
         _childEditOutline = outline;
     }
 
-    /// <summary>
-    /// 子项逐格长出。与第一层入场同一套机制、同一套令牌 —— 顺序同样是"索引递增"，
-    /// 而子项的角度就是按索引递增分配的，于是观感是从子弧起点顺时针依次长出来。
-    /// </summary>
-    private void StartChildReveal()
-    {
-        var motion = TokenStore.Current.Motion;
-        if (!motion.SequentialEntrance) return;   // 关掉逐格时弧级进度已经够用
-
-        var plan = StaggerReveal.Plan(
-            _childSectors.Count, motion.ChildStaggerMs, motion.ChildGrowMs, motion.SectorSweepMaxMs);
-
-        _childRevealAnimation?.Stop();
-        _childReveal = new double[_childSectors.Count];
-        for (var i = 0; i < _childReveal.Length; i++) _childReveal[i] = StaggerRevealAnimator.NotStarted;
-
-        _childRevealAnimation = new StaggerRevealAnimator(
-            _childSectors.Count, plan.StaggerMs, motion.ChildGrowMs, motion.SectorPopEasing,
-            write: (i, progress) =>
-            {
-                if (i < 0 || i >= _childReveal.Length) return;
-                _childReveal[i] = progress < 0 ? StaggerRevealAnimator.NotStarted : progress;
-                RebuildChildGeometry();
-            },
-            onCompleted: () => _childReveal = []);
-
-        _childRevealAnimation.Start();
-    }
-
-    /// <summary>子项也走同一套首态映射（未轮到＝0，轮到即残影，1＝实态）。</summary>
-    private double ChildRevealOf(int index) =>
-        index >= 0 && index < _childReveal.Length ? ApplyGhostReveal(_childReveal[index]) : 1.0;
-
-    /// <summary>
-    /// 收起时**冻结**（不重置）：残余的进度跟着弧级进度一起缩回去，
-    /// 比"突然跳满再缩"自然。
-    /// </summary>
-    private void FreezeChildReveal()
-    {
-        _childRevealAnimation?.Stop();
-        _childRevealAnimation = null;
-    }
-
     private void RemoveChildVisuals()
     {
         // 逐项长出的回调必须在清空数组**之前**摘掉，否则它会去写已经清空的集合。
-        FreezeChildReveal();
-        _childReveal = [];
 
         // 子环都没了，针对它的拖拽预览必须一起作废：否则下一帧的 UpdateDrag
         // 会去访问已经清空的子环扇区数组，直接越界崩溃

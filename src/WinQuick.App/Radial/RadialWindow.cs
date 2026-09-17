@@ -631,17 +631,19 @@ public sealed class RadialWindow : Window
     private const int ParkedY = -32000;
 
     /// <summary>
-    /// 让休眠中的窗口里装着**空的环**（而不是静止的完整圆盘）。
+    /// 让窗口进入"休眠态"：缩放与旋转归位，但**不透明度保持 0**。
     ///
-    /// 为什么必须这样：分层窗口在屏幕上显示的是**上一次提交的那张位图**。
-    /// 清空视觉树只是"标脏"——真正重绘要等下一个渲染帧。所以在它重绘之前把窗口
-    /// 挪回屏上，露出的仍是上一轮留下的完整圆盘：用户看到的就是
-    /// "先出现一个完整圆盘，然后它才消失、重新逐格长出来"（实测确实抓到 1 帧）。
-    ///
-    /// 而在休眠期间清空则完全没有时序问题：从休眠到下次唤出至少隔几十毫秒，
-    /// 那次重绘早就提交了；等下次把窗口挪回屏上时，位图里本来就是空的。
+    /// 为什么用不透明度而不是"把环内容清空"：分层窗口在屏幕上显示的是**上一次提交的位图**，
+    /// 所以只要窗口自身是透明的，里面装的是什么都不会露出来 —— 残留终态从根上不可能出现。
+    /// 而"清空内容"那条路必须配一个"下次唤出前恢复"的动作，两者一旦有一处漏掉，
+    /// 就会表现为"空轮盘"或"只有图标的空环"（这两类都被用户实测撞到过）。
+    /// **少一个状态，就少一类 bug。**
     /// </summary>
-    public void ClearForDormancy() => _view.PrepareEntrance();
+    public void ResetForDormancy()
+    {
+        ResetAnimationState();
+        _view.Root.Opacity = 0;
+    }
 
     public void StopInteraction()
     {
@@ -701,42 +703,13 @@ public sealed class RadialWindow : Window
         _rotate.BeginAnimation(RotateTransform.AngleProperty, null);
         _view.Root.BeginAnimation(UIElement.OpacityProperty, null);
 
-        // **把环恢复成静止态。**
-        //
-        // 休眠期间窗口里装的是"空的环"（见 ClearForDormancy：分层窗口显示的是上一次
-        // 提交的位图，装着完整圆盘会把"终态"漏成开场那一帧）。而整窗缩放这条路线
-        // **没有"逐格重新长出来"的过程** —— 它只动窗口的缩放/透明度。
-        // 所以这里必须显式恢复，否则第二次唤出会看到一个空轮盘（用户报的现象）。
-        //
-        // 本方法在 PlaceAt 之前调用，所以恢复发生在窗口还在屏幕外的时候：
-        // 等它挪回屏上，位图里已经是"完整的环 + 全透明"，随后的缩放淡入才接得上。
-        _view.CompleteEntranceImmediate();
-
         // 窗口整体从"略小 + 转了个角度 + 全透明"起步。
         _scale.ScaleX = _scale.ScaleY = _tokens.Motion.EntranceFromScale;
         _rotate.Angle = _tokens.Motion.EntranceFromRotateDeg;
         _view.Root.Opacity = 0;
-
-        // 逐格入场时**额外**把环上每一格也落定成"还没出现"。
-        // 两者叠加：画面整体放大淡入的同时，圆盘一格格亮起来 ——
-        // 用户明确要求保留缩放动画（此前逐格风格把它跳过了）。
-        if (_tokens.Motion.SequentialEntrance) _view.PrepareEntrance();
     }
 
     /// <summary>诊断用：某格当前的逐格入场进度（0 = 还没长出来）。</summary>
-    internal double EntranceRevealForProbe(int index) => _view.EntranceRevealOf(index);
-
-    internal double SectorOpacityForProbe(int index) => _view.SectorOpacityForProbe(index);
-
-    internal bool IsEntranceAnimatingForProbe => _view.IsEntranceAnimating;
-
-    internal double MarkerOpacityForProbe(int index) => _view.MarkerOpacityForProbe(index);
-
-    internal double EntranceStartDelayForProbe(int index) => _view.EntranceStartDelayOf(index);
-
-    internal double CenterHintRevealForProbe => _view.CenterHintReveal;
-
-    /// <summary>诊断用：入场起始状态是否已经落定（缩放值, 透明度）。</summary>
     internal (double Scale, double Opacity) EntranceStateForProbe => (_scale.ScaleX, _view.Root.Opacity);
 
     public void PlayEntrance()
@@ -749,9 +722,6 @@ public sealed class RadialWindow : Window
             ResetAnimationState();
             return;
         }
-
-        // 逐格出场：先起跑环上的逐格序列，再照常播整窗缩放淡入（两者同时进行）。
-        if (motion.SequentialEntrance) _view.PlaySequentialEntrance();
 
         // 缩放（带轻回弹）与旋转（转进到位）各自独立时长与曲线，同时进行。
         var scaleMs = TimeSpan.FromMilliseconds(motion.EntranceScaleMs);
@@ -814,10 +784,6 @@ public sealed class RadialWindow : Window
         _scale.ScaleX = _scale.ScaleY = 1.0;
         _rotate.Angle = 0;                 // 旋转也必须归零：残留角度会让整圈永久歪着
         _view.Root.Opacity = 1.0;
-
-        // 逐格入场的状态在**视图**上（扇区几何 + 图标文字透明度），也要一起复位：
-        // 否则"隐藏 → 再唤出"之间会留着上一轮长到一半的圆盘。
-        _view.CompleteEntranceImmediate();
     }
 
     /// <summary>

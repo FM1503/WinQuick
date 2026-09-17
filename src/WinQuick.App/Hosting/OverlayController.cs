@@ -171,7 +171,7 @@ public sealed class OverlayController : IDisposable
         //（与"首次启动后先渲染终态"是同一个根因：分层窗口显示的是上一次提交的位图）。
         // 用户从资源管理器右键「加一项」正是在休眠中触发重建的，这条路径必须堵上。
         // 约定：**停放中的窗口里必须是空的环。**
-        if (!IsVisible) _radial.ClearForDormancy();
+        if (!IsVisible) _radial.ResetForDormancy();
     }
 
     /// <summary>
@@ -502,7 +502,7 @@ public sealed class OverlayController : IDisposable
         // 不清的话，第一次唤出把窗口挪回屏上的一瞬就会先露出完整圆盘、动画才开始
         // （用户报的"首次启动后仍先渲染终态"）。
         // 约定：**窗口处于停放状态时，它里面装的必须是空的环。**
-        _radial.ClearForDormancy();
+        _radial.ResetForDormancy();
         _radial.ShowActivated = true;
 
         // 操作条同样先渲染一次：它的首次映射（创建渲染目标、量文字）否则会落在
@@ -904,7 +904,7 @@ public sealed class OverlayController : IDisposable
 
         // 最后把环清空：休眠中的窗口里装着"空的环"，这样下次把它挪回屏上时
         // 不可能露出上一轮的完整圆盘（分层窗口显示的是上一次提交的位图）。
-        _radial.ClearForDormancy();
+        _radial.ResetForDormancy();
     }
 
     private static bool AnimationsEnabled() => Design.MotionPreference.SystemAllows;
@@ -1004,22 +1004,6 @@ public sealed class OverlayController : IDisposable
     internal void FreezePointerForProbe() => _radial.StopInteraction();
 
     /// <summary>诊断用：某扇区图形当前的透明度。</summary>
-    internal double SectorOpacityForProbe(int index) => _radial.SectorOpacityForProbe(index);
-
-    /// <summary>诊断用：某格当前的逐格入场进度。</summary>
-    internal double EntranceRevealForProbe(int index) => _radial.EntranceRevealForProbe(index);
-
-    internal bool IsEntranceAnimatingForProbe => _radial.IsEntranceAnimatingForProbe;
-
-    /// <summary>诊断用：某个扇区分组箭头的透明度（-1 = 没有子项）。</summary>
-    internal double MarkerOpacityForProbe(int index) => _radial.MarkerOpacityForProbe(index);
-
-    internal double EntranceStartDelayForProbe(int index) => _radial.EntranceStartDelayForProbe(index);
-
-    internal double CenterHintRevealForProbe => _radial.CenterHintRevealForProbe;
-
-    /// <summary>诊断用：轮盘入场状态（缩放, 不透明度）的读取器。
-    /// 返回读取器而不是值，是因为必须在 UI 线程上读、而且要**逐帧**读。</summary>
     internal Func<(double Scale, double Opacity)> RadialEntranceStateForProbe =>
         () => _radial.EntranceStateForProbe;
 

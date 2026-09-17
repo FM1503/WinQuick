@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>WinQuick · 子环动画候选（HTML 最小成本模拟）</title>
+<style>
+  :root {
+    --dim: rgba(0, 0, 0, 0.42);
+    --sector-fill: rgba(255, 255, 255, 0.085);
+    --sector-stroke: rgba(255, 255, 255, 0.22);
+    --child-fill: rgba(255, 255, 255, 0.15);
+    --parent-hover: rgba(110, 168, 254, 0.20);
+    --parent-stroke: rgba(110, 168, 254, 0.75);
+    --text: #e8eaf0;
+    --muted: #9aa3b2;
+    --accent: #6ea8fe;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #14161c; color: var(--text);
+         font: 14px/1.6 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif; }
+  header { padding: 18px 22px 10px; }
+  h1 { margin: 0 0 6px; font-size: 17px; font-weight: 600; }
+  header p { margin: 0; color: var(--muted); }
+  code { background: #ffffff12; padding: 1px 5px; border-radius: 4px; font-size: 12.5px; }
+
+  .layout { display: flex; gap: 20px; align-items: flex-start; padding: 12px 22px 26px; flex-wrap: wrap; }
+  #list { width: 430px; flex: 0 0 auto; }
+  .card { border: 1px solid #ffffff1a; border-radius: 10px; padding: 10px 12px;
+          margin-bottom: 9px; background: #ffffff06; cursor: pointer;
+          transition: border-color .12s, background .12s; }
+  .card:hover { border-color: #ffffff40; background: #ffffff0d; }
+  .card.on { border-color: var(--accent); background: #6ea8fe14; }
+  .card .name { font-weight: 600; }
+  .card .params { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+  .card .cost { font-size: 12.5px; margin-top: 2px; }
+  .cost.low { color: #7fd18f; } .cost.mid { color: #e2c56a; } .cost.high { color: #e08a7a; }
+  .card .src { color: #7b8496; font-size: 12px; margin-top: 2px; }
+
+  #stage { position: relative; width: 520px; height: 520px; border-radius: 12px;
+           overflow: hidden; flex: 0 0 auto;
+           background: linear-gradient(135deg, #2a2f3a 0%, #1b1f27 60%, #233 100%); }
+  #dim { position: absolute; inset: 0; background: var(--dim); }
+  #wheel { position: absolute; left: 50%; top: 50%; width: 444px; height: 444px;
+           margin: -222px 0 0 -222px; transform-origin: 50% 50%; }
+  #svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .sector { fill: var(--sector-fill); stroke: var(--sector-stroke); stroke-width: .6; }
+  .sector.parent { fill: var(--parent-hover); stroke: var(--parent-stroke); }
+  .label { fill: #dfe4ee; font-size: 9px; text-anchor: middle; dominant-baseline: middle; }
+  #hint { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+          color: #cfd6e4; font-size: 10.5px; }
+
+  /* ---------------- 子环候选动画 ---------------- */
+  /* ① 现状：整条弧带从内向外长（外径从内缘涨到外缘） */
+  #children.a-band .row  { animation: ch-band 167ms cubic-bezier(0,0,0,1) both; }
+  #children.a-band .il   { animation: ch-fade 167ms cubic-bezier(0,0,0,1) both; }
+  @keyframes ch-band { from { transform: scale(0.55); opacity: .0 } to { transform: scale(1); opacity: 1 } }
+
+  /* ② 角向展开：从父项中心向两侧"打开" */
+  #children.a-unroll .row { animation: ch-unroll 240ms cubic-bezier(.2,0,0,1) both; }
+  @keyframes ch-unroll { from { transform: rotate(-26deg) scale(.94); opacity: 0 }
+                         to   { transform: rotate(0deg) scale(1);   opacity: 1 } }
+
+  /* ③ 径向滑出：各项沿半径向外滑到自己的位置 */
+  #children.a-slide .il { animation: ch-slide 260ms cubic-bezier(.16,1,.3,1) both; }
+  @keyframes ch-slide { from { transform: translate(var(--dx), var(--dy)) scale(.9); opacity: 0 }
+                        to   { transform: translate(0,0) scale(1); opacity: 1 } }
+
+  /* ④ 依次淡入：只错开透明度，不动几何 */
+  #children.a-stagger .row { animation: ch-band 167ms cubic-bezier(0,0,0,1) both; }
+  #children.a-stagger .il  { animation: ch-fade 200ms linear both;
+                             animation-delay: calc(var(--i) * 45ms); }
+
+  /* ⑤ 每项缩放弹出 */
+  #children.a-pop .row { animation: ch-band 140ms cubic-bezier(0,0,0,1) both; }
+  #children.a-pop .il  { animation: ch-pop 240ms cubic-bezier(.34,1.56,.64,1) both;
+                         animation-delay: calc(var(--i) * 30ms); }
+
+  /* ⑥ 角向扫过：像表针一样把弧"刷"出来 */
+  #children.a-wipe .row { animation: ch-wipe 260ms cubic-bezier(.2,.8,.2,1) both; }
+  @keyframes ch-wipe { from { clip-path: inset(0 100% 0 0) } to { clip-path: inset(0 0 0 0) } }
+
+  @keyframes ch-fade { from { opacity: 0 } to { opacity: 1 } }
+  @keyframes ch-pop  { from { transform: scale(.55); opacity: 0 } to { transform: scale(1); opacity: 1 } }
+
+  #meta { margin-top: 14px; width: 980px; max-width: 100%; }
+  #meta h2 { font-size: 15px; margin: 0 0 4px; }
+  #meta p { margin: 2px 0; color: var(--muted); }
+  .row-btns { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+  button { background: #ffffff10; color: var(--text); border: 1px solid #ffffff26;
+           border-radius: 8px; padding: 6px 12px; font: inherit; cursor: pointer; }
+  button:hover { background: #ffffff1c; }
+  .hint { color: #7b8496; font-size: 12.5px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>WinQuick · 子环动画候选</h1>
+  <p>同样是<b>最小成本模拟</b>：几何与真实程序一致（740 DIP 窗口按 0.6 缩放、死区 56、一级外缘 200、
+     子环 218–350、间隙 1.2°）。左侧父扇区已置为"悬停态"，点候选即播放它展开子环的动画；
+     <code>依次播放全部</code> 可背靠背对比。子项数量与跨度按真实菜单（6 项 / 约 130°）。</p>
+</header>
+
+<div class="layout">
+  <aside id="list"></aside>
+  <main>
+    <div id="stage">
+      <div id="dim"></div>
+      <div id="wheel">
+        <svg id="svg" viewBox="0 0 740 740" preserveAspectRatio="xMidYMid meet"></svg>
+        <div id="hint">Esc</div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div id="meta">
+  <div class="row-btns">
+    <button id="replay">重播当前</button>
+    <button id="all">依次播放全部</button>
+    <span class="hint">对比建议：先看"①现状"，再逐个看其它 —— 差别主要在"子环是从哪儿长出来的"。</span>
+  </div>
+  <h2 id="m-name"></h2>
+  <p id="m-params"></p>
+  <p id="m-cost"></p>
+  <p id="m-src"></p>
+</div>
+
+<script>
+// ---------------- 几何：与程序同一套约定 ----------------
+const CX = 370, CY = 370;
+const INNER = 56, RING1 = 200;          // 一级环
+const R2IN = 218, R2OUT = 350;          // 子环
+const GAP = 1.2;
+const ROOT_COUNT = 8;
+const PARENT_INDEX = 0;                 // 父项：12 点那格（索引 0）
+const CHILD_COUNT = 6;
+const CHILD_SWEEP = 130;                // 子弧跨度（度）
+const NAMES = ["开发工具", "浏览器", "终端", "截图", "音乐", "下载", "文件夹", "设置"];
+const CHILD_NAMES = ["编辑器", "Git", "终端", "调试器", "数据库", "容器"];
+
+function polar(r, deg) {
+  const rad = deg * Math.PI / 180;
+  return [CX + r * Math.sin(rad), CY - r * Math.cos(rad)];
+}
+function ringSector(inner, outer, startDeg, endDeg) {
+  const large = (endDeg - startDeg) > 180 ? 1 : 0;
+  const [ax, ay] = polar(outer, startDeg);
+  const [bx, by] = polar(outer, endDeg);
+  const [cx, cy] = polar(inner, endDeg);
+  const [dx, dy] = polar(inner, startDeg);
+  return `M ${ax} ${ay} A ${outer} ${outer} 0 ${large} 1 ${bx} ${by} ` +
+         `L ${cx} ${cy} A ${inner} ${inner} 0 ${large} 0 ${dx} ${dy} Z`;
+}
+
+let childArc = { start: 0, end: 0 };
+
+function buildWheel() {
+  const svg = document.getElementById("svg");
+  let html = "";
+
+  const sweep = 360 / ROOT_COUNT;
+  for (let i = 0; i < ROOT_COUNT; i++) {
+    const mid = i * sweep;
+    const cls = i === PARENT_INDEX ? "sector parent" : "sector";
+    html += `<path class="${cls}" d="${ringSector(INNER, RING1, mid - sweep / 2 + GAP, mid + sweep / 2 - GAP)}"></path>`;
+    const [lx, ly] = polar(RING1 * 0.65, mid);
+    html += `<text class="label" x="${lx}" y="${ly}">${NAMES[i]}</text>`;
+  }
+
+  // 子环：一条弧带 + 各项（图标位用圆点示意、文字照排）
+  const parentMid = PARENT_INDEX * sweep;
+  childArc.start = parentMid - CHILD_SWEEP / 2;
+  childArc.end = parentMid + CHILD_SWEEP / 2;
+
+  html += `<g id="children">
+    <g class="row">
+      <path class="sector" style="fill: rgba(255,255,255,.10)"
+            d="${ringSector(R2IN, R2OUT, childArc.start + GAP, childArc.end - GAP)}"></path>
+    </g>`;
+
+  const step = CHILD_SWEEP / CHILD_COUNT;
+  const midRadius = (R2IN + R2OUT) / 2;
+  const labelRadius = R2IN + (R2OUT - R2IN) * 0.68;
+
+  for (let i = 0; i < CHILD_COUNT; i++) {
+    const mid = childArc.start + step * (i + 0.5);
+    const [ix, iy] = polar((R2IN + R2OUT) / 2 - 34, mid);
+    const [lx, ly] = polar(labelRadius, mid);
+
+    // 径向滑出用：从"父项方向（半径更小处）"滑到自己的位置
+    const [fx, fy] = polar(midRadius - 60, parentMid);
+    const [tx, ty] = polar(midRadius, mid);
+    const dx = (fx - tx).toFixed(1), dy = (fy - ty).toFixed(1);
+
+    html += `<g class="il" style="--i:${i}; --dx:${dx}px; --dy:${dy}px">
+      <circle cx="${ix}" cy="${iy}" r="9" fill="rgba(255,255,255,.55)"></circle>
+      <text class="label" x="${lx}" y="${ly}">${CHILD_NAMES[i]}</text>
+    </g>`;
+  }
+  html += `</g>`;
+
+  svg.innerHTML = html;
+}
+
+// ---------------- 候选清单 ----------------
+const CANDIDATES = [
+  {
+    id: "band", name: "① 现状：整条弧带从内向外长",
+    form: "子环带的外径从内缘（218）涨到外缘（350），图标文字随进度淡入",
+    dur: "167ms", ease: "cubic-bezier(0,0,0,1)",
+    cost: "低（已有实现，零改动）", costLevel: "low",
+    src: "来源：Windows/Fluent 的 Direct Entrance；形态即官方「从原点生长」的做法。",
+  },
+  {
+    id: "unroll", name: "② 角向展开：从父项中心向两侧打开",
+    form: "整条弧以父项中心为轴、从窄到宽「转开」（-26° → 0）",
+    dur: "240ms", ease: "cubic-bezier(0.2,0,0,1)",
+    cost: "中（每项的角跨度要逐帧重算几何）", costLevel: "mid",
+    src: "来源：径向菜单常见语汇（动画跟随几何）＋ Material 3 的 emphasized 减速曲线。",
+  },
+  {
+    id: "slide", name: "③ 径向滑出：各项从父项方向滑到自己的位置",
+    form: "每项从「靠近父项、半径更小」处沿半径滑出并淡入",
+    dur: "260ms", ease: "cubic-bezier(0.16,1,0.3,1)",
+    cost: "低（每项一个位移 Transform）", costLevel: "low",
+    src: "来源：Material container transform 的「从来源位置长出」；Fluent 的 Connected 原则。",
+  },
+  {
+    id: "stagger", name: "④ 依次淡入：只错开透明度",
+    form: "弧带先到，各项按索引每 45ms 淡入一项（不动几何）",
+    dur: "弧带 167ms ＋ 每项 200ms（错开 45ms）", ease: "linear（透明度）",
+    cost: "低（只改 Opacity）", costLevel: "low",
+    src: "来源：Fluent/Material 都推荐的条目集入场做法（错开起始时间）。",
+  },
+  {
+    id: "pop", name: "⑤ 各项缩放弹出",
+    form: "弧带先到，每项从自身中心 scale 0.55 → 1（带轻回弹），错开 30ms",
+    dur: "240ms（错开 30ms）", ease: "cubic-bezier(0.34,1.56,0.64,1)",
+    cost: "低（每项一个 ScaleTransform）", costLevel: "low",
+    src: "来源：Material 的容器变换 + 社区 popIn；回弹幅度按社区建议保持克制。",
+  },
+  {
+    id: "wipe", name: "⑥ 角向扫过：像表针一样刷出来",
+    form: "子弧从起始边顺时针扫到结束边（裁切逐帧推进）",
+    dur: "260ms", ease: "cubic-bezier(0.2,0.8,0.2,1)",
+    cost: "高（角向裁切要逐帧改几何/遮罩）", costLevel: "high",
+    src: "来源：进度/加载类语汇借用到入场；不是官方小节推荐值，属可选风格。",
+  },
+];
+
+// ---------------- 播放 ----------------
+const wheel = document.getElementById("wheel");
+const children = () => document.getElementById("children");
+let current = CANDIDATES[0];
+
+function play(c) {
+  current = c;
+  document.querySelectorAll(".card").forEach((el) => el.classList.toggle("on", el.dataset.id === c.id));
+
+  const g = children();
+  g.className = "";
+  void g.offsetWidth;                       // 强制重排，同名动画才会重播
+  g.classList.add("a-" + c.id);
+
+  document.getElementById("m-name").textContent = c.name;
+  document.getElementById("m-params").textContent = `形态 ${c.form}　时长 ${c.dur}　缓动 ${c.ease}`;
+  document.getElementById("m-cost").textContent = "实现成本：" + c.cost;
+  document.getElementById("m-src").textContent = c.src;
+}
+
+function buildList() {
+  const list = document.getElementById("list");
+  list.innerHTML = CANDIDATES.map((c) => `
+    <div class="card" data-id="${c.id}">
+      <div class="name">${c.name}</div>
+      <div class="params">${c.dur}　${c.ease}</div>
+      <div class="params">${c.form}</div>
+      <div class="cost ${c.costLevel}">成本：${c.cost}</div>
+      <div class="src">${c.src}</div>
+    </div>`).join("");
+  list.querySelectorAll(".card").forEach((el) =>
+    el.addEventListener("click", () => play(CANDIDATES.find((c) => c.id === el.dataset.id))));
+}
+
+document.getElementById("replay").addEventListener("click", () => play(current));
+document.getElementById("all").addEventListener("click", async () => {
+  for (const c of CANDIDATES) {
+    play(c);
+    await new Promise((r) => setTimeout(r, 1200));
+  }
+});
+
+buildWheel();
+buildList();
+play(CANDIDATES[0]);
+</script>
+</body>
+</html>

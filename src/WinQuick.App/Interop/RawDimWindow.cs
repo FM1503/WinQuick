@@ -113,6 +113,14 @@ public sealed class RawDimWindow : IDisposable
 
             _sharedProc = StaticProc;
 
+            // CS8500：WNDCLASSEXW 含委托字段（WNDPROC），因此它是**托管类型**，
+            // 取它的地址会被警告。这里刻意抑制而不是改成函数指针：
+            //   1. 这个结构体只在下面这一次 RegisterClassEx 里用到，之后再没有引用；
+            //   2. 委托的生命周期由静态字段 _sharedProc 持有，不会被 GC 掉；
+            //   3. 改成函数指针要动窗口过程的 ABI（UnmanagedCallersOnly），
+            //      而遮罩是"看得见"的功能 —— 为消警告去动它，风险大于收益。
+            // 若将来要改，记得改完必须实测遮罩仍然铺满、仍为半透明黑。
+#pragma warning disable CS8500
             fixed (char* className = WindowClassName)
             {
                 var wc = new WNDCLASSEXW
@@ -130,6 +138,7 @@ public sealed class RawDimWindow : IDisposable
                 };
 
                 var atom = PInvoke.RegisterClassEx(wc);
+#pragma warning restore CS8500
 
                 // 已注册会返回 0 并置 ERROR_CLASS_ALREADY_EXISTS(1410)，这不算失败。
                 _classRegistered = atom != 0 || Marshal.GetLastWin32Error() == 1410;

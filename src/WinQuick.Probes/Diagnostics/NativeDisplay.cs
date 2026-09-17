@@ -45,9 +45,12 @@ public static class NativeDisplay
         if (PInvoke.GetCursorPos(out var pt))
         {
             var hmon = PInvoke.MonitorFromPoint(pt, MONITOR_FROM_FLAGS.MONITOR_DEFAULTTONEAREST);
-            // MDT_EFFECTIVE_DPI = 0
-            PInvoke.GetDpiForMonitor(hmon, MONITOR_DPI_TYPE.MDT_EFFECTIVE_DPI, out var dx, out _);
-            cursorDpi = dx;
+            // 守卫同 MonitorLayout：GetDpiForMonitor 要 Win8.1+（产品要求 Win10）。
+            if (OperatingSystem.IsWindowsVersionAtLeast(8, 1))
+            {
+                PInvoke.GetDpiForMonitor(hmon, MONITOR_DPI_TYPE.MDT_EFFECTIVE_DPI, out var dx, out _);
+                cursorDpi = dx;
+            }
         }
 
         var (src, scaleX, scaleY) = ("(no window)", 0d, 0d);
@@ -56,7 +59,10 @@ public static class NativeDisplay
             var handle = new WindowInteropHelper(dpiSourceWindow).Handle;
             if (handle != IntPtr.Zero)
             {
-                var winDpi = PInvoke.GetDpiForWindow((HWND)handle);
+                // GetDpiForWindow 要 Win10 1607+（产品要求 Win10，守卫只为可证）。
+                var winDpi = OperatingSystem.IsWindowsVersionAtLeast(10, 0, 14393)
+                    ? PInvoke.GetDpiForWindow((HWND)handle)
+                    : 0u;
                 var vd = VisualTreeHelper.GetDpi(dpiSourceWindow);
                 src = $"GetDpiForWindow={winDpi} ({(winDpi == 0 ? 0 : winDpi * 100 / 96)}%), " +
                       $"VisualTreeHelper.DpiScale=({vd.DpiScaleX:0.###},{vd.DpiScaleY:0.###})";
@@ -87,7 +93,9 @@ public static class NativeDisplay
         };
         return $"Tier {name}  |  PS2.0={RenderCapability.IsPixelShaderVersionSupported(2, 0)}, " +
                $"PS3.0={RenderCapability.IsPixelShaderVersionSupported(3, 0)}, " +
-               $"ShaderEffect软件回退={RenderCapability.IsShaderEffectSoftwareRenderingSupported}";
+               // 弃用的 IsShaderEffectSoftwareRenderingSupported 官方建议用这个等价调用替换
+               //（该属性本身就是"PS 2.0 能否软件渲染"）。
+               $"ShaderEffect软件回退={RenderCapability.IsPixelShaderVersionSupportedInSoftware(2, 0)}";
     }
 
     public static string DescribeEnvironment()

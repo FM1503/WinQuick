@@ -325,9 +325,10 @@ public static class SettingsProbe
             panel.InvokeApplyForTest();
 
             var baselineConfig = applied.Count > 0 ? applied[^1] : null;
+            // 用模式匹配而不是 ?. 一次、下一行又直接取成员 —— 后者正是可空分析的经典漏网点。
+            var behavior = baselineConfig?.Behavior;
             ProbeOutput.Kv("延迟写回 null",
-                baselineConfig?.Behavior.HoverOpenDelayMs is null
-                && baselineConfig.Behavior.HoverCloseDelayMs is null ? "是" : "否");
+                behavior is { HoverOpenDelayMs: null, HoverCloseDelayMs: null } ? "是" : "否");
             ProbeOutput.Kv("遮罩等于默认时写回 null", baselineConfig?.Appearance.DimOpacity is null ? "是" : "否");
             ProbeOutput.Kv("高亮色留空写回 null", baselineConfig?.Appearance.AccentColor is null ? "是" : "否");
 

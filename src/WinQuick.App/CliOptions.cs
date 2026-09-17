@@ -18,7 +18,7 @@ public sealed class CliOptions
                                       （值形如 root 或 group:分组名）
 
         探针（--env / --*-probe / --render-preview）已拆到独立进程：
-        publish\probes\WinQuick.Probes.exe --help-all
+        publish\probes\WinQuick.Probes.exe（不带参数即打印探针用法）
         """;
 
     public static CliOptions Parse(string[] args)

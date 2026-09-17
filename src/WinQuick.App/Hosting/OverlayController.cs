@@ -783,7 +783,12 @@ public sealed class OverlayController : IDisposable
     }
 
     /// <summary>由常驻装配注入的热键探测（会临时释放当前热键，见 HotkeyManager.ProbeTemporarily）。</summary>
-    private Func<Core.Hotkey.HotkeySpec, (bool Available, int ErrorCode)>? _settingsPanelProbe;
+    /// <summary>
+    /// 热键可用性探测。**默认回答"不可用"而不是留 null** ——
+    /// 面板可能在被注入之前就被创建（启动顺序），那时调用它会直接空引用崩溃。
+    /// </summary>
+    private Func<Core.Hotkey.HotkeySpec, (bool Available, int ErrorCode)> _settingsPanelProbe =
+        _ => (false, 0);
 
     /// <summary>设置面板显示时所用的当前配置。</summary>
     private AppConfig _settings = new();

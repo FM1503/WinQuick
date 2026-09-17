@@ -44,7 +44,12 @@ public static class MonitorLayout
                 if (!PInvoke.GetMonitorInfo(hMonitor, ref info))
                     return true;   // 拿不到就跳过这块屏，不该因为一块异常显示器整体失败
 
-                PInvoke.GetDpiForMonitor(hMonitor, MONITOR_DPI_TYPE.MDT_EFFECTIVE_DPI, out var dpi, out _);
+                // 运行时守卫而不是注释：GetDpiForMonitor 要 Win8.1+，而分析器只认这种写法
+                //（这也正是它想要的东西 —— "可证安全"而不是"我保证"）。产品要求 Win10，
+                // 所以下面这条分支实际上到不了；留着是为了让"不支持的平台上不会调它"可被静态证明。
+                var dpi = 96u;
+                if (OperatingSystem.IsWindowsVersionAtLeast(8, 1))
+                    PInvoke.GetDpiForMonitor(hMonitor, MONITOR_DPI_TYPE.MDT_EFFECTIVE_DPI, out dpi, out _);
 
                 var rc = info.rcMonitor;
                 result.Add(new MonitorInfo(
@@ -71,7 +76,9 @@ public static class MonitorLayout
         if (PInvoke.GetCursorPos(out var pt))
         {
             var hmon = PInvoke.MonitorFromPoint(pt, MONITOR_FROM_FLAGS.MONITOR_DEFAULTTONEAREST);
-            PInvoke.GetDpiForMonitor(hmon, MONITOR_DPI_TYPE.MDT_EFFECTIVE_DPI, out var dpi, out _);
+            var dpi = 96u;
+            if (OperatingSystem.IsWindowsVersionAtLeast(8, 1))
+                PInvoke.GetDpiForMonitor(hmon, MONITOR_DPI_TYPE.MDT_EFFECTIVE_DPI, out dpi, out _);
 
             // 用光标所在屏的 DPI 反查是哪个 index（EnumDisplayMonitors 的顺序是稳定的）
             foreach (var m in monitors)

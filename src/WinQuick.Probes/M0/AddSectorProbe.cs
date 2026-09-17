@@ -278,7 +278,10 @@ public static class AddSectorProbe
             //
             // 停到角落就安全：轮盘是跟着**唤出时**的光标摆的，不会追过去。
             // （这个坑是"设置探针会真的移光标"之后才出现的，而偶发失败比稳定失败更危险。）
-            var primary = MonitorLayout.All().FirstOrDefault();
+            // FirstOrDefault 在空列表上返回 null（MonitorInfo 是 record）——
+            // 探针不该因为"取不到主屏"就空引用崩掉。
+            var monitors = MonitorLayout.All();
+            var primary = monitors.Count > 0 ? monitors[0] : MonitorLayout.AtCursor();
             Windows.Win32.PInvoke.SetCursorPos(primary.Right - 4, primary.Bottom - 4);
             await Task.Delay(300);
 

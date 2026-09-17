@@ -181,6 +181,7 @@
     <button id="replay">重播当前</button>
     <button id="all">依次播放全部</button>
     <span class="hint" id="tip">把鼠标停在舞台上，再点「从光标位置放大」，它会从光标处展开（模拟真实触发点）。</span>
+    <span class="hint" id="status"></span>
   </div>
   <h2 id="m-name"></h2>
   <p id="m-params"></p>
@@ -289,12 +290,12 @@ function play(c) {
   document.querySelectorAll(".card").forEach((el) => el.classList.toggle("on", el.dataset.id === c.id));
 
   // 重置：去掉所有动画类，强制一次重排，再加回目标类（否则同名动画不会重播）
-  wheel.className = "";
+  wheel.setAttribute("class", "");
   wheel.style.transformOrigin = c.id === "cursor" ? cursorOrigin : "50% 50%";
   void wheel.offsetWidth;
   wheel.classList.add("a-" + c.id, "on");
 
-  dim.className = "";
+  dim.setAttribute("class", "");
   void dim.offsetWidth;
   dim.classList.add("on");
 
@@ -302,6 +303,9 @@ function play(c) {
   document.getElementById("m-params").textContent = `时长 ${c.dur}　缓动 ${c.ease}　形态 ${c.from}`;
   document.getElementById("m-cost").textContent = "实现成本：" + c.cost;
   document.getElementById("m-src").textContent = c.src;
+
+  const status = document.getElementById("status");
+  if (status) status.textContent = "正在播放：" + c.name;
 }
 
 function buildList() {
@@ -329,9 +333,19 @@ document.getElementById("all").addEventListener("click", async () => {
   }
 });
 
-buildWheel();
-buildList();
-play(CANDIDATES[0]);
+window.addEventListener("error", (e) => {
+  const el = document.getElementById("status");
+  if (el) el.textContent = "页面脚本出错：" + e.message;
+});
+
+try {
+  buildWheel();
+  buildList();
+  play(CANDIDATES[0]);
+} catch (err) {
+  const el = document.getElementById("status");
+  if (el) el.textContent = "初始化失败：" + err.message;
+}
 </script>
 </body>
 </html>

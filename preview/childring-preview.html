@@ -118,7 +118,8 @@
   <div class="row-btns">
     <button id="replay">重播当前</button>
     <button id="all">依次播放全部</button>
-    <span class="hint">对比建议：先看"①现状"，再逐个看其它 —— 差别主要在"子环是从哪儿长出来的"。</span>
+    <span class="hint">对比建议：先看「①现状」，再逐个看其它 —— 差别主要在「子环是从哪儿长出来的」。</span>
+    <span class="hint" id="status"></span>
   </div>
   <h2 id="m-name"></h2>
   <p id="m-params"></p>
@@ -241,8 +242,8 @@ const CANDIDATES = [
     src: "来源：Material 的容器变换 + 社区 popIn；回弹幅度按社区建议保持克制。",
   },
   {
-    id: "wipe", name: "⑥ 角向扫过：像表针一样刷出来",
-    form: "子弧从起始边顺时针扫到结束边（裁切逐帧推进）",
+    id: "wipe", name: "⑥ 横向刷出：从起始边推到结束边",
+    form: "子弧被从左到右刷出来（裁切逐帧推进；不是沿弧扫，是一条横向的帘子）",
     dur: "260ms", ease: "cubic-bezier(0.2,0.8,0.2,1)",
     cost: "高（角向裁切要逐帧改几何/遮罩）", costLevel: "high",
     src: "来源：进度/加载类语汇借用到入场；不是官方小节推荐值，属可选风格。",
@@ -258,10 +259,16 @@ function play(c) {
   current = c;
   document.querySelectorAll(".card").forEach((el) => el.classList.toggle("on", el.dataset.id === c.id));
 
+  // **必须用 setAttribute 重置 class，不能写 g.className = ""。**
+  // SVG 元素的 className 是只读的 SVGAnimatedString，赋值会静默失败 ——
+  // 于是上一个候选的动画类留了下来，六个候选的规则叠在一起，看起来就是"动画没正常播放"。
   const g = children();
-  g.className = "";
+  g.setAttribute("class", "");
   void g.offsetWidth;                       // 强制重排，同名动画才会重播
   g.classList.add("a-" + c.id);
+
+  const status = document.getElementById("status");
+  if (status) status.textContent = "正在播放：" + c.name;
 
   document.getElementById("m-name").textContent = c.name;
   document.getElementById("m-params").textContent = `形态 ${c.form}　时长 ${c.dur}　缓动 ${c.ease}`;
@@ -291,9 +298,19 @@ document.getElementById("all").addEventListener("click", async () => {
   }
 });
 
-buildWheel();
-buildList();
-play(CANDIDATES[0]);
+window.addEventListener("error", (e) => {
+  const el = document.getElementById("status");
+  if (el) el.textContent = "页面脚本出错：" + e.message;
+});
+
+try {
+  buildWheel();
+  buildList();
+  play(CANDIDATES[0]);
+} catch (err) {
+  const el = document.getElementById("status");
+  if (el) el.textContent = "初始化失败：" + err.message;
+}
 </script>
 </body>
 </html>

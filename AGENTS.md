@@ -55,6 +55,14 @@ Start-Process publish\WinQuick.exe
 | `preview/entrance-preview.html` | 工具整体入场（六个候选；用户已选定 ②+④） |
 | `preview/childring-preview.html` | 子环展开（六个候选，待用户挑） |
 
+**原型里踩过的坑（写下来省一次往返）**：
+- **SVG 元素的 `className` 是只读的 `SVGAnimatedString`**，`el.className = ""` 会**静默失败** ——
+  于是"重置上一个候选的动画类"这一步不生效，多个候选的规则叠在一起，表现为"动画没正常播放"。
+  一律用 `el.setAttribute("class", ...)` 或 `classList`。
+- 隐藏的标签页里**动画时钟不走**（浏览器节流），所以"动画有没有生效"不能靠等一段时间再看计算样式；
+  用 Web Animations API 把 `currentTime` 确定性地推到中段/结束再读 `getComputedStyle` ✓ 可复现。
+- 每页都加一句**页内自检**（`window.onerror` + 状态行显示"正在播放：X"），失败时肉眼可见，不必靠猜。
+
 **为什么定成硬流程（实测教训）**：入场动画在参数上反复微调了五轮
 （460→280→200→340→256ms、换过五条曲线），每一轮都要用户"看一遍再说不行"，
 五轮都没达标；而做成可对比的 HTML 原型后**一次就选中了**。

@@ -23,10 +23,16 @@ public static class TokenResources
 
     private static bool _installed;
 
-    /// <summary>安装到应用资源。重复调用无副作用。</summary>
-    public static void Install()
+    /// <summary>
+    /// 安装到应用资源。<paramref name="force"/> 为真时**重新**装一遍（换皮肤用）。
+    ///
+    /// 之所以要 force：所有界面都用 <c>DynamicResource</c> 引用令牌，
+    /// 所以换皮肤时只要把资源重写一遍，面板的颜色与字号就跟着变了 ——
+    /// 不必重建窗口（重建窗口＝重建表面＝闪）。
+    /// </summary>
+    public static void Install(bool force = false)
     {
-        if (_installed) return;
+        if (_installed && !force) return;
         _installed = true;
 
         var app = Application.Current;

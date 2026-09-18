@@ -321,3 +321,11 @@ SYSTEM_METRICS_INDEX
 WINDOW_EX_STYLE
 WINDOW_LONG_PTR_INDEX
 WNDCLASS_STYLES
+// --- 虚拟桌面（窗口属于创建时所在的桌面，切桌面后要把窗口搬过去）---
+IVirtualDesktopManager
+
+CoCreateInstance
+GetShellWindow
+WindowFromPoint
+DestroyWindow
+CreateWindowEx

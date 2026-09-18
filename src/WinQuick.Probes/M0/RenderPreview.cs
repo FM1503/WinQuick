@@ -101,10 +101,23 @@ public static class RenderPreview
 
         ProbeOutput.Line($"状态: {state}（扇区数 {count}，悬停索引 {(hoverIndex < 0 ? "无" : hoverIndex)}）");
 
+        // --skin=id / --form=pie|rounded|petal|dial：换肤与换形态之后的几何要能被验证。
+        // 皮肤走的是与运行时同一条路径（TokenStore.ApplySkin），
+        // 所以这里渲染出来的就是用户会看到的配色、描边与光晕。
+        var form = RingForms.Parse(cli.GetString("form", "pie"));
+        var skin = cli.GetString("skin", "");
+        if (!string.IsNullOrWhiteSpace(skin))
+        {
+            var problem = TokenStore.ApplySkin(skin);
+            ProbeOutput.Line(problem is null ? $"皮肤: {skin}" : $"皮肤: {skin} 应用失败（{problem}）");
+        }
+
+        ProbeOutput.Line($"形态: {RingForms.IdOf(form)}（{RingForms.NameOf(form)}）");
+
         try
         {
             var tokens = TokenStore.Current;
-            var view = RadialRingView.Build(trimmed);
+            var view = RadialRingView.Build(trimmed, form: form);
             // 用立即落定而不是 SetHover：只渲染一帧，动画推进不了，
             // 否则画出来的永远是未形变状态，形变就等于没被验证过。
             view.SetHoverImmediate(hoverIndex);

@@ -30,6 +30,7 @@ internal sealed class SectorLabel
 
     private readonly Canvas _clipHost;
     private readonly TextBlock _text;
+    private readonly Brush _baseForeground;
     private readonly double _availableWidth;
     private readonly double _availableHeight;
     private readonly string _fullText;
@@ -43,6 +44,7 @@ internal sealed class SectorLabel
         _availableWidth = maxWidth;
         _availableHeight = maxHeight;
         _fullText = text;
+        _baseForeground = foreground;
 
         _text = new TextBlock
         {
@@ -175,14 +177,36 @@ internal sealed class SectorLabel
     /// 用 <c>RenderTransform</c> 而不是改 <c>Canvas.Left/Top</c> —— 后者每帧都会走一次布局，
     /// 而这只该是一次渲染变换。结束后变换停在 0（与"没有位移"等价）。
     /// </summary>
-    public void SlideIn(double dx, double dy, TimeSpan duration, System.Windows.Media.Animation.KeySpline spline)
+    public void SlideIn(double dx, double dy, TimeSpan duration, string easing, int delayMs = 0)
     {
         var transform = new TranslateTransform(dx, dy);
         _clipHost.RenderTransform = transform;
-        transform.BeginAnimation(TranslateTransform.XProperty,
-            Design.MotionSplines.FromTo(dx, 0, duration, spline));
-        transform.BeginAnimation(TranslateTransform.YProperty,
-            Design.MotionSplines.FromTo(dy, 0, duration, spline));
+
+        var x = Design.MotionSplines.FromTo(dx, 0, duration, easing);
+        var y = Design.MotionSplines.FromTo(dy, 0, duration, easing);
+        if (delayMs > 0)
+        {
+            // 延迟期间停在位移起点（"还没轮到我"），而不是先滑到位再跳回来。
+            x.BeginTime = y.BeginTime = TimeSpan.FromMilliseconds(delayMs);
+        }
+
+        transform.BeginAnimation(TranslateTransform.XProperty, x);
+        transform.BeginAnimation(TranslateTransform.YProperty, y);
+    }
+
+    /// <summary>
+    /// 悬停抬起（非饼形形态用）：把标签整体挪 (dx, dy)，不播动画 ——
+    /// 逐帧的进度由扇区那边的鼓出动画器驱动，这里只负责"这一帧该在哪儿"。
+    /// </summary>
+    public void SetLift(double dx, double dy)
+    {
+        if (Math.Abs(dx) < 0.01 && Math.Abs(dy) < 0.01)
+        {
+            _clipHost.RenderTransform = null;
+            return;
+        }
+
+        _clipHost.RenderTransform = new TranslateTransform(dx, dy);
     }
 
     /// <summary>清掉入场位移（离屏渲染与"立即展开"要的是终态）。</summary>
@@ -282,5 +306,16 @@ internal sealed class SectorLabel
     /// 重新测量并重新居中），既让文字在悬停时挪位置，又给每次悬停加一笔不小的开销 ——
     /// 而悬停是轮盘上最频繁的动作。
     /// </summary>
-    public void SetHover(bool hovered) => _text.Opacity = hovered ? 1.0 : 0.92;
+    /// <summary>
+    /// 悬停态：文字不透明 + 用悬停专用的文字色。
+    ///
+    /// 为什么要传色：纯色块（高对比档的黄底、复古档的红底）当底时，白字读不出来 ——
+    /// 那是「材质」的一部分，所以文字色是令牌（<c>color.hoverLabel</c>），
+    /// 且被 Validate 的亮度差检查锁着。
+    /// </summary>
+    public void SetHover(bool hovered, Brush hoverForeground)
+    {
+        _text.Opacity = hovered ? 1.0 : 0.92;
+        _text.Foreground = hovered ? hoverForeground : _baseForeground;
+    }
 }

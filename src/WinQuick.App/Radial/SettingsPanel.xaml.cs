@@ -67,6 +67,10 @@ public partial class SettingsPanel : Window
         // 窗口级操作计数（--flicker-probe）。
         SurfaceOps.Watch(this, SurfaceOwner.Panel);
 
+        // 标题栏按住即可拖动（物理像素实现，见 WindowDrag 里的两条"为什么"）。
+        // 拖过之后不再自动摆位 —— 面板挡住轮盘正是拖动的动机。
+        WindowDrag.Attach(this, TitleBar, onMoved: () => PlacedByUser = true);
+
         LoadFrom(current, notify: false);
     }
 
@@ -90,66 +94,8 @@ public partial class SettingsPanel : Window
     /// 全部用**物理像素**（`GetCursorPos` / `GetWindowRect` / `SetWindowPos`），
     /// 绕开 DIP 换算 —— 在 175% 这类非整数缩放下按 DIP 算会逐帧累积误差。
     /// </summary>
-    private void OnTitleBarMouseDown(object sender, MouseButtonEventArgs e)
-    {
-        if (e.ButtonState != MouseButtonState.Pressed) return;
-
-        e.Handled = true;
-
-        if (!Windows.Win32.PInvoke.GetCursorPos(out var cursor)) return;
-
-        var origin = CurrentPhysicalPosition;
-        if (origin is null) return;
-
-        _dragCursor = (cursor.X, cursor.Y);
-        _dragWindow = origin.Value;
-        _dragging = true;
-
-        // 监听整个窗口的移动与抬起（而不是只监听标题栏）：窗口会跟着指针走，
-        // 指针始终在窗口内，所以不捕获鼠标也收得到后续事件 ——
-        // 而捕获鼠标恰恰需要"我们是前台窗口"，那是一条本项目已经踩过的坑。
-        MouseMove += OnDragMouseMove;
-        MouseLeftButtonUp += OnDragMouseUp;
-    }
-
-    private bool _dragging;
-    private (int X, int Y) _dragCursor;
-    private (int X, int Y) _dragWindow;
-
-    private void OnDragMouseMove(object sender, MouseEventArgs e)
-    {
-        if (!_dragging) return;
-        if (e.LeftButton != MouseButtonState.Pressed) { EndDrag(); return; }
-        if (!Windows.Win32.PInvoke.GetCursorPos(out var cursor)) return;
-
-        var left = _dragWindow.X + (cursor.X - _dragCursor.X);
-        var top = _dragWindow.Y + (cursor.Y - _dragCursor.Y);
-
-        var hwnd = new WindowInteropHelper(this).Handle;
-        Windows.Win32.PInvoke.SetWindowPos(
-            (Windows.Win32.Foundation.HWND)hwnd, default, left, top, 0, 0,
-            Windows.Win32.UI.WindowsAndMessaging.SET_WINDOW_POS_FLAGS.SWP_NOSIZE |
-            Windows.Win32.UI.WindowsAndMessaging.SET_WINDOW_POS_FLAGS.SWP_NOZORDER |
-            Windows.Win32.UI.WindowsAndMessaging.SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE |
-            Windows.Win32.UI.WindowsAndMessaging.SET_WINDOW_POS_FLAGS.SWP_NOOWNERZORDER);
-    }
-
-    private void OnDragMouseUp(object sender, MouseButtonEventArgs e) => EndDrag();
-
-    private void EndDrag()
-    {
-        if (!_dragging) return;
-
-        _dragging = false;
-        MouseMove -= OnDragMouseMove;
-        MouseLeftButtonUp -= OnDragMouseUp;
-
-        // 拖过就置位：之后不再自动摆位，否则等于白拖。
-        PlacedByUser = true;
-    }
-
     /// <summary>探针用：当前是否正在拖动。</summary>
-    internal bool IsDraggingForTest => _dragging;
+    internal bool IsDraggingForTest => WindowDrag.IsDragging(this);
 
     /// <summary>探针用：是否已标记为被用户摆放过。</summary>
     internal bool PlacedByUserForTest => PlacedByUser;
@@ -173,6 +119,12 @@ public partial class SettingsPanel : Window
 
     /// <summary>用户要求关闭设置（点 ✕ 或按 Esc）。</summary>
     public event EventHandler? CloseRequested;
+
+    /// <summary>用户要求打开皮肤选择面板（外观区里那个按钮）。</summary>
+    public event EventHandler? SkinRequested;
+
+    private void OnSkinClick(object sender, RoutedEventArgs e) =>
+        SkinRequested?.Invoke(this, EventArgs.Empty);
 
     internal nint HandleValue => new WindowInteropHelper(this).Handle;
 

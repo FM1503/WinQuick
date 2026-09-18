@@ -122,6 +122,12 @@ internal static class ProbesHost
                 ExitSoon(app);
                 break;
 
+            // 只建窗口句柄、不显示窗口，所以它不会在屏幕上留下任何东西。
+            case "--virtual-desktop-probe":
+                VirtualDesktopProbe.Run();
+                ExitSoon(app);
+                break;
+
             default:
                 ProbeOutput.Initialize("usage");
                 ProbeOutput.Line(cli.Command.Length == 0 ? "未指定探针" : $"未知命令: {cli.Command}");
@@ -194,6 +200,7 @@ internal static class ProbesHost
           --particle-probe          粒子动画代价：在真窗口上逐帧动 N 个图形/一张位图，量帧间隔
               --seconds=N           每档采样秒数，默认 3
           --render-preview          离屏渲染出 PNG，做几何与配色的数值自检
+          --virtual-desktop-probe   核对虚拟桌面的 COM 接线（不显示窗口）
               --out=路径            输出 PNG，默认 artifacts/m0/preview.png
               --state=名字          渲染状态，默认 default
 

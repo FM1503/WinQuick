@@ -209,25 +209,27 @@ public sealed partial class RadialRingView
         if (motion.ChildSlideMs <= 0 || motion.ChildSlidePx <= 0) return;
 
         var duration = TimeSpan.FromMilliseconds(motion.ChildSlideMs);
-        var spline = MotionSplines.FromToken(motion.ChildSlideEasing);
+        var easing = motion.ChildSlideEasing;
         var slide = motion.ChildSlidePx;
 
         for (var i = 0; i < _childSpans.Length; i++)
         {
             var ownAngle = _childSpans[i].CenterDeg;
+            // 相位差：霓虹/Material 那类皮肤靠它做"依次弹出"（0 = 一起滑，现状）。
+            var delay = i * motion.ChildStaggerMs;
 
-            SlideFromParent(_childIcons[i], iconRadius, ownAngle, parentCenterDeg, slide, duration, spline);
-            SlideFromParent(_childLabels[i], labelRadius, ownAngle, parentCenterDeg, slide, duration, spline);
+            SlideFromParent(_childIcons[i], iconRadius, ownAngle, parentCenterDeg, slide, duration, easing, delay);
+            SlideFromParent(_childLabels[i], labelRadius, ownAngle, parentCenterDeg, slide, duration, easing, delay);
 
             if (i < _childChildMarkers.Count && _childChildMarkers[i] is { } marker)
-                SlideFromParent(marker, markerRadius, ownAngle, parentCenterDeg, slide, duration, spline);
+                SlideFromParent(marker, markerRadius, ownAngle, parentCenterDeg, slide, duration, easing, delay);
         }
     }
 
     /// <summary>把一个元素从"父项方向、半径小 <paramref name="slidePx"/>"滑到它自己的位置。</summary>
     private void SlideFromParent(
         UIElement element, double ownRadius, double ownAngleDeg, double parentCenterDeg,
-        double slidePx, TimeSpan duration, System.Windows.Media.Animation.KeySpline spline)
+        double slidePx, TimeSpan duration, string easing, int delayMs)
     {
         var from = PolarOf(ownRadius - slidePx, parentCenterDeg);
         var to = PolarOf(ownRadius, ownAngleDeg);
@@ -236,17 +238,26 @@ public sealed partial class RadialRingView
 
         var transform = new TranslateTransform(dx, dy);
         element.RenderTransform = transform;
-        transform.BeginAnimation(TranslateTransform.XProperty, MotionSplines.FromTo(dx, 0, duration, spline));
-        transform.BeginAnimation(TranslateTransform.YProperty, MotionSplines.FromTo(dy, 0, duration, spline));
+        var x = MotionSplines.FromTo(dx, 0, duration, easing);
+        var y = MotionSplines.FromTo(dy, 0, duration, easing);
+        if (delayMs > 0)
+        {
+            // 相位差用 BeginTime 而不是把关键帧整体后移：
+            // 延迟期间元素停在**本地值**（也就是位移的起点），这正是"还没轮到我"的样子。
+            x.BeginTime = y.BeginTime = TimeSpan.FromMilliseconds(delayMs);
+        }
+
+        transform.BeginAnimation(TranslateTransform.XProperty, x);
+        transform.BeginAnimation(TranslateTransform.YProperty, y);
     }
 
     private void SlideFromParent(
         SectorLabel label, double ownRadius, double ownAngleDeg, double parentCenterDeg,
-        double slidePx, TimeSpan duration, System.Windows.Media.Animation.KeySpline spline)
+        double slidePx, TimeSpan duration, string easing, int delayMs)
     {
         var from = PolarOf(ownRadius - slidePx, parentCenterDeg);
         var to = PolarOf(ownRadius, ownAngleDeg);
-        label.SlideIn(from.X - to.X, from.Y - to.Y, duration, spline);
+        label.SlideIn(from.X - to.X, from.Y - to.Y, duration, easing, delayMs);
     }
 
     /// <summary>环内的极坐标 → 窗口内坐标（与几何用的是同一套约定：0° 正上、顺时针）。</summary>
@@ -355,13 +366,13 @@ public sealed partial class RadialRingView
         var colors = TokenStore.Current.Color;
 
         _childSectors[index].Fill = hovered
-            ? AccentFill
+            ? TokenBrushes.Brush(HoverFillHex, colors.HoverFillAlpha)
             : TokenBrushes.Brush(colors.SectorFill, colors.SectorFillAlpha);
         _childSectors[index].Stroke = hovered
             ? TokenBrushes.Brush(colors.HoverStroke, colors.HoverStrokeAlpha)
             : TokenBrushes.Brush(colors.SectorStroke, colors.SectorStrokeAlpha);
 
-        _childLabels[index].SetHover(hovered);
+        _childLabels[index].SetHover(hovered, TokenBrushes.Brush(colors.HoverLabel));
         _childIcons[index].Opacity = hovered ? 1.0 : 0.94;
         if (_childChildMarkers[index] is { } marker)
             marker.Stroke = _childSectors[index].Stroke;

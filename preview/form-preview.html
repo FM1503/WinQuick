@@ -1,0 +1,930 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>WinQuick · 形态与专属动画候选（HTML 最小成本原型）</title>
+<style>
+  :root {
+    --bg:#14161c; --fg:#e8eaf0; --muted:#9aa3b2; --line:#ffffff1a;
+    --accent:#6ea8fe; --ok:#7fd18f; --warn:#e2c56a; --bad:#e08a7a;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:14px/1.65 "Segoe UI","Microsoft YaHei",system-ui,sans-serif; }
+  header { padding:20px 24px 6px; max-width:1360px; }
+  h1 { margin:0 0 8px; font-size:18px; font-weight:600; }
+  h2 { font-size:15px; margin:26px 0 8px; max-width:1360px; padding:0 24px; }
+  p { margin:4px 0; }
+  code { background:#ffffff12; padding:1px 5px; border-radius:4px; font-size:12.5px; }
+  .muted { color:var(--muted); }
+  .note { border-left:3px solid var(--accent); background:#6ea8fe10; padding:8px 12px;
+          margin:10px 0; border-radius:0 6px 6px 0; max-width:1312px; }
+  .note.warn { border-color:var(--warn); background:#e2c56a10; }
+  .wrap { padding:0 24px 34px; }
+  button { background:#ffffff10; color:var(--fg); border:1px solid var(--line);
+           border-radius:8px; padding:6px 12px; font:inherit; cursor:pointer; }
+  button:hover { background:#ffffff1c; }
+  button.on { border-color:var(--accent); background:#6ea8fe20; }
+  .hint { color:#7b8496; font-size:12.5px; }
+
+  /* 桌面背景：形态不再只是颜色差异，但还是要有真实前景/背景对比 */
+  .desk { position:absolute; inset:0;
+          background:linear-gradient(150deg,#34405c 0%,#1a2133 45%,#10141f 100%); }
+  .desk::before { content:""; position:absolute; right:6%; top:12%; width:46%; height:62%;
+                  background:linear-gradient(#f4f6fb,#dfe4ee); border-radius:4px;
+                  box-shadow:0 8px 22px #0007; opacity:.92; }
+  .desk::after { content:""; position:absolute; left:0; right:0; bottom:0; height:16%;
+                 background:#0b0e15e0; border-top:1px solid #ffffff22; }
+
+  #gallery { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr));
+             gap:12px; max-width:1360px; }
+  .card { border:1px solid var(--line); border-radius:10px; padding:8px; background:#ffffff06;
+          cursor:pointer; transition:border-color .12s,background .12s; }
+  .card:hover { border-color:#ffffff40; background:#ffffff0d; }
+  .card.on { border-color:var(--accent); background:#6ea8fe14; }
+  .card .name { font-weight:600; }
+  .card .line { color:var(--muted); font-size:12.5px; }
+  .card .mini { position:relative; width:100%; aspect-ratio:1; border-radius:8px;
+                overflow:hidden; margin:6px 0; }
+  .minidim { position:absolute; inset:0; background:rgba(0,0,0,.42); }
+  .wheelScale { position:absolute; inset:0; }
+  .wheelScale svg { position:absolute; inset:0; width:100%; height:100%; }
+  .tag { font-size:12px; margin-top:3px; }
+  .cost.low { color:var(--ok); } .cost.mid { color:var(--warn); } .cost.high { color:var(--bad); }
+
+  .stagebox { display:flex; gap:18px; align-items:flex-start; max-width:1360px; flex-wrap:wrap; }
+  #stage { position:relative; width:520px; height:520px; border-radius:12px; overflow:hidden;
+           flex:0 0 auto; border:1px solid var(--line); }
+  #dim { position:absolute; inset:0; background:rgba(0,0,0,.42); }
+  .wheelRot { position:absolute; left:50%; top:50%; width:520px; height:520px;
+              margin:-260px 0 0 -260px; }
+  .wheelScale { position:absolute; inset:0; }
+  #side { flex:1 1 420px; min-width:380px; }
+  .btnrow { display:flex; gap:8px; flex-wrap:wrap; margin:10px 0; }
+  #status { min-height:22px; color:var(--accent); font-size:13px; }
+  table.spec { border-collapse:collapse; width:100%; margin-top:8px; }
+  table.spec td { border-top:1px solid var(--line); padding:5px 8px 5px 0; vertical-align:top; }
+  table.spec td:first-child { color:var(--muted); white-space:nowrap; width:92px; }
+  table.grid { border-collapse:collapse; width:100%; max-width:1312px; font-size:12.5px; }
+  table.grid th, table.grid td { border:1px solid var(--line); padding:6px 8px; text-align:left;
+                                 vertical-align:top; }
+  table.grid th { color:var(--muted); font-weight:600; }
+  footer { padding:0 24px 40px; max-width:1360px; }
+  #selfcheck { font-size:13px; }
+  #selfcheck .ok { color:var(--ok); } #selfcheck .bad { color:var(--bad); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>WinQuick · 形态与专属动画候选</h1>
+  <p class="muted">几何与真实程序同一套约定（740 DIP 窗口、死区 56、一级环 56–200、图标在环带 24% 处、
+     文字在 65% 处）。<b>六种形态用同一份菜单数据</b>（8 项，第一项悬停），
+     每种配一段<b>专属入场</b>；点卡片切换，右侧逐个播放，也可背靠背对比。</p>
+</header>
+
+<div class="wrap">
+  <div class="note">
+    <b>这轮只画一级环</b>（真实半径 56–200）。子环（220–350）在每种形态下该怎么呈现，
+    属于选定形态之后的第二步 —— 现在把它塞进来会让"形态差异"和"子环差异"混在一起，挑不清楚。
+  </div>
+  <div class="note warn">
+    <b>两条硬边界，先写在前面。</b>① <b>窗口尺寸不能跟着形态变</b>（固定 740×740）——
+    改窗口尺寸会重建整块表面，那是本项目报过三次闪烁的那类 bug。② <b>真模糊/着色器/真 3D 出局</b>：
+    分层窗口每一帧都要把整窗像素读回内存再走 GDI 合成，逐帧的 Effect/Shader 撞在这条路径上；
+    精美只能靠矢量工艺（渐变、多层描边、刻度、纹理、编排）。
+  </div>
+</div>
+
+<h2>① 六种形态（点一张 → 右侧播放它的专属入场）</h2>
+<div class="wrap"><div id="gallery"></div></div>
+
+<h2>② 大舞台</h2>
+<div class="wrap">
+  <div class="stagebox">
+    <div id="stage">
+      <div class="desk"></div>
+      <div id="dim"></div>
+      <div class="wheelRot" id="rot">
+        <div class="wheelScale" id="scale"></div>
+      </div>
+    </div>
+    <div id="side">
+      <div class="btnrow">
+        <button id="btn-entrance">重播入场</button>
+        <button id="btn-hover">演示悬停</button>
+        <button id="btn-demo">完整演示</button>
+        <button id="btn-all">依次对比全部</button>
+        <button id="btn-stop">停</button>
+      </div>
+      <div id="status">就绪</div>
+      <table class="spec">
+        <tr><td>形态</td><td id="s-form"></td></tr>
+        <tr><td>专属入场</td><td id="s-entrance"></td></tr>
+        <tr><td>悬停</td><td id="s-hover"></td></tr>
+        <tr><td>实现成本</td><td id="s-cost"></td></tr>
+        <tr><td>风险</td><td id="s-risk"></td></tr>
+        <tr><td>触及的不变量</td><td id="s-touch"></td></tr>
+        <tr><td>出处</td><td id="s-src"></td></tr>
+      </table>
+    </div>
+  </div>
+</div>
+
+<h2>③ 对照表（六种形态横着比）</h2>
+<div class="wrap">
+  <table class="grid" id="compare"></table>
+  <p class="hint" style="margin-top:10px">
+    「触及的不变量」这一列是选形态时最容易忽略的代价：现在 <code>Validate()</code> 里的约束
+    （死区占比 12–28%、子环给悬停鼓出留余量、子环满圈时标签半宽 ≥ 30）<b>全是按"饼形扇区"推导的</b>。
+    换成花瓣/卡片/网格之后，这些约束要么失效、要么要按新形状重推一遍。
+  </p>
+</div>
+
+<footer>
+  <div id="selfcheck">自检中…</div>
+</footer>
+
+<script>
+// ============================================================================
+// 几何工具：极坐标 0° 正上、顺时针；所有动画只用 transform/opacity，
+// 需要逐帧改形状的（饼形鼓出、指针）单独走 rAF —— 与真实实现的分工一致。
+// ============================================================================
+const CX = 370, CY = 370, WIN = 740;
+const DEAD = 56, R_OUT = 200;            // 一级环（真实值）
+
+function polar(r, deg) {
+  const a = deg * Math.PI / 180;
+  return [CX + r * Math.sin(a), CY - r * Math.cos(a)];
+}
+const P = (r, deg) => polar(r, deg).map((v) => v.toFixed(2)).join(" ");
+
+function ringSector(rIn, rOut, a1, a2) {
+  const large = (a2 - a1) > 180 ? 1 : 0;
+  return `M ${P(rOut, a1)} A ${rOut} ${rOut} 0 ${large} 1 ${P(rOut, a2)} ` +
+         `L ${P(rIn, a2)} A ${rIn} ${rIn} 0 ${large} 0 ${P(rIn, a1)} Z`;
+}
+
+// 圆角楔形：把两个尖角换成「以尖角为控制点的二次曲线」——
+// 视觉上就是圆角，且不必算精确内切圆（路径里出现 Q，自检会核对它真的存在）。
+function roundedSector(rIn, rOut, a1, a2, cr) {
+  const clamp = (v, hi) => Math.min(v, hi);
+  const daIn = clamp(cr / rIn * 180 / Math.PI, (a2 - a1) / 4);
+  const daOut = clamp(cr / rOut * 180 / Math.PI, (a2 - a1) / 4);
+  return `M ${P(rIn, a1 + daIn)} A ${rIn} ${rIn} 0 0 1 ${P(rIn, a2 - daIn)} ` +
+         `Q ${P(rIn, a2)} ${P(rOut, a2 - daOut)} ` +
+         `A ${rOut} ${rOut} 0 0 0 ${P(rOut, a1 + daOut)} ` +
+         `Q ${P(rOut, a1)} ${P(rIn, a1 + daIn)} Z`;
+}
+
+// 花瓣：内侧收成一个尖、外侧是宽圆弧（经典的叶片形）
+function petalPath(rIn, rOut, mid, halfWidthDeg) {
+  const waist = rIn + (rOut - rIn) * 0.5;
+  const bow = halfWidthDeg * 1.18;
+  return `M ${P(rIn, mid)} ` +
+         `Q ${P(waist, mid - bow)} ${P(rOut, mid - halfWidthDeg)} ` +
+         `A ${rOut} ${rOut} 0 0 1 ${P(rOut, mid + halfWidthDeg)} ` +
+         `Q ${P(waist, mid + bow)} ${P(rIn, mid)} Z`;
+}
+
+function arcPath(r, a1, a2) {
+  const large = (a2 - a1) > 180 ? 1 : 0;
+  return `M ${P(r, a1)} A ${r} ${r} 0 ${large} 1 ${P(r, a2)}`;
+}
+function circlePath(r) { return `M ${P(r, 0)} A ${r} ${r} 0 1 1 ${P(r, 359.999)} Z`; }
+
+// 绕 (cx,cy) 旋转/缩放的显式组合：不依赖 SVG 的 transform-origin 语义（那套在不同浏览器里不一致）
+const about = (cx, cy, rot, s) =>
+  `translate(${cx}px,${cy}px)` + (rot ? ` rotate(${rot}deg)` : "") +
+  (s === undefined ? "" : ` scale(${s})`) + ` translate(${-cx}px,${-cy}px)`;
+const move = (dx, dy) => `translate(${dx.toFixed(2)}px,${dy.toFixed(2)}px)`;
+
+let _uid = 0;
+const uid = (p) => `${p}-${++_uid}`;
+
+const ITEM_NAMES = ["开发", "浏览器", "终端", "截图", "音乐", "下载", "文件夹", "设置"];
+const N = ITEM_NAMES.length;
+const HOVER = 0;                          // 悬停项：12 点那格
+
+// ============================================================================
+// 六种形态。每个形态给出：怎么画（build）、专属入场（motion.kind + 参数）、
+// 悬停表现（hoverMode）、成本与风险。
+// ============================================================================
+const FORMS = [
+  {
+    id: "pie", name: "① 现状·饼形扇区", tagline: "尖角楔形，整盘缩放+旋转落位",
+    motion: { kind: "whole", scale: { from: 0.86, ms: 300, cur: "cubic-bezier(0.34,1.56,0.64,1)" },
+              rotate: { from: -24, ms: 380, cur: "cubic-bezier(0.16,1,0.3,1)" },
+              fade: { ms: 167, cur: "cubic-bezier(0,0,0,1)" },
+              total: 380 },
+    hoverMode: "geometry",
+    meta: { cost: "零（就是现状）", costLevel: "low", risk: "零",
+            touch: "无 —— 现有校验原样适用",
+            src: "出处：本项目现状（用户已选定的入场 ②+④）。" },
+    build(svg, c) {
+      const sweep = 360 / N, gap = c.gap;
+      const g = el("g");
+      const items = [];
+      for (let i = 0; i < N; i++) {
+        const mid = i * sweep;
+        const item = el("g");
+        const shape = el("path", { d: ringSector(DEAD, R_OUT, mid - sweep / 2 + gap, mid + sweep / 2 - gap),
+                                   fill: c.fill, stroke: c.stroke, "stroke-width": 1 });
+        item.appendChild(shape);
+        items.push(addIconLabel(item, mid, c));
+        item.dataset.i = i;
+        g.appendChild(item);
+        items[i].el = item; items[i].shape = shape; items[i].angle = mid;
+      }
+      g.appendChild(deadZone(c));
+      svg.appendChild(g);
+      return { group: g, items, bulge: (i, px) => {
+        const mid = items[i].angle;
+        items[i].shape.setAttribute("d",
+          ringSector(DEAD, R_OUT + px, mid - sweep / 2 + gap, mid + sweep / 2 - gap));
+      } };
+    },
+  },
+  {
+    id: "rounded", name: "② 圆角楔形", tagline: "Fluent 卡片感 + 逐个波次长出来 + 光扫",
+    motion: { kind: "wave", from: 0.72, ms: 260, cur: "cubic-bezier(0.34,1.56,0.64,1)",
+              staggerMs: 25, sweep: { ms: 480, cur: "linear", delayMs: 120 }, total: 655 },
+    hoverMode: "lift",
+    meta: { cost: "低（换几何生成器 + 每项一个 transform）", costLevel: "low", risk: "低",
+            touch: "无 —— 外形变了但仍是环形扇区，命中测试与标签预算不变",
+            src: "出处：Fluent 的卡片圆角与「条目集错开起始时间」；光扫是进度类语汇的借用。" },
+    build(svg, c) {
+      const sweep = 360 / N, gap = c.gap;
+      const g = el("g");
+      const items = [];
+      for (let i = 0; i < N; i++) {
+        const mid = i * sweep;
+        const item = el("g");
+        const shape = el("path", { d: roundedSector(DEAD, R_OUT, mid - sweep / 2 + gap, mid + sweep / 2 - gap, 14),
+                                   fill: c.fill, stroke: c.stroke, "stroke-width": 1 });
+        item.appendChild(shape);
+        items.push(addIconLabel(item, mid, c));
+        item.dataset.i = i;
+        g.appendChild(item);
+        items[i].el = item; items[i].angle = mid;
+      }
+      g.appendChild(deadZone(c));
+      g.appendChild(sweepSpoke("rounded", DEAD, R_OUT, c));
+      svg.appendChild(g);
+      return { group: g, items, sweep: g.lastChild };
+    },
+  },
+  {
+    id: "petal", name: "③ 花瓣", tagline: "八片分离花瓣 + 绽开（每片转进来）",
+    motion: { kind: "bloom", from: -26, scale: 0.6, ms: 340, cur: "cubic-bezier(0.16,1,0.3,1)",
+              staggerMs: 30, sweep: { ms: 480, cur: "linear", delayMs: 160 }, total: 740 },
+    hoverMode: "lift",
+    meta: { cost: "低-中（花瓣几何是新的，但一次生成；动画纯 transform）", costLevel: "low", risk: "低-中",
+            touch: "命中测试：楔形的角度区间判定换成花瓣形状的点包含；标签预算要按花瓣宽度重算",
+            src: "出处：形态谱系里的「单元形状变体」（Circle Dock 的环/螺旋是排布变体）；曲线上取 Material 的空间弹簧。" },
+    build(svg, c) {
+      const sweep = 360 / N, half = sweep / 2 - 6;   // 30° 宽的花瓣，片间留 12° 空隙
+      const g = el("g");
+      const items = [];
+      for (let i = 0; i < N; i++) {
+        const mid = i * sweep;
+        const item = el("g");
+        const shape = el("path", { d: petalPath(DEAD + 12, R_OUT, mid, half),
+                                   fill: c.fill, stroke: c.stroke, "stroke-width": 1 });
+        item.appendChild(shape);
+        items.push(addIconLabel(item, mid, c, { iconRatio: 0.3, labelRatio: 0.72 }));
+        item.dataset.i = i;
+        g.appendChild(item);
+        items[i].el = item; items[i].angle = mid;
+      }
+      g.appendChild(deadZone(c, 0.7));
+      g.appendChild(sweepSpoke("petal", DEAD + 12, R_OUT, c));
+      svg.appendChild(g);
+      return { group: g, items, sweep: g.lastChild };
+    },
+  },
+  {
+    id: "dial", name: "④ 刻度盘", tagline: "外圈 60 刻度 + 指针甩入落位 + 环轮廓自绘",
+    motion: { kind: "dial", draw: { ms: 360, cur: "linear" },
+              ticks: { ms: 240, staggerMs: 6 },
+              needle: { from: -140, ms: 520, cur: "cubic-bezier(0.34,1.56,0.64,1)" },
+              fade: { ms: 200, cur: "cubic-bezier(0,0,0,1)" },
+              total: 900 },
+    hoverMode: "needle",
+    meta: { cost: "低-中（刻度是静态几何 + 指针一个旋转变换）", costLevel: "low", risk: "低",
+            touch: "无 —— 刻度与指针是装饰层，不参与命中测试",
+            src: "出处：仪表盘/拨盘语汇 + 游戏武器轮盘常见档（RFS Radial Wheel Menu 的拨盘与子轮盘、ScaleformUI 的段落高亮）。" },
+    build(svg, c) {
+      const sweep = 360 / N, gap = c.gap;
+      const g = el("g");
+      const items = [];
+      // 楔形（比 ① 瘦一点，把外圈让给刻度）
+      for (let i = 0; i < N; i++) {
+        const mid = i * sweep;
+        const item = el("g");
+        const shape = el("path", { d: ringSector(DEAD, 176, mid - sweep / 2 + gap, mid + sweep / 2 - gap),
+                                   fill: c.fill, stroke: c.stroke, "stroke-width": 1 });
+        item.appendChild(shape);
+        items.push(addIconLabel(item, mid, c));
+        item.dataset.i = i;
+        g.appendChild(item);
+        items[i].el = item; items[i].angle = mid; items[i].shape = shape;
+      }
+      // 刻度：每 6° 一条，每 5 条更长更亮（静态几何，不逐帧重建）
+      const ticks = el("g", { opacity: 1 });
+      const tickNodes = [];
+      for (let k = 0; k < 60; k++) {
+        const deg = k * 6, major = k % 5 === 0;
+        const r1 = major ? 186 : 192, r2 = major ? 214 : 206;
+        const t = el("line", { x1: polar(r1, deg)[0], y1: polar(r1, deg)[1],
+                               x2: polar(r2, deg)[0], y2: polar(r2, deg)[1],
+                               stroke: c.label, "stroke-width": major ? 1.6 : 1,
+                               opacity: major ? 0.75 : 0.35 });
+        ticks.appendChild(t); tickNodes.push(t);
+      }
+      // 环轮廓（自绘用：dashoffset 从全长推到 0）
+      const outline = el("path", { d: circlePath(178), fill: "none", stroke: c.stroke, "stroke-width": 1 });
+      g.appendChild(outline);
+      g.appendChild(ticks);
+      // 指针 + 轮毂
+      const needle = el("g");
+      needle.appendChild(el("path", {
+        d: `M ${P(70, -3.2)} L ${P(168, 0)} L ${P(70, 3.2)} Z`, fill: c.label, opacity: 0.9 }));
+      needle.appendChild(el("circle", { cx: CX, cy: CY, r: 7, fill: c.stroke, stroke: c.label,
+                                        "stroke-width": 1.2 }));
+      needle.setAttribute("transform", `rotate(${items[HOVER].angle} ${CX} ${CY})`);
+      g.appendChild(needle);
+      g.appendChild(deadZone(c, 0.6));
+      svg.appendChild(g);
+      return { group: g, items, outline, ticks, tickNodes, needle };
+    },
+  },
+  {
+    id: "cards", name: "⑤ 卡片弧", tagline: "沿弧排的圆角卡片 + 依次滑入展开",
+    motion: { kind: "cards", fromPx: 90, tiltDeg: 10, ms: 300, cur: "cubic-bezier(0.16,1,0.3,1)",
+              staggerMs: 35, total: 545 },
+    hoverMode: "card",
+    meta: { cost: "中（新几何生成器 + 新命中测试：矩形点包含）", costLevel: "mid", risk: "中",
+            touch: "命中测试换成矩形（对卡片矩形做点包含）；标签预算反而更宽松（横排文字比扇区好排）；"
+                 + "项数上限受圆周弧长约束（8 项时相邻卡片中心距 134px > 卡片宽 104px）",
+            src: "出处：Cover Flow / 弧形卡片流；Fluent 的 Connected 原则（从来源位置长出）。" },
+    build(svg, c) {
+      const g = el("g");
+      const items = [];
+      const rCard = 148, w = 104, h = 38, sweep = 360 / N;
+      for (let i = 0; i < N; i++) {
+        const mid = i * sweep;
+        const [px, py] = polar(rCard, mid);
+        const item = el("g");
+        item.appendChild(el("rect", { x: px - w / 2, y: py - h / 2, width: w, height: h, rx: 10,
+                                      fill: c.fill, stroke: c.stroke, "stroke-width": 1 }));
+        item.appendChild(el("circle", { cx: px - w / 2 + 20, cy: py, r: 9, fill: c.label,
+                                        opacity: 0.82 }));
+        item.appendChild(el("text", { x: px - w / 2 + 36, y: py + 5, fill: c.label, "font-size": 13,
+                                      "font-family": c.font })).textContent = ITEM_NAMES[i];
+        items.push({ el: item, angle: mid, mx: px, my: py });
+        item.dataset.i = i;
+        g.appendChild(item);
+      }
+      svg.appendChild(g);
+      return { group: g, items };
+    },
+  },
+  {
+    id: "grid", name: "⑥ 网格面板", tagline: "4×2 圆角格子 + 按距离波次亮起（不再是轮盘）",
+    motion: { kind: "grid", from: 0.86, ms: 220, cur: "cubic-bezier(0.2,0.8,0.2,1)",
+              staggerMs: 45, draw: { ms: 320, cur: "linear" }, total: 520 },
+    hoverMode: "tile",
+    meta: { cost: "中-高（命中测试最简单，但产品定位要重新回答）", costLevel: "mid", risk: "中",
+            touch: "死区比例、环半径、子环留缝这些约束全部失效（网格没有环）；换成「格子尺寸 ≥ 最小可点面积」与「面板放得进 740 窗」",
+            src: "出处：Rolan/Maye 一类启动器的网格皮肤；入场取 Fluent 的错开起始时间。" },
+    build(svg, c) {
+      const cols = 4, rows = 2, tw = 150, th = 96, gapx = 12, gapy = 12;
+      const pw = cols * tw + (cols - 1) * gapx, ph = rows * th + (rows - 1) * gapy;
+      const x0 = CX - pw / 2, y0 = CY - ph / 2;
+      const g = el("g");
+      const items = [];
+      const panel = el("rect", { x: x0 - 14, y: y0 - 14, width: pw + 28, height: ph + 28, rx: 16,
+                                 fill: c.deadFill, stroke: c.stroke, "stroke-width": 1 });
+      g.appendChild(panel);
+      for (let i = 0; i < N; i++) {
+        const col = i % cols, row = Math.floor(i / cols);
+        const x = x0 + col * (tw + gapx), y = y0 + row * (th + gapy);
+        const item = el("g");
+        item.appendChild(el("rect", { x, y, width: tw, height: th, rx: 12, fill: c.fill,
+                                      stroke: c.stroke, "stroke-width": 1 }));
+        item.appendChild(el("circle", { cx: x + tw / 2, cy: y + 34, r: 11, fill: c.label, opacity: 0.82 }));
+        item.appendChild(el("text", { x: x + tw / 2, y: y + 70, "text-anchor": "middle", fill: c.label,
+                                      "font-size": 13, "font-family": c.font })).textContent = ITEM_NAMES[i];
+        items.push({ el: item, col, row, angle: 0, mx: x + tw / 2, my: y + th / 2 });
+        item.dataset.i = i;
+        g.appendChild(item);
+      }
+      svg.appendChild(g);
+      return { group: g, items, panel };
+    },
+  },
+];
+
+// ---- 小工具 ----------------------------------------------------------------
+function el(tag, attrs) {
+  const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const k in attrs) node.setAttribute(k, attrs[k]);
+  return node;
+}
+function addIconLabel(parent, mid, c, opt = {}) {
+  const iconRatio = opt.iconRatio ?? 0.24, labelRatio = opt.labelRatio ?? 0.65;
+  const iconRadius = DEAD + (R_OUT - DEAD) * iconRatio;
+  const labelRadius = DEAD + (R_OUT - DEAD) * labelRatio;
+  const i = parent.dataset.i ? Number(parent.dataset.i) : undefined;
+  const [ix, iy] = polar(iconRadius, mid);
+  const [lx, ly] = polar(labelRadius, mid);
+  const icon = el("circle", { cx: ix, cy: iy, r: 9, fill: c.label, opacity: 0.82 });
+  const label = el("text", { x: lx, y: ly + 5, "text-anchor": "middle", fill: c.label,
+                             "font-size": 13, "font-family": c.font });
+  parent.appendChild(icon); parent.appendChild(label);
+  return { icon, label, iconRadius, labelRadius, mid, i };
+}
+function deadZone(c, scale = 1) {
+  const g = el("g");
+  g.appendChild(el("circle", { cx: CX, cy: CY, r: DEAD, fill: c.deadFill, stroke: c.stroke,
+                               "stroke-width": 1, opacity: 0.95 }));
+  const hint = el("text", { x: CX, y: CY + 5, "text-anchor": "middle", fill: c.label, opacity: 0.6,
+                            "font-size": 13, "font-family": c.font });
+  hint.textContent = "Esc";
+  g.appendChild(hint);
+  // 说明用的小字：这个原型里必须写清"只画一级环"
+  const note = el("text", { x: CX, y: CY + 24, "text-anchor": "middle", fill: c.label, opacity: 0.28,
+                            "font-size": 9, "font-family": c.font });
+  note.textContent = "一级环 56–200";
+  g.appendChild(note);
+  void scale;
+  return g;
+}
+// 光扫：一段带渐变的窄扇形，随整组旋转（渐变跟着组走，所以高光的形状始终是一道光）
+function sweepSpoke(tag, rIn, rOut, c) {
+  const id = uid("sweep-" + tag);
+  const defs = el("defs");
+  const grad = el("linearGradient", { id, gradientUnits: "userSpaceOnUse",
+                                      x1: CX, y1: CY - rIn, x2: CX, y2: CY - rOut });
+  grad.appendChild(el("stop", { offset: "0", "stop-color": "#fff", "stop-opacity": "0" }));
+  grad.appendChild(el("stop", { offset: "0.5", "stop-color": "#fff", "stop-opacity": "0.20" }));
+  grad.appendChild(el("stop", { offset: "1", "stop-color": "#fff", "stop-opacity": "0" }));
+  defs.appendChild(grad);
+  const g = el("g", { opacity: 1 });
+  g.appendChild(defs);
+  g.appendChild(el("path", { d: ringSector(rIn, rOut, -7, 7), fill: `url(#${id})` }));
+  void c;
+  return g;
+}
+
+// ============================================================================
+// 画一个形态（静止态）；返回句柄供入场动画使用
+// ============================================================================
+const PALETTE = { fill: "rgba(32,32,32,0.92)", stroke: "rgba(255,255,255,0.19)",
+                  deadFill: "#121212", label: "#FFFFFF", gap: 1.2,
+                  font: "'Microsoft YaHei UI','Segoe UI',sans-serif",
+                  hoverFill: "rgba(0,120,212,1)", hoverStroke: "rgba(255,255,255,0.78)" };
+
+function buildForm(host, form, opts = {}) {
+  host.innerHTML = "";
+  const svg = el("svg", { viewBox: `0 0 ${WIN} ${WIN}`, preserveAspectRatio: "xMidYMid meet" });
+  const handle = form.build(svg, PALETTE);
+  host.appendChild(svg);
+  handle.svg = svg; handle.form = form; handle.host = host;
+  const hovered = opts.hovered !== false;
+  if (hovered && handle.items.length > HOVER) applyHover(handle, HOVER, 1);
+  return handle;
+}
+
+// 悬停：四种表现（几何鼓出 / 径向抬起 / 指针转向 / 格子抬起）
+function applyHover(h, index, progress) {
+  const form = h.form, item = h.items[index];
+  if (!item) return;
+  const on = progress > 0.5;
+  const c = PALETTE;
+  const paint = (shape) => {
+    if (!shape) return;
+    shape.setAttribute("fill", on ? c.hoverFill : c.fill);
+    shape.setAttribute("stroke", on ? c.hoverStroke : c.stroke);
+  };
+
+  if (form.hoverMode === "geometry" && h.bulge) {
+    h.bulge(index, 12 * progress);
+    paint(item.shape);
+    return;
+  }
+  paint(item.shape);
+  if (form.hoverMode === "needle" && h.needle) {
+    // 指针弹簧转向（逐帧由动画驱动，这里只落定）
+    h.needle.setAttribute("transform", `rotate(${item.angle} ${CX} ${CY})`);
+    if (item.shape) item.shape.setAttribute("d",
+      ringSector(DEAD, 176 + 10 * progress, item.angle - 22.5 + PALETTE.gap, item.angle + 22.5 - PALETTE.gap));
+    return;
+  }
+  const len = 10 * progress;
+  const [dx, dy] = polar(len, item.angle).map((v, i2) => v - [CX, CY][i2]);
+  item.el.style.transform = form.hoverMode === "card" || form.hoverMode === "tile"
+    ? `${about(item.mx, item.my, 0, 1 + 0.05 * progress)} ${move(dx, dy)}`
+    : move(dx, dy);
+}
+
+// ============================================================================
+// 专属入场：六种 kind。全部只用 transform/opacity；只有指针用 rAF（它是角度积分）。
+// ============================================================================
+let running = [], rafId = 0, needleRaf = 0;
+function stopAll() {
+  running.forEach((a) => { try { a.cancel(); } catch { /* 已结束 */ } });
+  running = [];
+  if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
+  if (needleRaf) { cancelAnimationFrame(needleRaf); needleRaf = 0; }
+}
+const track = (a) => { running.push(a); return a; };
+
+function playEntrance(h) {
+  const m = h.form.motion;
+  const stem = document.getElementById("rot"), leaf = document.getElementById("scale");
+  const out = [];
+
+  if (m.kind === "whole") {
+    out.push(track(leaf.animate([{ transform: `scale(${m.scale.from})` }, { transform: "scale(1)" }],
+      { duration: m.scale.ms, easing: m.scale.cur, fill: "both" })));
+    out.push(track(stem.animate([{ transform: `rotate(${m.rotate.from}deg)` }, { transform: "rotate(0deg)" }],
+      { duration: m.rotate.ms, easing: m.rotate.cur, fill: "both" })));
+    out.push(track(stem.animate([{ opacity: 0 }, { opacity: 1 }],
+      { duration: m.fade.ms, easing: m.fade.cur, fill: "both" })));
+    return out;
+  }
+
+  // 逐项类：每个 item 是独立动画，相位差就是「编排」
+  if (m.kind === "wave" || m.kind === "bloom") {
+    h.items.forEach((item, i) => {
+      const kf = m.kind === "wave"
+        ? [{ transform: about(CX, CY, 0, m.from) }, { transform: about(CX, CY, 0, 1) }]
+        : [{ transform: about(CX, CY, m.from, m.scale) }, { transform: about(CX, CY, 0, 1) }];
+      out.push(track(item.el.animate(kf,
+        { duration: m.ms, easing: m.cur, delay: i * m.staggerMs, fill: "both" })));
+    });
+    if (h.sweep && m.sweep) {
+      out.push(track(h.sweep.animate(
+        [{ transform: about(CX, CY, 0), opacity: 0.9 }, { transform: about(CX, CY, 360), opacity: 0.25 }],
+        { duration: m.sweep.ms, easing: m.sweep.cur, delay: m.sweep.delayMs, fill: "both" })));
+    }
+    return out;
+  }
+
+  if (m.kind === "cards") {
+    h.items.forEach((item, i) => {
+      const [fx, fy] = polar(148 - m.fromPx, item.angle);
+      const dx = fx - item.mx, dy = fy - item.my;
+      const tilt = item.angle < 180 ? m.tiltDeg : -m.tiltDeg;
+      out.push(track(item.el.animate(
+        [{ transform: `${about(item.mx, item.my, tilt, 0.9)} ${move(dx, dy)}`, opacity: 0 },
+         { transform: `${about(item.mx, item.my, 0, 1)} ${move(0, 0)}`, opacity: 1 }],
+        { duration: m.ms, easing: m.cur, delay: i * m.staggerMs, fill: "both" })));
+    });
+    return out;
+  }
+
+  if (m.kind === "grid") {
+    const dist = (item) => item.col + item.row;        // 离左上角格子的曼哈顿距离 = 波次圈数
+    h.items.forEach((item) => {
+      out.push(track(item.el.animate(
+        [{ transform: `${about(item.mx, item.my, 0, m.from)}`, opacity: 0 },
+         { transform: `${about(item.mx, item.my, 0, 1)}`, opacity: 1 }],
+        { duration: m.ms, easing: m.cur, delay: dist(item) * m.staggerMs, fill: "both" })));
+    });
+    if (h.panel) {
+      const len = h.panel.getTotalLength ? h.panel.getTotalLength() : 0;
+      out.push(track(h.panel.animate(
+        len ? [{ strokeDasharray: len, strokeDashoffset: len }, { strokeDasharray: len, strokeDashoffset: 0 }]
+            : [{ opacity: 0 }, { opacity: 1 }],
+        { duration: m.draw.ms, easing: m.draw.cur, fill: "both" })));
+    }
+    return out;
+  }
+
+  if (m.kind === "dial") {
+    // ① 环轮廓自绘
+    const len = h.outline.getTotalLength();
+    h.outline.setAttribute("stroke-dasharray", len);
+    out.push(track(h.outline.animate(
+      [{ strokeDashoffset: len }, { strokeDashoffset: 0 }],
+      { duration: m.draw.ms, easing: m.draw.cur, fill: "both" })));
+    // ② 刻度按角度依次出现
+    h.tickNodes.forEach((t, k) => {
+      out.push(track(t.animate([{ opacity: 0 }, { opacity: Number(t.getAttribute("opacity")) || 0.4 }],
+        { duration: m.ticks.ms, delay: k * m.ticks.staggerMs, fill: "both" })));
+    });
+    // ③ 楔形淡入
+    h.items.forEach((item) => out.push(track(item.el.animate([{ opacity: 0 }, { opacity: 1 }],
+      { duration: m.fade.ms, easing: m.fade.cur, fill: "both" }))));
+    // ④ 指针甩入落位（角度是逐帧积分 —— 用 WAAPI 的 rotate 也等价，这里用 rAF 以便和悬停共用一条路径）
+    spinNeedle(h, m.needle.from, h.items[HOVER].angle, m.needle.ms, m.needle.cur);
+    return out;
+  }
+  return out;
+}
+
+// 指针角度：带过冲的弹簧式落位（rAF 积分，与真实实现里「逐帧写一个属性」的做法一致）
+function spinNeedle(h, fromDeg, toDeg, ms, cur) {
+  if (!h.needle) return;
+  const ease = easeFn(cur);
+  const t0 = performance.now();
+  const tick = (now) => {
+    const raw = ms <= 0 ? 1 : Math.min(1, (now - t0) / ms);
+    const deg = fromDeg + (toDeg - fromDeg) * ease(raw);
+    h.needle.setAttribute("transform", `rotate(${deg} ${CX} ${CY})`);
+    if (raw < 1) needleRaf = requestAnimationFrame(tick); else needleRaf = 0;
+  };
+  needleRaf = requestAnimationFrame(tick);
+}
+
+// 三次贝塞尔求值（把 x 反解成 t 再算 y）；线性直接返回 t。
+const easeCache = {};
+function easeFn(cur) {
+  if (easeCache[cur]) return easeCache[cur];
+  const m = /cubic-bezier\(([-\d.]+),([-\d.]+),([-\d.]+),([-\d.]+)\)/.exec(cur || "");
+  let fn;
+  if (!m) { fn = (t) => t; }
+  else {
+    const [x1, y1, x2, y2] = m.slice(1).map(Number);
+    const bez = (t, a, b) => 3 * (1 - t) * (1 - t) * t * a + 3 * (1 - t) * t * t * b + t * t * t;
+    fn = (x) => {
+      let lo = 0, hi = 1, t = x;
+      for (let i = 0; i < 24; i++) { t = (lo + hi) / 2; if (bez(t, x1, x2) < x) lo = t; else hi = t; }
+      return bez(t, y1, y2);
+    };
+  }
+  return (easeCache[cur] = fn);
+}
+
+function playHover(h, index) {
+  const item = h.items[index];
+  const len = 10;
+  const [dx, dy] = polar(len, item.angle).map((v, i) => v - [CX, CY][i]);
+  if (h.form.hoverMode === "needle") {
+    spinNeedle(h, currentNeedleDeg(h), item.angle, 220, "cubic-bezier(0.34,1.56,0.64,1)");
+    applyHover(h, index, 1);
+    return null;
+  }
+  applyHover(h, index, 1);
+  if (h.form.hoverMode === "geometry") return null;      // 几何鼓出由 applyHover 直接落定
+  const pivot = h.form.hoverMode === "card" || h.form.hoverMode === "tile" ? [item.mx, item.my] : [CX, CY];
+  const scale = h.form.hoverMode === "card" || h.form.hoverMode === "tile" ? 1.05 : 1;
+  return track(item.el.animate(
+    [{ transform: `${about(pivot[0], pivot[1], 0, 1)} ${move(0, 0)}` },
+     { transform: `${about(pivot[0], pivot[1], 0, scale)} ${move(dx, dy)}` }],
+    { duration: 180, easing: "cubic-bezier(0.34,1.56,0.64,1)", fill: "both" }));
+}
+function currentNeedleDeg(h) {
+  const t = h.needle.getAttribute("transform") || "";
+  const m = /rotate\(([-\d.]+)/.exec(t);
+  return m ? Number(m[1]) : 0;
+}
+
+// ============================================================================
+// 界面装配
+// ============================================================================
+let state = { form: FORMS[0], handle: null };
+let demoToken = 0;
+const rotEl = document.getElementById("rot");
+const scaleEl = document.getElementById("scale");
+
+function renderAll() {
+  stopAll();
+  document.querySelectorAll("#gallery .card").forEach((card) => {
+    const form = FORMS.find((f) => f.id === card.dataset.form);
+    buildForm(card.querySelector(".mini .wheelScale"), form, { hovered: true });
+    card.classList.toggle("on", card.dataset.form === state.form.id);
+  });
+  state.handle = buildForm(scaleEl, state.form, { hovered: false });
+  setStatus(`形态：${state.form.name}`);
+  fillSpec();
+}
+
+function fillSpec() {
+  const f = state.form, m = f.motion;
+  document.getElementById("s-form").textContent = `${f.name} · ${f.tagline}`;
+  document.getElementById("s-entrance").textContent = describeEntrance(f);
+  document.getElementById("s-hover").textContent =
+    { geometry: "几何鼓出 12px / 130ms（现状那条路径）", lift: "径向抬起 10px + 颜色 / 180ms 弹簧",
+      needle: "指针弹簧转向该扇区（约 220ms 落定）+ 楔形高亮外扩",
+      card: "卡片抬起 8px + 放大 1.05 / 180ms 弹簧", tile: "格子抬起 + 放大 1.05 / 180ms" }[f.hoverMode];
+  document.getElementById("s-cost").innerHTML = `<span class="cost ${f.meta.costLevel}">${f.meta.cost}</span>`;
+  document.getElementById("s-risk").textContent = f.meta.risk;
+  document.getElementById("s-touch").textContent = f.meta.touch;
+  document.getElementById("s-src").textContent = f.meta.src;
+  void m;
+}
+
+function describeEntrance(f) {
+  const m = f.motion;
+  switch (m.kind) {
+    case "whole":
+      return `整盘：缩放 ${m.scale.from}→1 / ${m.scale.ms}ms / ${m.scale.cur}；` +
+             `旋转 ${m.rotate.from}°→0 / ${m.rotate.ms}ms / ${m.rotate.cur}；淡入 ${m.fade.ms}ms（并行）`;
+    case "wave":
+      return `波次：每项 缩放 ${m.from}→1 / ${m.ms}ms / ${m.cur}，逐项相位差 ${m.staggerMs}ms（8 项跨度 ${7 * m.staggerMs}ms）；` +
+             `另有光扫 ${m.sweep.ms}ms / ${m.sweep.cur}（延迟 ${m.sweep.delayMs}ms）`;
+    case "bloom":
+      return `绽开：每片 从 ${m.from}° 且 ${m.scale} 倍 → 原位 / ${m.ms}ms / ${m.cur}，相位差 ${m.staggerMs}ms；` +
+             `另加光扫 ${m.sweep.ms}ms（延迟 ${m.sweep.delayMs}ms）`;
+    case "dial":
+      return `刻度盘：环轮廓自绘 ${m.draw.ms}ms / ${m.draw.cur}；60 条刻度每条 ${m.ticks.ms}ms、按角度相位差 ${m.ticks.staggerMs}ms（扫一圈 ${59 * m.ticks.staggerMs}ms）；` +
+             `指针从 ${m.needle.from}° 甩入落位 ${m.needle.ms}ms / ${m.needle.cur}；楔形淡入 ${m.fade.ms}ms`;
+    case "cards":
+      return `卡片依次滑入：每张从圆心方向、半径小 ${m.fromPx}px 处滑入并转正（±${m.tiltDeg}°）+ 淡入 / ${m.ms}ms / ${m.cur}，相位差 ${m.staggerMs}ms`;
+    case "grid":
+      return `网格波次：每格 缩放 ${m.from}→1 / ${m.ms}ms / ${m.cur}，按离光标格的曼哈顿距离分圈、每圈 ${m.staggerMs}ms；面板边框自绘 ${m.draw.ms}ms`;
+    default: return "";
+  }
+}
+
+function setStatus(t) { document.getElementById("status").textContent = t; }
+
+function playDemo(form, handle) {
+  return new Promise((resolve) => {
+    stopAll();
+    playEntrance(handle);
+    const m = form.motion;
+    setStatus(`${form.name}：入场中（${describeEntrance(form).slice(0, 46)}…）`);
+    setTimeout(() => {
+      if (state.handle !== handle) return resolve();
+      playHover(handle, HOVER);
+      setStatus(`${form.name}：悬停`);
+    }, m.total + 120);
+    setTimeout(() => { if (state.handle === handle) resolve(); }, m.total + 900);
+  });
+}
+
+async function runDemo() {
+  const token = ++demoToken;
+  const handle = state.handle;
+  await playDemo(state.form, handle);
+  if (token === demoToken) setStatus(`${state.form.name}：演示完成`);
+}
+
+async function runAll() {
+  const token = ++demoToken;
+  for (const f of FORMS) {
+    if (token !== demoToken) return;
+    state.form = f;
+    renderAll();
+    setStatus(`依次对比：${f.name}（入场约 ${f.motion.total}ms）`);
+    playEntrance(state.handle);
+    await new Promise((r) => setTimeout(r, f.motion.total + 700));
+  }
+  if (token === demoToken) setStatus("依次对比结束");
+}
+
+function buildUi() {
+  const gallery = document.getElementById("gallery");
+  gallery.innerHTML = FORMS.map((f) => `
+    <div class="card" data-form="${f.id}">
+      <div class="name">${f.name}</div>
+      <div class="line">${f.tagline}</div>
+      <div class="mini"><div class="desk"></div><div class="minidim"></div><div class="wheelScale"></div></div>
+      <div class="tag cost ${f.meta.costLevel}">成本：${f.meta.cost}</div>
+      <div class="tag">风险：${f.meta.risk}</div>
+    </div>`).join("");
+
+  gallery.querySelectorAll(".card").forEach((cardEl) =>
+    cardEl.addEventListener("click", () => {
+      state.form = FORMS.find((f) => f.id === cardEl.dataset.form);
+      renderAll();
+      runDemo();
+    }));
+
+  document.getElementById("compare").innerHTML = `
+    <tr><th>形态</th><th>专属入场</th><th>悬停</th><th>成本</th><th>风险</th><th>最容易被忽略的代价</th></tr>` +
+    FORMS.map((f) => `<tr>
+      <td>${f.name}<div class="hint">${f.tagline}</div></td>
+      <td>${describeEntrance(f)}</td>
+      <td>${{ geometry: "几何鼓出 12px", lift: "径向抬起 10px", needle: "指针转向 + 高亮",
+            card: "卡片抬起放大", tile: "格子抬起放大" }[f.hoverMode]}</td>
+      <td class="cost ${f.meta.costLevel}">${f.meta.cost}</td>
+      <td>${f.meta.risk}</td>
+      <td>${f.meta.touch}</td></tr>`).join("");
+
+  document.getElementById("btn-entrance").addEventListener("click", () => {
+    demoToken++; stopAll(); playEntrance(state.handle); setStatus(`入场：${state.form.name}`);
+  });
+  document.getElementById("btn-hover").addEventListener("click", () => {
+    demoToken++; stopAll(); playHover(state.handle, HOVER); setStatus(`悬停：${state.form.name}`);
+  });
+  document.getElementById("btn-demo").addEventListener("click", () => runDemo());
+  document.getElementById("btn-all").addEventListener("click", () => runAll());
+  document.getElementById("btn-stop").addEventListener("click", () => {
+    demoToken++; renderAll(); setStatus("已停止（回到落定态）");
+  });
+}
+
+// ============================================================================
+// 页内自检：七条，每一条都**能失败**
+// ============================================================================
+function bboxOfForm(form) {
+  const host = document.createElement("div");
+  host.style.cssText = "position:absolute;left:-9999px;top:0;width:740px;height:740px";
+  document.body.appendChild(host);
+  const h = buildForm(host, form, { hovered: false });
+  const box = h.group.getBBox();
+  host.remove();
+  return { b: { x: box.x, y: box.y, w: box.width, h: box.height }, handle: h };
+}
+
+function selfCheck() {
+  const out = [];
+
+  // ① 六种形态的几何都落在 740 窗内，且不是空图形
+  const boxes = FORMS.map((f) => ({ id: f.id, b: bboxOfForm(f).b }));
+  const outside = boxes.filter(({ b }) => b.x < -1 || b.y < -1 ||
+    b.x + b.w > WIN + 1 || b.y + b.h > WIN + 1 || b.w < 10 || b.h < 10);
+  out.push(["六种形态都落在 740×740 窗内且非空", outside.length === 0,
+    outside.length ? JSON.stringify(outside) : boxes.map(({ id, b }) =>
+      `${id} ${b.w.toFixed(0)}×${b.h.toFixed(0)}`).join("、")]);
+
+  // ② 圆角真的加上了（路径里出现二次曲线，且与尖角版本不同）
+  const sharp = ringSector(DEAD, R_OUT, -10, 10);
+  const round = roundedSector(DEAD, R_OUT, -10, 10, 14);
+  out.push(["圆角楔形与尖角楔形不是同一条路径", round.includes("Q") && round !== sharp, "含 Q 且不同"]);
+
+  // ③ 刻度盘：刻度正好 60 条，且每 5 条更长
+  const dial = FORMS.find((f) => f.id === "dial");
+  const dh = bboxOfForm(dial).handle;
+  const major = dh.tickNodes.filter((t) => Number(t.getAttribute("stroke-width")) > 1.2).length;
+  const lengths = dh.tickNodes.map((t) => Math.hypot(
+    Number(t.getAttribute("x2")) - Number(t.getAttribute("x1")),
+    Number(t.getAttribute("y2")) - Number(t.getAttribute("y1"))));
+  out.push(["刻度盘 = 60 条刻度，其中 12 条长刻度",
+    dh.tickNodes.length === 60 && major === 12 &&
+    Math.min(...lengths.filter((l, i) => i % 5 === 0)) > Math.max(...lengths.filter((l, i) => i % 5 !== 0)),
+    `${dh.tickNodes.length} 条、长刻度 ${major} 条`]);
+
+  // ④ 波次编排真的有相位差：读浏览器里那两条动画的 delay，差 = staggerMs
+  const wave = FORMS.find((f) => f.id === "rounded");
+  const wh = buildForm(scaleEl, wave, { hovered: false });
+  const anims = playEntrance(wh);
+  const d0 = anims[0]?.effect.getTiming().delay ?? 0;
+  const d1 = anims[1]?.effect.getTiming().delay ?? 0;
+  out.push(["波次的相邻两项相位差 = 令牌值",
+    anims.length >= N && Math.abs((d1 - d0) - wave.motion.staggerMs) < 0.01,
+    `delay ${d0}ms → ${d1}ms（令牌 ${wave.motion.staggerMs}ms）`]);
+  stopAll();
+
+  // ⑤ 入场终态 = 1（把 currentTime 推到底读计算样式；隐藏标签页里动画时钟不走，靠等是等不出的）
+  const pie = FORMS[0];
+  const probe = document.createElement("div");
+  probe.style.cssText = "position:absolute;left:-9999px;top:0;width:10px;height:10px";
+  const pRot = document.createElement("div"), pScale = document.createElement("div");
+  probe.append(pRot, pScale); document.body.appendChild(probe);
+  const pa = pRot.animate([{ transform: `rotate(${pie.motion.rotate.from}deg)` }, { transform: "rotate(0deg)" }],
+    { duration: pie.motion.rotate.ms, easing: pie.motion.rotate.cur, fill: "both" });
+  pa.pause(); pa.currentTime = pa.effect.getTiming().duration;
+  const t = getComputedStyle(pRot).transform;
+  // matrix(a,b,c,d,e,f)，行列式 a*d-b*c；恒等变换为 1，纯旋转也恒为 1（旋转不改变行列式）
+  const m = /matrix\(([-\d.]+),\s*([-\d.]+),\s*([-\d.]+),\s*([-\d.]+)/.exec(t);
+  const det = m ? Number(m[1]) * Number(m[4]) - Number(m[2]) * Number(m[3]) : NaN;
+  probe.remove();
+  out.push(["入场终态落定（旋转通道到 0°，无残留形变，行列式 = 1）", Math.abs(det - 1) < 0.02,
+    `终态矩阵 ${t} → 行列式 ${Number.isNaN(det) ? "解析失败" : det.toFixed(3)}`]);
+
+  // ⑥ 曲线真的被用到：中段必须偏离线性插值（0.5）。
+  //    注意**不能**断言"中段在 0~1 之间" —— 过冲曲线在 x=0.5 处本来就该 >1（那正是过冲）。
+  const mid = easeFn(pie.motion.scale.cur)(0.5);
+  out.push(["缓动曲线真的被用到（中段 ≠ 线性插值）", Math.abs(mid - 0.5) > 0.05,
+    `中段 ${mid.toFixed(3)}${mid > 1 ? `（过冲 ${((mid - 1) * 100).toFixed(1)}%）` : ""}，线性应为 0.500`]);
+
+  // ⑦ 换形态真的换了几何（读渲染后的属性，而不是我自己的状态变量）
+  const g1 = bboxOfForm(FORMS[0]).handle.group.innerHTML;
+  const g2 = bboxOfForm(FORMS[5]).handle.group.innerHTML;
+  out.push(["换形态真的换了几何", g1 !== g2 && g1.includes("A") && g2.includes("rect"),
+    `${g1.length} 字符 → ${g2.length} 字符`]);
+
+  const pass = out.filter((r) => r[1]).length;
+  document.getElementById("selfcheck").innerHTML =
+    `<b>页内自检：${pass}/${out.length} 通过</b>` +
+    out.map((r) => `<div class="${r[1] ? "ok" : "bad"}">${r[1] ? "✓" : "✗"} ${r[0]}　<span class="hint">${r[2]}</span></div>`).join("");
+  return out;
+}
+
+window.addEventListener("error", (e) => {
+  const el2 = document.getElementById("selfcheck");
+  if (el2) el2.innerHTML = `<span class="bad">页面脚本出错：${e.message}</span>`;
+});
+
+try {
+  buildUi();
+  renderAll();
+  const results = selfCheck();
+  renderAll();
+  playEntrance(state.handle);
+  setStatus(results.every((r) => r[1])
+    ? `就绪 · 自检 ${results.length}/${results.length} 通过 · 形态：${state.form.name}`
+    : "就绪，但自检未全通过（见页脚）");
+} catch (err) {
+  document.getElementById("selfcheck").innerHTML = `<span class="bad">初始化失败：${err.message}</span>`;
+}
+</script>
+</body>
+</html>

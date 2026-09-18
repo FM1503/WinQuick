@@ -70,26 +70,65 @@ public sealed record DesignTokens
         if (Radius.Ring2Outer > Radius.WindowSize / 2.0)
             problems.Add($"radius.ring2Outer={Radius.Ring2Outer} 放不进边长 {Radius.WindowSize} 的窗口");
 
-        // 缓动曲线必须能解析成三次贝塞尔，否则动画会静默退化成默认曲线。
-        if (MotionTokens.TryParseEasing(Motion.EntranceEasing, out _) is false)
-            problems.Add($"motion.entranceEasing 无法解析: {Motion.EntranceEasing}");
-        if (MotionTokens.TryParseEasing(Motion.ExitEasing, out _) is false)
-            problems.Add($"motion.exitEasing 无法解析: {Motion.ExitEasing}");
-        if (MotionTokens.TryParseEasing(Motion.EntranceScaleEasing, out _) is false)
-            problems.Add($"motion.entranceScaleEasing 无法解析: {Motion.EntranceScaleEasing}");
-        if (MotionTokens.TryParseEasing(Motion.EntranceRotateEasing, out _) is false)
-            problems.Add($"motion.entranceRotateEasing 无法解析: {Motion.EntranceRotateEasing}");
+        // 描边与光晕 —— 这批令牌是「换肤」带出来的（皮肤要改的不止色相）。
+        // 边界取"明显不合理"的值：光晕再大就不是发光而是糊；描边再粗会把扇区吃掉。
+        if (Color.StrokeWidth is < 0.5 or > 4)
+            problems.Add($"color.strokeWidth={Color.StrokeWidth} 应在 0.5~4");
+        if (Color.HaloPx is < 0 or > 16)
+            problems.Add($"color.haloPx={Color.HaloPx} 应在 0~16（0 = 不画光晕）");
+        if (Color.HaloAlpha is < 0 or > 0.6)
+            problems.Add($"color.haloAlpha={Color.HaloAlpha} 应在 0~0.6");
+        if (!IsHexColor(Color.HaloColor))
+            problems.Add($"color.haloColor=“{Color.HaloColor}” 不是 #RRGGBB 格式");
+        if (Color.HoverFillAlpha is < 0 or > 1)
+            problems.Add($"color.hoverFillAlpha={Color.HoverFillAlpha} 应在 0~1");
+        if (!IsHexColor(Color.HoverLabel))
+            problems.Add($"color.hoverLabel=“{Color.HoverLabel}” 不是 #RRGGBB 格式");
+
+        // 悬停时文字与填充的对比度：黄/红这类纯色块当底时，白字读不出来。
+        // 判据是相对亮度差 —— 不要求精确的 WCAG 计算，但必须"一个亮一个暗"。
+        //
+        // **只在填充足够不透明时才判**：半透明填充下面是深色扇区（霓虹档的 hoverFillAlpha=0.22），
+        // 那时文字的实际底色由扇区决定，不是由 hoverFill 决定。
+        if (Color.HoverFillAlpha >= 0.6 && ContrastIsLow(Color.HoverFill, Color.HoverLabel))
+        {
+            problems.Add(
+                $"color.hoverFill（{Color.HoverFill}）与 color.hoverLabel（{Color.HoverLabel}）亮度太接近，" +
+                "悬停时文字读不出来 —— 纯色块底要配深色字");
+        }
+
+        // 缓动曲线必须能解析，否则动画会静默退化成默认曲线。
+        // 用一张表遍历而不是逐个 if：漏掉一条（曾经就漏过 childArcEasing）不会有任何报错，
+        // 而"某个通道悄悄用了别的曲线"正是肉眼看得出来、代码上却不显眼的那类问题。
+        var easings = new (string Name, string Value)[]
+        {
+            ("entranceEasing", Motion.EntranceEasing),
+            ("exitEasing", Motion.ExitEasing),
+            ("entranceScaleEasing", Motion.EntranceScaleEasing),
+            ("entranceRotateEasing", Motion.EntranceRotateEasing),
+            ("childArcEasing", Motion.ChildArcEasing),
+            ("childSlideEasing", Motion.ChildSlideEasing),
+        };
+        foreach (var (name, value) in easings)
+            if (!MotionTokens.IsValidEasing(value))
+                problems.Add($"motion.{name} 无法解析: {value}");
+
+        // 子项错开的相位差：上限取 80ms —— 再多就不是"依次"而是"一个一个慢慢来"了。
+        if (Motion.ChildStaggerMs is < 0 or > 80)
+            problems.Add($"motion.childStaggerMs={Motion.ChildStaggerMs} 应在 0~80");
 
         if (Motion.EntranceScaleMs is < 60 or > 900)
             problems.Add($"motion.entranceScaleMs={Motion.EntranceScaleMs} 应在 60~900ms");
-        if (Motion.EntranceRotateMs is < 60 or > 1200)
-            problems.Add($"motion.entranceRotateMs={Motion.EntranceRotateMs} 应在 60~1200ms");
+
+        // 旋转时长只在**真的会旋转**时才有意义：角度为 0 表示这套皮肤不走旋转通道
+        //（EntrancePlan.Channels 也是这么判的），那时 DurationMs 是多少都无所谓 ——
+        // 要求它落在 60~1200 会和运行时"没有旋转通道"的规则自相矛盾。
+        if (Math.Abs(Motion.EntranceFromRotateDeg) > 0.01 && Motion.EntranceRotateMs is < 60 or > 1200)
+            problems.Add($"motion.entranceRotateMs={Motion.EntranceRotateMs} 应在 60~1200ms（或把 entranceFromRotateDeg 设为 0 表示不旋转）");
         if (Motion.EntranceFromRotateDeg is < -150 or > 150)
             problems.Add($"motion.entranceFromRotateDeg={Motion.EntranceFromRotateDeg} 应在 -150~150（再大就不是「落位」而是「翻滚」了）");
         if (Motion.EntranceFromScale is < 0.3 or > 1.2)
             problems.Add($"motion.entranceFromScale={Motion.EntranceFromScale} 应在 0.3~1.2");
-        if (MotionTokens.TryParseEasing(Motion.ChildSlideEasing, out _) is false)
-            problems.Add($"motion.childSlideEasing 无法解析: {Motion.ChildSlideEasing}");
 
         // 边界取"明显不合理"的值：滑出距离超过子环带宽会滑到圆心里去，时长太短则看不出方向感。
         if (Motion.ChildSlideMs is < 0 or > 900)
@@ -170,6 +209,32 @@ public sealed record DesignTokens
 
         return problems;
     }
+
+    private static bool IsHexColor(string? text)
+    {
+        var body = (text ?? string.Empty).TrimStart('#');
+        return body.Length == 6 && body.All(Uri.IsHexDigit);
+    }
+
+    /// <summary>
+    /// 两个颜色的相对亮度是否太接近（用于"悬停底色 vs 悬停文字"）。
+    /// 用 Rec.709 的亮度权重，阈值 0.35 —— 不追求精确的 WCAG 比值，
+    /// 要拦的是"黄底白字"这类一眼读不出来的组合。
+    /// </summary>
+    private static bool ContrastIsLow(string fillHex, string labelHex)
+    {
+        static double Luminance(string hex)
+        {
+            var body = hex.TrimStart('#');
+            if (body.Length != 6) return 0.5;      // 解析不了时不参与判断（格式另有检查）
+            var r = Convert.ToInt32(body[..2], 16) / 255.0;
+            var g = Convert.ToInt32(body.Substring(2, 2), 16) / 255.0;
+            var b = Convert.ToInt32(body.Substring(4, 2), 16) / 255.0;
+            return (0.2126 * r) + (0.7152 * g) + (0.0722 * b);
+        }
+
+        return Math.Abs(Luminance(fillHex) - Luminance(labelHex)) < 0.35;
+    }
 }
 
 public sealed record ColorTokens
@@ -180,9 +245,29 @@ public sealed record ColorTokens
     public double SectorFillAlpha { get; init; } = 0.92;
     public string SectorStroke { get; init; } = "#FFFFFF";
     public double SectorStrokeAlpha { get; init; } = 0.19;
+
+    /// <summary>扇区描边宽度。皮肤可以改粗细（复古档要 2px 的硬边）。</summary>
+    public double StrokeWidth { get; init; } = 1.0;
+
+    /// <summary>
+    /// 光晕：垫在扇区下面的一圈更粗的描边（0 = 不画）。
+    /// 用几何而不是 WPF Effect —— Effect 让元素每帧走位图渲染，代价与面积相关。
+    /// </summary>
+    public double HaloPx { get; init; } = 0;
+    public double HaloAlpha { get; init; } = 0;
+    public string HaloColor { get; init; } = "#000000";
+
     public string HoverFill { get; init; } = "#0078D4";
+
+    /// <summary>悬停填充的透明度。霓虹档要的是「透出底下的半透明青光」而不是实心色块。</summary>
+    public double HoverFillAlpha { get; init; } = 1.0;
+
     public string HoverStroke { get; init; } = "#FFFFFF";
     public double HoverStrokeAlpha { get; init; } = 0.78;
+
+    /// <summary>悬停时的文字色。纯色块（黄/红）当底时必须换成深色字，否则读不出来。</summary>
+    public string HoverLabel { get; init; } = "#FFFFFF";
+
     public string DeadZoneFill { get; init; } = "#121212";
     public string DeadZoneStroke { get; init; } = "#FFFFFF";
     public double DeadZoneStrokeAlpha { get; init; } = 0.24;
@@ -330,6 +415,11 @@ public sealed record MotionTokens
     /// <summary>径向滑出的起点：比原位更靠近圆心多少像素。0 表示不滑（退回旧观感）。</summary>
     public int ChildSlidePx { get; init; } = 60;
 
+    /// <summary>
+    /// 子项之间的相位差（径向滑出用）。0 = 一起滑；霓虹/Material 这类皮肤靠它做"依次弹出"。
+    /// </summary>
+    public int ChildStaggerMs { get; init; } = 0;
+
     /// <summary>子弧展开/收起时长。用官方规范里「已有元素点对点」的 167ms。</summary>
     public int ChildArcDurationMs { get; init; } = 167;
 
@@ -341,13 +431,21 @@ public sealed record MotionTokens
     /// <summary>
 
     /// <summary>
-    /// 解析 CSS 的三次贝塞尔语法 <c>cubic-bezier(x1,y1,x2,y2)</c>。
+    /// 解析 CSS 的三次贝塞尔语法 <c>cubic-bezier(x1,y1,x2,y2)</c>，以及关键字 <c>linear</c>。
     /// WPF 的 KeySpline 能精确表达同样的曲线，所以 Fluent 的曲线可以一比一搬过来。
     /// </summary>
     public static bool TryParseEasing(string? text, out (double X1, double Y1, double X2, double Y2) points)
     {
         points = default;
         if (string.IsNullOrWhiteSpace(text)) return false;
+
+        // linear 就是那条直线；接受它是因为皮肤数据里写 "linear" 比写
+        // "cubic-bezier(0,0,1,1)" 可读得多，而两者在 WPF 里完全等价。
+        if (text.Trim().Equals("linear", StringComparison.OrdinalIgnoreCase))
+        {
+            points = (0, 0, 1, 1);
+            return true;
+        }
 
         var open = text.IndexOf('(');
         var close = text.IndexOf(')');
@@ -364,6 +462,33 @@ public sealed record MotionTokens
         points = (x1, y1, x2, y2);
         return true;
     }
+
+    /// <summary>
+    /// 解析 <c>steps(n)</c>（离散阶梯）。复古皮肤靠它把"过渡"变成"一格一格跳"，
+    /// 对应 WPF 的 <see cref="System.Windows.Media.Animation.DiscreteDoubleKeyFrame"/>。
+    /// </summary>
+    public static bool TryParseSteps(string? text, out int count)
+    {
+        count = 0;
+        if (string.IsNullOrWhiteSpace(text)) return false;
+
+        var trimmed = text.Trim();
+        if (!trimmed.StartsWith("steps(", StringComparison.OrdinalIgnoreCase)) return false;
+
+        var open = trimmed.IndexOf('(');
+        var close = trimmed.IndexOf(')');
+        if (close < open) return false;
+
+        var body = trimmed[(open + 1)..close].Split(',')[0].Trim();
+        if (!int.TryParse(body, out var n) || n < 2 || n > 12) return false;
+
+        count = n;
+        return true;
+    }
+
+    /// <summary>这个缓动写法能不能用（贝塞尔 / linear / steps(n)）。校验与实现共用同一个判据。</summary>
+    public static bool IsValidEasing(string? text) =>
+        TryParseEasing(text, out _) || TryParseSteps(text, out _);
 }
 
 public sealed record PerspectiveTokens

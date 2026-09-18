@@ -31,7 +31,7 @@ namespace WinQuick.App.Radial;
 /// </summary>
 public sealed class RadialWindow : Window
 {
-    private readonly DesignTokens _tokens;
+    private DesignTokens _tokens;
     private readonly ScaleTransform _scale = new(1, 1);
 
     /// <summary>
@@ -49,6 +49,12 @@ public sealed class RadialWindow : Window
     private string? _accentHex;
 
     private bool _editMode;
+
+    /// <summary>
+    /// 当前盘面形态。与皮肤正交：皮肤换材质与动效，形态换单元外形。
+    /// 它只在**重建视觉树**时用到（几何生成器是按形态选的），所以换形态＝一次重建。
+    /// </summary>
+    private RingForm _form = RingForm.Pie;
 
     /// <summary>当前这份菜单。就地换树时要用它作为"菜单没变、只切编辑态"的那一份。</summary>
     private MenuSpec _menu;
@@ -283,7 +289,7 @@ public sealed class RadialWindow : Window
 
         // 复用当前画布：换掉 Window.Content 会让整棵内容失效、走一次窗口级布局，
         // 在分层窗口上表现为闪一下（改一次菜单就闪一次）。
-        var fresh = RadialRingView.Build(menu, editMode: _editMode, reuse: Content as Canvas);
+        var fresh = RadialRingView.Build(menu, editMode: _editMode, reuse: Content as Canvas, form: _form);
 
         // 先把动画状态归零再挂新树：退场动画的 HoldEnd 值会留在 _scale 上，
         // 不清掉的话新内容会从"上次退场结束时的缩放"开始。
@@ -325,6 +331,29 @@ public sealed class RadialWindow : Window
     {
         if (_editMode == editMode) return;
         ApplyMenu(_menu, editMode);
+    }
+
+    /// <summary>
+    /// 外观变了（换皮肤 / 换形态）之后重建视觉树。
+    ///
+    /// 与 <see cref="ApplyMenu"/> 走**同一条**路径（复用画布、只失效子元素）：
+    /// 那是实测"零像素变化"的内容刷新路径，而换皮肤恰恰是高频率操作 ——
+    /// 用户在皮肤面板上一个个点过去，每次都必须立刻在轮盘上看到，且不能闪。
+    ///
+    /// 令牌也要重新取：<see cref="TokenStore.Current"/> 在换皮肤时换了对象，
+    /// 而窗口构造时抓到的那份引用是旧的（渲染尺寸、动效都从它读）。
+    /// </summary>
+    public void RebuildForSkin(RingForm form)
+    {
+        _tokens = TokenStore.Current;
+        _form = form;
+
+        // 尺寸由令牌决定，皮肤**不许**改它（SkinCatalog 有守卫），但这里仍然重新读一次 ——
+        // 免得"窗口尺寸"与"画布尺寸"哪天各自读了一份而悄悄不一致。
+        Width = Height = _tokens.Radius.WindowSize;
+
+        ApplyMenu(_menu);
+        ApplyExtendedStyles();
     }
 
     /// <summary>
@@ -731,13 +760,12 @@ public sealed class RadialWindow : Window
         if (channels.Any(c => c.Name == EntrancePlan.ScaleChannel))
         {
             var channel = channels.Single(c => c.Name == EntrancePlan.ScaleChannel);
-            var spline = MotionSplines.FromToken(channel.Easing);
             var duration = TimeSpan.FromMilliseconds(channel.DurationMs);
 
             _scale.BeginAnimation(ScaleTransform.ScaleXProperty,
-                MotionSplines.FromTo(channel.From, channel.To, duration, spline));
+                MotionSplines.FromTo(channel.From, channel.To, duration, channel.Easing));
             _scale.BeginAnimation(ScaleTransform.ScaleYProperty,
-                MotionSplines.FromTo(channel.From, channel.To, duration, spline));
+                MotionSplines.FromTo(channel.From, channel.To, duration, channel.Easing));
         }
 
         if (channels.Any(c => c.Name == EntrancePlan.RotateChannel))
@@ -745,7 +773,7 @@ public sealed class RadialWindow : Window
             var channel = channels.Single(c => c.Name == EntrancePlan.RotateChannel);
             _rotate.BeginAnimation(RotateTransform.AngleProperty,
                 MotionSplines.FromTo(channel.From, channel.To,
-                    TimeSpan.FromMilliseconds(channel.DurationMs), MotionSplines.FromToken(channel.Easing)));
+                    TimeSpan.FromMilliseconds(channel.DurationMs), channel.Easing));
         }
 
         if (channels.Any(c => c.Name == EntrancePlan.FadeChannel))
@@ -753,7 +781,7 @@ public sealed class RadialWindow : Window
             var channel = channels.Single(c => c.Name == EntrancePlan.FadeChannel);
             _view.Root.BeginAnimation(UIElement.OpacityProperty,
                 MotionSplines.FromTo(channel.From, channel.To,
-                    TimeSpan.FromMilliseconds(channel.DurationMs), MotionSplines.FromToken(channel.Easing)));
+                    TimeSpan.FromMilliseconds(channel.DurationMs), channel.Easing));
         }
         _view.Root.BeginAnimation(UIElement.OpacityProperty,
             FromTo(0.0, 1.0, TimeSpan.FromMilliseconds(motion.EntranceDurationMs),

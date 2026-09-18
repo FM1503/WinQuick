@@ -2,6 +2,8 @@ using System.IO;
 using System.Windows;
 using System.Windows.Threading;
 using WinQuick.App.Diagnostics;
+using WinQuick.App.Design;
+using WinQuick.App.Radial;
 using WinQuick.App.Tray;
 using WinQuick.App.Actions;
 using WinQuick.App.Config;
@@ -69,6 +71,7 @@ public sealed class ResidentHost : IDisposable
         _overlay.ReorderRequested += OnReorderRequested;
         _overlay.ExitRequested += (_, _) => Application.Current.Shutdown(0);
         _overlay.SettingsChanged += (_, config) => OnSettingsChanged(config);
+        _overlay.SkinChanged += (_, e) => OnSkinChanged(e.SkinId, e.Form);
         _overlay.SetHotkeyProbe(spec => _hotkeys.ProbeTemporarily(spec));
         _overlay.SetSettingsSource(_config.Config);
         ActionExecutor.Completed += OnActionCompleted;
@@ -104,6 +107,10 @@ public sealed class ResidentHost : IDisposable
     {
         _singleInstance.ListenForActivation(() =>
             Application.Current.Dispatcher.BeginInvoke(() => _overlay.Show()));
+
+        // 皮肤与形态要在**预热之前**装上：预热会真的渲染一次轮盘，
+        // 那一次就该是用户配置的样子（否则第一次唤出会先看到默认皮肤再跳变）。
+        ApplyConfiguredAppearance();
 
         _overlay.Prewarm();
 
@@ -571,6 +578,51 @@ public sealed class ResidentHost : IDisposable
         _pendingSettings = config;
         _saveDebounce.Stop();
         _saveDebounce.Start();
+    }
+
+    /// <summary>
+    /// 皮肤面板里选了皮肤/形态。
+    ///
+    /// 顺序是刻意的：**先换令牌、再重建轮盘、最后排队落盘**。
+    /// · 换令牌（<see cref="TokenStore.ApplySkin"/>）会顺手重装应用资源，面板自己的配色也跟着变；
+    /// · 重建轮盘走的是"复用画布"那条路径（实测零像素变化）—— 用户在面板上一个个点过去，
+    ///   每次都必须立刻看到，且不能闪；
+    /// · 落盘走与设置面板同一条去抖（500ms），免得连点时写十几次盘。
+    /// </summary>
+    public void OnSkinChanged(string skinId, RingForm form)
+    {
+        var problem = TokenStore.ApplySkin(skinId);
+
+        // 应用的令牌要能立刻影响运行中的窗口：菜单重建/子弧这些路径读的是
+        // TokenStore.Current，而轮盘把令牌缓存在自己身上，所以必须显式重建。
+        _overlay.RebuildForAppearance(form);
+
+        _pendingSettings = _config.Config with
+        {
+            Appearance = _config.Config.Appearance with { Skin = skinId, Form = RingForms.IdOf(form) },
+        };
+        _saveDebounce.Stop();
+        _saveDebounce.Start();
+
+        if (problem is not null)
+            CrashLog.Write("皮肤回退", new InvalidOperationException(problem));
+    }
+
+    /// <summary>
+    /// 启动时把配置里记着的皮肤与形态装上。
+    ///
+    /// 必须在建轮盘**之前**装皮肤（窗口构造时会抓一份令牌），
+    /// 形态则在轮盘建好之后用一次重建落定。
+    /// </summary>
+    private void ApplyConfiguredAppearance()
+    {
+        var appearance = _config.Config.Appearance;
+
+        var problem = TokenStore.ApplySkin(appearance.Skin);
+        if (problem is not null)
+            CrashLog.Write("皮肤回退", new InvalidOperationException(problem));
+
+        _overlay.RebuildForAppearance(RingForms.Parse(appearance.Form));
     }
 
     private AppConfig? _pendingSettings;

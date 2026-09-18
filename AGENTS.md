@@ -6,10 +6,14 @@
 
 - **不要**自行启动工具、探针或任何会弹出界面的东西来"看效果"。用户的界面就是他的桌面 ——
   反复启动会打断他，而且**观感只有他能判断**。
+- **不要自己"看"**：不要截图自查、不要用无头浏览器/图像工具去审视观感，也不要让我去看截图。
+  自己看一眼得出的"看起来没问题"没有依据、还要多花一轮往返；观感类结论一律由用户给。
 - 改完**只做编译**，然后告诉用户"已编译/已发布，请测试"，并写清**要他看哪几点**。
 - 可判定的部分（纯逻辑、数学、状态机）**优先写成纯函数 + 单测** —— 那是真回归锁；
   采样类、像素类核对**不作为常规验证手段**（它们受鼠标移动与机器负载影响，会间歇报红，
   而间歇的核对既拦不住回归、又让人对一串"通过"失去信任）。
+- 原型的**纯逻辑**自检可以自己跑（例：`node preview/_verify.mjs` 用 CDP 读页内自检、
+  确认没有脚本错误）—— 它只回答"跑得起来吗、算错了吗"，**不回答"好不好看"**。
 
 ## 2. 测试范围：只跑针对改动的那一点
 
@@ -27,14 +31,24 @@
 dotnet build src/WinQuick.App/WinQuick.App.csproj -c Release --nologo
 
 # 2) 发布（用户的热键指向 publish\WinQuick.exe）
+#    **先杀常驻再发布** —— 否则 publish\WinQuick.exe 被占用，GenerateBundle 报
+#    UnauthorizedAccessException（这一步踩过）
+Get-Process WinQuick -ErrorAction SilentlyContinue | Stop-Process -Force
 powershell -NoProfile -ExecutionPolicy Bypass -Command "& tools\publish.ps1"
 
 # 3) 重启常驻实例（否则用户测到的还是旧进程）
-Get-Process WinQuick -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Process publish\WinQuick.exe
 ```
 
-然后向用户报告：**改了什么 / 该看哪几点 / 可调的令牌是哪几个**。
+**启动之后必须查崩溃日志，不能只看进程在不在**：
+
+```bash
+diff <(之前备份的 crash.log) "%LOCALAPPDATA%\WinQuick\logs\crash.log"
+```
+
+这条是实测教训：有一次启动后进程还在（因为崩溃发生在我检查之后），
+而程序其实在 `OnStartup` 阶段就抛异常死掉了 —— 用户的工具直接起不来。
+"进程数 = 1"是个太弱的判据；**崩溃日志有没有新增条目**才是。
 
 ## 3.5 观感类改动：先做 HTML 最小成本原型，让用户挑（硬流程）
 
@@ -53,7 +67,13 @@ Start-Process publish\WinQuick.exe
 | 原型 | 用途 |
 |---|---|
 | `preview/entrance-preview.html` | 工具整体入场（六个候选；用户已选定 ②+④） |
-| `preview/childring-preview.html` | 子环展开（六个候选，待用户挑） |
+| `preview/childring-preview.html` | 子环展开（六个候选；用户已选定 ③ 径向滑出） |
+| `preview/skin-preview.html` | **换肤（材质+动效）**：七套皮肤 × 三档密度，含设置面板外观区 mock |
+| `preview/form-preview.html` | **形态与专属动画**：六种形态（饼形/圆角/花瓣/刻度盘/卡片弧/网格）各配一段专属入场 |
+| `preview/_verify.mjs` | 上面这些原型的**逻辑**自检器：`node preview/_verify.mjs [file:///…]`（默认验 form-preview） |
+
+自检写在**各自页面**的 `selfCheck()` 里（那里才拿得到页面的几何与浏览器的真实值），
+`_verify.mjs` 只负责把它读出来 —— 它回答「跑得起来吗、算错了吗」，**不回答「好不好看」**。
 
 **原型里踩过的坑（写下来省一次往返）**：
 - **SVG 元素的 `className` 是只读的 `SVGAnimatedString`**，`el.className = ""` 会**静默失败** ——
@@ -83,6 +103,8 @@ Start-Process publish\WinQuick.exe
 | `docs/M5-shell-menu.md` | 文件右键菜单集成 |
 | `docs/M6-particles.md` | 粒子动画调研与代价实测 |
 | `docs/M7-entrance-motion.md` | **入场动画**：调研、曲线数据、各轮调参与教训 |
+| `docs/M8-skins.md` | **换肤与形态**：调研、七套皮肤规格、四档形态、接线方案与执行记录 |
+| `docs/review-2026-09.md` | 代码审查与架构性能分析（含 P1–P8 风险清单与执行记录） |
 
 ## 6. 其它既有约定
 

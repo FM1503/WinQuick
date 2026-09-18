@@ -7,6 +7,7 @@ using WinQuick.App.Diagnostics;
 using WinQuick.App.Interop;
 using WinQuick.App.Radial;
 using WinQuick.Core.Config;
+using WinQuick.Core.Design;
 using WinQuick.Core.Hotkey;
 using WinQuick.Core.Motion;
 using Windows.Win32;
@@ -60,8 +61,18 @@ public sealed class OverlayController : IDisposable
     // 首次打开后保留，避免反复创建。
     private SettingsPanel? _settingsPanel;
 
+    /// <summary>皮肤选择面板。与设置面板同一档（窗口属性、拖动、层级、入场动画全部一致）。</summary>
+    private SkinPanel? _skinPanel;
+
     /// <summary>Hide/Show 往返之前设置面板是否打开着，用于恢复。</summary>
     private bool _settingsWasOpen;
+    private bool _skinWasOpen;
+
+    /// <summary>
+    /// 本次收起**不要**归还焦点。只有一个场景会置位：检测到用户换了虚拟桌面而主动收起
+    /// （原窗口在别的桌面上，SetForegroundWindow 过去会把用户拽回那个桌面）。
+    /// </summary>
+    private bool _suppressFocusRestore;
 
     /// <summary>本次 Show 是否要保留轮盘原有位置（菜单重建时为真）。</summary>
     private (int X, int Y, int Width, int Height)? _preserveRadialPosition;
@@ -97,6 +108,10 @@ public sealed class OverlayController : IDisposable
         // 持续重新合成，表现为闪烁（用户报的现象）。
         _topmostTimer.Tick += (_, _) =>
         {
+            // 用户把桌面切走了就收起覆盖层 —— 否则那些窗口留在原来那个桌面上，
+            // 既看不见也关不掉（Esc 收不到），却仍然占着"已显示"的状态。
+            HideIfDesktopChanged();
+
             if (_zOrder.NeedsReassert()) ReassertTopmost();
         };
 
@@ -109,7 +124,12 @@ public sealed class OverlayController : IDisposable
 
         // 层级从上到下声明。注意这里**必须**与视觉预期一致：
         // 设置面板盖住操作条，操作条盖住轮盘，轮盘盖住遮罩。
+        //
+        // 皮肤面板紧跟设置面板：它们是同一类东西（轮盘旁边的一块面板，同一套窗口属性、
+        // 同一份拖动实现），层级也同一档。实际不会同时在场（打开皮肤会收起设置），
+        // 两层都留着只是为了"谁在哪一档"这句话在代码里是显式写明的。
         _zOrder.AddLayer("设置面板", () => _settingsPanel is { IsVisible: true } ? [_settingsPanel.HandleValue] : []);
+        _zOrder.AddLayer("皮肤面板", () => _skinPanel is { IsVisible: true } ? [_skinPanel.HandleValue] : []);
         _zOrder.AddLayer("操作条", () => _actionBar.IsVisible ? [_actionBar.HandleValue] : []);
         // 看覆盖层自己的逻辑状态，**不看 _radial.IsVisible** ——
         // 休眠（Park）期间窗口仍是"可见"的（只是停在屏幕外），按可见性判断会把它
@@ -471,6 +491,15 @@ public sealed class OverlayController : IDisposable
     /// <summary>设置面板里的改动需要被应用与持久化。参数是组装好的新配置。</summary>
     public event EventHandler<AppConfig>? SettingsChanged;
 
+    /// <summary>
+    /// 用户在皮肤面板里选了一套皮肤/形态。由常驻方负责落盘并让轮盘重建。
+    /// 控制器只管"面板说了什么"，不管"怎么存" —— 那是常驻方的职责（它持配置与菜单文件）。
+    /// </summary>
+    public event EventHandler<(string SkinId, Radial.RingForm Form)>? SkinChanged;
+
+    /// <summary>皮肤面板关闭（探针与焦点归还要用）。</summary>
+    public event EventHandler? SkinClosed;
+
     /// <summary>设置面板已关闭（用户点 ✕ 或按 Esc）。</summary>
     public event EventHandler? SettingsClosed;
 
@@ -547,6 +576,13 @@ public sealed class OverlayController : IDisposable
         if (_dims.Count != MonitorLayout.All().Count)
             RebuildDimWindows();
 
+        // **虚拟桌面：唤出前先把我们的窗口搬到用户此刻所在的桌面。**
+        //
+        // 窗口属于"创建时所在的那个桌面"，而 Windows 不会因为 Show() 就搬它。
+        // 不搬的后果是用户实测报的那两种：只出遮罩（轮盘留在原桌面，点不到也关不掉），
+        // 或者一激活就被拽回工具所在的桌面。详见 Interop/VirtualDesktop.cs。
+        MoveWindowsToCurrentDesktop();
+
         _focus.Save();
 
         foreach (var dim in _dims) dim.Show();
@@ -614,7 +650,7 @@ public sealed class OverlayController : IDisposable
         // 抢走焦点会打断输入。
         if (!IsSettingsOpen) ForegroundFocus.AttachTo(_radial);
 
-        // 恢复显隐往返之前打开着的设置面板。
+        // 恢复显隐往返之前打开着的面板（设置或皮肤 —— 两者不会同时在场）。
         if (_settingsWasOpen && _settingsPanel is not null)
         {
             _settingsPanel.PlaceAtMonitorCornerIfNeeded();
@@ -622,6 +658,13 @@ public sealed class OverlayController : IDisposable
             _settingsPanel.Show();
             _settingsWasOpen = false;
             ForegroundFocus.AttachTo(_settingsPanel);
+        }
+        else if (_skinWasOpen && _skinPanel is not null)
+        {
+            PositionSkinPanel();
+            _skinPanel.Show();
+            _skinWasOpen = false;
+            ForegroundFocus.AttachTo(_skinPanel);
         }
 
 
@@ -666,7 +709,9 @@ public sealed class OverlayController : IDisposable
         // 记住面板状态：显隐往返（改设置、重建菜单、显示器变化）之后要恢复它，
         // 否则用户正在填的表单会毫无预兆地消失。
         _settingsWasOpen = _settingsPanel is { IsVisible: true };
+        _skinWasOpen = _skinPanel is { IsVisible: true };
         _settingsPanel?.Hide();
+        _skinPanel?.Hide();
 
         // 退场期间不再接受输入，否则用户在收缩过程中还能点到扇区。
         _radial.IsHitTestVisible = false;
@@ -684,7 +729,9 @@ public sealed class OverlayController : IDisposable
         }
 
         // 焦点立刻归还，不等动画。
-        _focus.Restore();
+        // 换桌面导致收起时跳过（`_suppressFocusRestore`）—— 原窗口在别的桌面上，
+        // 归还焦点等于把用户拽回去，而他刚才是主动切走的。
+        if (!_suppressFocusRestore) _focus.Restore();
     }
 
     /// <summary>
@@ -716,6 +763,7 @@ public sealed class OverlayController : IDisposable
         if (hwnd == (HWND)_radial.HandleValue) return true;
         if (hwnd == (HWND)_actionBar.HandleValue) return true;
         if (_settingsPanel is not null && hwnd == (HWND)_settingsPanel.HandleValue) return true;
+        if (_skinPanel is not null && hwnd == (HWND)_skinPanel.HandleValue) return true;
         return _dims.Any(d => hwnd == (HWND)d.HandleValue);
     }
 
@@ -728,6 +776,9 @@ public sealed class OverlayController : IDisposable
         if (IsSettingsOpen) return;
 
         _settingsPanel ??= CreateSettingsPanel();
+
+        // 面板可能是在另一个桌面上开的（它是常驻复用的窗口，不重建）。
+        VirtualDesktop.MoveAllToCurrentDesktop([_settingsPanel.HandleValue]);
 
         // 两遍定位：先按"最大高度"估个位置，让窗口出现时就大致在正确的地方（避免可见的跳动）；
         // 显示并完成布局后，再按**真实尺寸**重新摆一次并钳制在屏内。
@@ -770,6 +821,63 @@ public sealed class OverlayController : IDisposable
         SettingsClosed?.Invoke(this, EventArgs.Empty);
     }
 
+    /// <summary>
+    /// 打开皮肤选择面板。
+    ///
+    /// **它替补设置面板的位置**（两块面板不并存）：都是"轮盘旁边的一块面板"，
+    /// 叠在一起只会互相遮挡，而换皮肤要看的恰恰是轮盘本身。
+    /// 轮盘保持在场并留在编辑态 —— 换皮肤要的就是"点一下、立刻看到"。
+    /// </summary>
+    public void OpenSkinPanel()
+    {
+        if (_disposed || !IsVisible) return;
+        if (IsSkinOpen) return;
+
+        CloseSettings();
+
+        _skinPanel ??= CreateSkinPanel();
+
+        // 面板可能是在另一个桌面上开的（它是常驻复用的窗口，不重建）。
+        VirtualDesktop.MoveAllToCurrentDesktop([_skinPanel.HandleValue]);
+
+        _skinPanel.PrepareEntrance();
+        PositionSkinPanel();
+        _skinPanel.Show();
+        _skinPanel.UpdateLayout();
+        PositionSkinPanel();
+
+        _radial.SetEditMode(true);
+
+        _skinPanel.Dispatcher.BeginInvoke(
+            DispatcherPriority.Loaded, new Action(() => _skinPanel.PlayEntrance()));
+
+        ForegroundFocus.AttachTo(_skinPanel);
+    }
+
+    /// <summary>关闭皮肤面板，把焦点还给轮盘。</summary>
+    public void CloseSkinPanel()
+    {
+        if (_skinPanel is not { IsVisible: true }) return;
+
+        _skinPanel.Hide();
+        ForegroundFocus.AttachTo(_radial);
+        SkinClosed?.Invoke(this, EventArgs.Empty);
+    }
+
+    public bool IsSkinOpen => _skinPanel is { IsVisible: true };
+
+    private SkinPanel CreateSkinPanel()
+    {
+        var panel = new SkinPanel(
+            TokenStore.Skins,
+            _settings.Appearance.Skin ?? SkinCatalog.DefaultId,
+            Radial.RingForms.Parse(_settings.Appearance.Form),
+            apply: (skinId, form) => SkinChanged?.Invoke(this, (skinId, form)));
+
+        panel.CloseRequested += (_, _) => CloseSkinPanel();
+        return panel;
+    }
+
     private SettingsPanel CreateSettingsPanel()
     {
         var panel = new SettingsPanel(
@@ -778,6 +886,7 @@ public sealed class OverlayController : IDisposable
             applyConfig: config => SettingsChanged?.Invoke(this, config));
 
         panel.CloseRequested += (_, _) => CloseSettings();
+        panel.SkinRequested += (_, _) => OpenSkinPanel();
 
         return panel;
     }
@@ -801,13 +910,15 @@ public sealed class OverlayController : IDisposable
         _settingsPanelProbe = spec => probe(spec);
 
     /// <summary>
-    /// 把设置面板摆在光标所在屏的**另一侧**，尽量避免压住轮盘
+    /// 把面板摆在光标所在屏的**另一侧**，尽量避免压住轮盘
     /// （轮盘跟着光标走，所以把面板放到光标的反方向最不容易重叠）。
+    ///
+    /// 设置面板与皮肤面板共用这一份：两块面板不会同时在场（打开皮肤会收起设置），
+    /// 所以它们用同一条摆位规则就是对的 —— 各写一份只会让"哪块摆哪儿"变得难以预期。
     /// </summary>
-    private void PositionSettingsPanel()
+    private void PositionPanel(Window panel, bool placedByUser)
     {
-        if (_settingsPanel is null) return;
-
+        var scale0 = MonitorLayout.AtCursor().Scale;
         var monitor = MonitorLayout.AtCursor();
         var scale = monitor.Scale;
 
@@ -816,24 +927,24 @@ public sealed class OverlayController : IDisposable
         // 先把最大高度限制在屏幕内：面板在小屏幕上可能比屏幕还高，
         // 那时底部的按钮会被截掉、点不到。内容本身可滚动（见 XAML 的 ScrollViewer）。
         var availableDips = (monitor.Height - margin * 2) / scale;
-        if (_settingsPanel.MaxHeight <= 0 || _settingsPanel.MaxHeight > availableDips)
-            _settingsPanel.MaxHeight = Math.Max(320, availableDips);
+        if (panel.MaxHeight <= 0 || panel.MaxHeight > availableDips)
+            panel.MaxHeight = Math.Max(320, availableDips);
 
-        var panelWidth = (int)Math.Round(_settingsPanel.Width * scale);
+        var panelWidth = (int)Math.Round(panel.Width * scale0);
 
         // 布局完成前 ActualHeight 不可靠，退化为按最大高度估算 ——
         // 第一遍（Show 之前）走的就是这条。
-        var measuredDips = _settingsPanel.ActualHeight;
+        var measuredDips = panel.ActualHeight;
         var panelHeight = measuredDips > 0
-            ? (int)Math.Round(measuredDips * scale)
-            : (int)Math.Round(_settingsPanel.MaxHeight * scale);
+            ? (int)Math.Round(measuredDips * scale0)
+            : (int)Math.Round(panel.MaxHeight * scale0);
 
         var cursorOnLeftHalf = !MonitorLayout.TryGetCursorPosition(out var cx, out _)
                                || cx < monitor.X + monitor.Width / 2;
 
         var left = cursorOnLeftHalf
-            ? monitor.Right - panelWidth - (int)Math.Round(margin * scale)
-            : monitor.X + (int)Math.Round(margin * scale);
+            ? monitor.Right - panelWidth - (int)Math.Round(margin * scale0)
+            : monitor.X + (int)Math.Round(margin * scale0);
 
         var top = monitor.Y + (monitor.Height - panelHeight) / 2;
 
@@ -845,15 +956,71 @@ public sealed class OverlayController : IDisposable
         // 用户手动拖过就不再自动摆位：面板挡住轮盘正是他拖开的动机，
         // 自动摆位会把它拽回原处 —— 等于白拖。（最大高度那段仍然照做，
         // 它不移动窗口，只保证小屏上底部的按钮不会被截掉。）
-        if (_settingsPanel.PlacedByUser) return;
+        if (placedByUser) return;
 
-        SurfaceOps.SetWindowPos("摆位设置面板");
-        var hwnd = (HWND)_settingsPanel.HandleValue;
+        SurfaceOps.SetWindowPos("摆位面板");
+        var hwnd = (HWND)new WindowInteropHelper(panel).Handle;
         PInvoke.SetWindowPos(hwnd, default, left, top, 0, 0,
             SET_WINDOW_POS_FLAGS.SWP_NOSIZE |
             SET_WINDOW_POS_FLAGS.SWP_NOZORDER |
             SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE |
             SET_WINDOW_POS_FLAGS.SWP_NOOWNERZORDER);
+    }
+
+    private void PositionSettingsPanel()
+    {
+        if (_settingsPanel is null) return;
+        PositionPanel(_settingsPanel, _settingsPanel.PlacedByUser);
+    }
+
+    private void PositionSkinPanel()
+    {
+        if (_skinPanel is null) return;
+        PositionPanel(_skinPanel, _skinPanel.PlacedByUser);
+    }
+
+    /// <summary>
+    /// 把覆盖层的窗口搬到当前虚拟桌面。返回搬动个数（诊断用）。
+    /// 面板也算：它们常驻复用，上次可能是在另一个桌面上开的。
+    /// </summary>
+    private int MoveWindowsToCurrentDesktop()
+    {
+        var windows = new List<nint> { _radial.HandleValue, _actionBar.HandleValue };
+        windows.AddRange(_dims.Where(d => d.IsValid).Select(d => d.HandleValue));
+        if (_settingsPanel is not null) windows.Add(_settingsPanel.HandleValue);
+        if (_skinPanel is not null) windows.Add(_skinPanel.HandleValue);
+
+        return VirtualDesktop.MoveAllToCurrentDesktop(windows);
+    }
+
+    /// <summary>
+    /// 覆盖层显示期间，用户把桌面切走了 —— 把它收起来。
+    ///
+    /// 不做的话这些窗口会留在原来那个桌面上：用户在新的桌面上既看不到它们、
+    /// 也没法用 Esc 关掉（轮盘根本不在那儿），而它们却仍然占着"已显示"的状态。
+    /// 收起时**不归还焦点**（原窗口在别的桌面上，归还＝把用户拽回去）。
+    /// </summary>
+    private void HideIfDesktopChanged()
+    {
+        if (!IsVisible) return;
+        if (!VirtualDesktop.IsSupported) return;
+        if (VirtualDesktop.IsOnCurrentDesktop(_radial.HandleValue)) return;
+
+        HideWithoutFocusRestore();
+    }
+
+    /// <summary>收起覆盖层，但不碰焦点（焦点在别的桌面上，碰了就是把用户拽过去）。</summary>
+    private void HideWithoutFocusRestore()
+    {
+        _suppressFocusRestore = true;
+        try
+        {
+            Hide();
+        }
+        finally
+        {
+            _suppressFocusRestore = false;
+        }
     }
 
     /// <summary>
@@ -866,6 +1033,12 @@ public sealed class OverlayController : IDisposable
         _radial.ApplyHoverDelays(config.Behavior.HoverOpenDelayMs, config.Behavior.HoverCloseDelayMs);
         _radial.ApplyAnimations(config.Behavior.AnimationsEnabled);
     }
+
+    /// <summary>
+    /// 换皮肤/换形态之后让轮盘重建（令牌与形态都是轮盘在构造时抓的）。
+    /// 皮肤面板每点一次都会调到这里，所以它必须走"复用画布"那条不闪的路径。
+    /// </summary>
+    public void RebuildForAppearance(RingForm form) => _radial.RebuildForSkin(form);
 
     /// <summary>诊断用：操作条句柄。</summary>
 
@@ -944,7 +1117,7 @@ public sealed class OverlayController : IDisposable
         {
             IsVisible = false;
             _topmostTimer.Stop();
-            _focus.Restore();
+            if (!_suppressFocusRestore) _focus.Restore();
         }
 
         FinishHide();

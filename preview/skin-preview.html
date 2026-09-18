@@ -1,0 +1,959 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>WinQuick · 皮肤候选（HTML 最小成本原型）</title>
+<style>
+  :root {
+    --bg: #14161c; --fg: #e8eaf0; --muted: #9aa3b2; --line: #ffffff1a;
+    --accent: #6ea8fe; --ok: #7fd18f; --warn: #e2c56a; --bad: #e08a7a;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 14px/1.65 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif; }
+  header { padding: 20px 24px 6px; max-width: 1320px; }
+  h1 { margin: 0 0 8px; font-size: 18px; font-weight: 600; }
+  h2 { font-size: 15px; margin: 26px 0 8px; max-width: 1320px; padding: 0 24px; }
+  p { margin: 4px 0; }
+  .muted { color: var(--muted); }
+  code { background: #ffffff12; padding: 1px 5px; border-radius: 4px; font-size: 12.5px; }
+  .note { border-left: 3px solid var(--accent); background: #6ea8fe10; padding: 8px 12px;
+          margin: 10px 0; border-radius: 0 6px 6px 0; max-width: 1272px; }
+  .note.warn { border-color: var(--warn); background: #e2c56a10; }
+  .wrap { padding: 0 24px 40px; }
+  button { background: #ffffff10; color: var(--fg); border: 1px solid var(--line);
+           border-radius: 8px; padding: 6px 12px; font: inherit; cursor: pointer; }
+  button:hover { background: #ffffff1c; }
+  button.on { border-color: var(--accent); background: #6ea8fe20; }
+  .hint { color: #7b8496; font-size: 12.5px; }
+
+  /* ---------------- 桌面背景（用来暴露透明度差异）----------------
+     皮肤里最需要肉眼分辨的就是"半透明 vs 实心"，
+     所以每个舞台底下都铺一张假的桌面：左上有亮色文档、右下有深色任务栏区。 */
+  .desk { position: absolute; inset: 0;
+          background: linear-gradient(150deg, #34405c 0%, #1a2133 45%, #10141f 100%); }
+  .desk::before { content: ""; position: absolute; right: 6%; top: 12%; width: 46%; height: 62%;
+                  background: linear-gradient(#f4f6fb, #dfe4ee); border-radius: 4px;
+                  box-shadow: 0 8px 22px #0007; opacity: .92; }
+  .desk::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 16%;
+                 background: #0b0e15e0; border-top: 1px solid #ffffff22; }
+
+  /* ---------------- 画廊 ---------------- */
+  #gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(226px, 1fr));
+             gap: 12px; max-width: 1320px; }
+  .card { border: 1px solid var(--line); border-radius: 10px; padding: 8px;
+          background: #ffffff06; cursor: pointer; transition: border-color .12s, background .12s; }
+  .card:hover { border-color: #ffffff40; background: #ffffff0d; }
+  .card.on { border-color: var(--accent); background: #6ea8fe14; }
+  .card .name { font-weight: 600; }
+  .card .mini { position: relative; width: 100%; aspect-ratio: 1; border-radius: 8px;
+                overflow: hidden; margin: 6px 0; }
+  .minidim { position: absolute; inset: 0; }
+  .card .line { color: var(--muted); font-size: 12.5px; }
+  .card .tag { font-size: 12px; margin-top: 3px; }
+  .cost.low { color: var(--ok); } .cost.mid { color: var(--warn); } .cost.high { color: var(--bad); }
+
+  /* ---------------- 大舞台 ---------------- */
+  .stagebox { display: flex; gap: 18px; align-items: flex-start; max-width: 1320px; flex-wrap: wrap; }
+  #stage { position: relative; width: 520px; height: 520px; border-radius: 12px;
+           overflow: hidden; flex: 0 0 auto; border: 1px solid var(--line); }
+  #dim { position: absolute; inset: 0; }
+  .wheelRot { position: absolute; left: 50%; top: 50%; width: 520px; height: 520px;
+              margin: -260px 0 0 -260px; transform-origin: 50% 50%; }
+  .wheelScale { position: absolute; inset: 0; transform-origin: 50% 50%; }
+  .wheelScale svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  #side { flex: 1 1 420px; min-width: 380px; }
+  .btnrow { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
+  #status { min-height: 22px; color: var(--accent); font-size: 13px; }
+  #verdict { font-size: 12.5px; margin-top: 6px; }
+  table.spec { border-collapse: collapse; width: 100%; margin-top: 10px; }
+  table.spec td { border-top: 1px solid var(--line); padding: 5px 8px 5px 0; vertical-align: top; }
+  table.spec td:first-child { color: var(--muted); white-space: nowrap; width: 84px; }
+
+  /* ---------------- 设置面板外观区（mock）----------------
+     面板按当前皮肤着色：证明"面板跟着皮肤走"是能做到的
+     （面板本来就全部走 DynamicResource 引令牌）。 */
+  #panel { width: 380px; border: 1px solid var(--pm-stroke); border-radius: 8px;
+           background: var(--pm-surface); color: var(--pm-text); overflow: hidden;
+           box-shadow: 0 12px 34px #0008; }
+  #panel .title { display: flex; justify-content: space-between; padding: 10px 14px 6px;
+                  font-weight: 600; }
+  #panel .body { padding: 6px 14px 14px; }
+  #panel .section { font-weight: 600; margin: 6px 0 6px; font-size: 13px; }
+  #panel .caption { font-size: 12.5px; color: var(--pm-muted); }
+  .skinstrip { display: flex; gap: 6px; flex-wrap: wrap; margin: 2px 0 4px; }
+  .swatch { width: 30px; height: 30px; border-radius: 7px; cursor: pointer;
+            border: 2px solid transparent; position: relative; }
+  .swatch .dot { position: absolute; inset: 7px; border-radius: 50%; }
+  .swatch.on { border-color: var(--pm-accent); }
+  .chip { padding: 3px 10px; border-radius: 6px; font-size: 12.5px; cursor: pointer;
+          border: 1px solid var(--pm-stroke); background: var(--pm-field); }
+  .chip.on { border-color: var(--pm-accent); background: var(--pm-accent-soft); }
+  .row { display: flex; align-items: center; gap: 10px; margin: 4px 0; }
+  .bar { flex: 1; height: 4px; border-radius: 2px; background: var(--pm-stroke); position: relative; }
+  .bar i { position: absolute; left: 0; top: -3px; width: 11px; height: 10px; border-radius: 3px;
+           background: var(--pm-accent); }
+  .swatchname { font-size: 12.5px; margin-top: 2px; }
+  .foot { font-size: 12.5px; color: var(--pm-muted); margin-top: 10px; }
+
+  footer { padding: 0 24px 40px; max-width: 1320px; }
+  #selfcheck { font-size: 13px; }
+  #selfcheck .ok { color: var(--ok); } #selfcheck .bad { color: var(--bad); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>WinQuick · 皮肤候选</h1>
+  <p class="muted">与 <code>entrance-preview.html</code>／<code>childring-preview.html</code> 同一种做法：
+     <b>最小成本模拟</b>，几何与真实程序一致（740 DIP 窗口、死区 56、一级环 56–200、子环 218–350、
+     间隙 1.2°、图标在环带 24% 处、文字在 65% 处）。点卡片选皮肤，右侧大舞台逐个播放它自带的动效。</p>
+</header>
+
+<div class="wrap">
+  <div class="note">
+    <b>一套皮肤 = 材质（配色/描边/光晕）+ 动效（入场、子环、悬停三处的手感）</b>，两者绑在一起换 ——
+    这是「切换皮肤后界面样式与动画效果都变了」的落点。几何（半径/密度）是<b>正交</b>的第三个维度，
+    单独给三档，因为它的可行范围被两条硬约束卡住（见下）。
+  </div>
+  <div class="note warn">
+    <b>真「毛玻璃」做不到，先说清楚。</b>本工具的轮盘是<b>分层窗口</b>（<code>AllowsTransparency</code> +
+    逐像素 alpha）：DWM 不会给这种窗口画系统 Acrylic，而未文档化的
+    <code>SetWindowCompositionAttribute</code> 在新版 Win11 上已失效/掉帧
+    （Avalonia #17684、dotnet/wpf #3608；微软文档也写明 <code>SetLayeredWindowAttributes</code>
+    与 <code>UpdateLayeredWindow</code> 互斥）。所以玻璃档只能做<b>半透明</b>——
+    能透出桌面，但不糊。原型里那张「半透明」卡给了 <code>backdrop-filter</code> 版本只是为了让你看清
+    <b>「如果能糊会长这样」</b>，实现时不会是这个效果。
+  </div>
+</div>
+
+<h2>① 皮肤画廊（点一张 → 右侧播放它的完整动效）</h2>
+<div class="wrap"><div id="gallery"></div></div>
+
+<h2>② 大舞台</h2>
+<div class="wrap">
+  <div class="stagebox">
+    <div id="stage">
+      <div class="desk"></div>
+      <div id="dim"></div>
+      <div class="wheelRot" id="rot">
+        <div class="wheelScale" id="scale"></div>
+      </div>
+    </div>
+    <div id="side">
+      <div class="btnrow">
+        <button id="btn-entrance">重播入场</button>
+        <button id="btn-demo">完整演示（入场→悬停→子环）</button>
+        <button id="btn-all">依次对比入场</button>
+        <button id="btn-stop">停</button>
+      </div>
+      <div id="status">就绪</div>
+      <div id="verdict"></div>
+      <table class="spec">
+        <tr><td>皮肤</td><td id="s-name"></td></tr>
+        <tr><td>材质</td><td id="s-material"></td></tr>
+        <tr><td>入场</td><td id="s-entrance"></td></tr>
+        <tr><td>子环</td><td id="s-child"></td></tr>
+        <tr><td>悬停</td><td id="s-hover"></td></tr>
+        <tr><td>实现成本</td><td id="s-cost"></td></tr>
+        <tr><td>出处</td><td id="s-src"></td></tr>
+        <tr><td>需新增令牌</td><td id="s-tokens"></td></tr>
+      </table>
+    </div>
+  </div>
+</div>
+
+<h2>③ 几何档（正交维度：皮肤换材质与动效，几何换密度）</h2>
+<div class="wrap">
+  <div class="btnrow" id="geomrow"></div>
+  <div class="note">
+    三档都在真实不变量之内（死区占比 12–28%、环必须严格外扩、子环内缘要躲开一级的悬停鼓出、
+    <b>子环按 20 项铺满整圈时标签半宽 ≥ 30</b>、窗口 ≤ 740 是内存预算的硬上限）。
+    最后一条正是几何档做不大的原因：<b>子环那圈标签的可读性把环带宽度锁在 ≈130</b>，
+    所以「宽松」几乎只是把死区和图标放大一点，窗口本身已经没有余量了。
+    <br>另外：③ 霓虹与 ⑤ Material 这两档想要更大的悬停鼓出（16px），而基线的
+    <code>ring2Inner=218</code> 只给 12px 留了余量（200+12+4=216）—— 要让它们成立，
+    得把 <code>ring2Inner</code> 抬到 <b>220</b>（子环带 132 → 130，肉眼无差）。
+    本原型已按 220 计算，所以三档 × 七皮肤共 21 种组合全部通过校验；若你不想动基线，
+    就把这两档的鼓出压回 12px。
+  </div>
+</div>
+
+<h2>④ 切换入口（设置面板「外观」区的样子，面板本身也跟皮肤走）</h2>
+<div class="wrap">
+  <div id="panel">
+    <div class="title"><span>设置</span><span class="caption">✕</span></div>
+    <div class="body">
+      <div class="section">热键</div>
+      <div class="caption">Ctrl + Win + W　　<span style="opacity:.7">测试</span></div>
+
+      <div class="section">外观</div>
+      <div class="caption">皮肤</div>
+      <div class="skinstrip" id="pm-skins"></div>
+      <div class="swatchname" id="pm-skinname"></div>
+      <div class="caption" id="pm-motion" style="margin-top:4px"></div>
+
+      <div class="caption" style="margin-top:8px">密度</div>
+      <div class="skinstrip" id="pm-geoms"></div>
+
+      <div class="row" style="margin-top:8px">
+        <span class="caption" style="width:72px">遮罩深浅</span>
+        <span class="bar"><i id="pm-dim"></i></span>
+        <span class="caption" id="pm-dimval"></span>
+      </div>
+      <div class="row">
+        <span class="caption" style="width:72px">悬停高亮色</span>
+        <span class="chip" id="pm-accent" style="flex:1"></span>
+      </div>
+      <div class="foot" id="pm-foot"></div>
+    </div>
+  </div>
+  <p class="hint" style="max-width:820px;margin-top:10px">
+    这两行是现有的用户覆盖项（<code>appearance.dimOpacity</code> / <code>appearance.accentColor</code>）。
+    它们与皮肤的关系需要你定：设了覆盖值之后，换皮肤是否还跟着变？（建议：覆盖值只在「当前皮肤」之上生效，
+    换皮肤时提示「已偏离皮肤默认」。）下面那行是必须写进文档的一条：
+    <b>系统「在 Windows 中显示动画」关掉时，任何皮肤的动效都要归零</b>——无障碍优先于皮肤。
+  </p>
+</div>
+
+<footer>
+  <div id="selfcheck">自检中…</div>
+</footer>
+
+<script>
+// ============================================================================
+// 几何：与程序同一套约定（极坐标 0° 正上、顺时针；环带按比例取半径）
+// ============================================================================
+const CX = 370, CY = 370;
+
+function polar(r, deg) {
+  const a = deg * Math.PI / 180;
+  return [CX + r * Math.sin(a), CY - r * Math.cos(a)];
+}
+function ringSector(inner, outer, startDeg, endDeg) {
+  const large = (endDeg - startDeg) > 180 ? 1 : 0;
+  const [ax, ay] = polar(outer, startDeg);
+  const [bx, by] = polar(outer, endDeg);
+  const [cx, cy] = polar(inner, endDeg);
+  const [dx, dy] = polar(inner, startDeg);
+  return `M ${ax} ${ay} A ${outer} ${outer} 0 ${large} 1 ${bx} ${by} ` +
+         `L ${cx} ${cy} A ${inner} ${inner} 0 ${large} 0 ${dx} ${dy} Z`;
+}
+const rgba = (rgb, a) => `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${a})`;
+
+// ---- 三档几何。数值都是"设计意图"，实现时以 DesignTokens.Validate() 为准。
+const GEOMETRIES = {
+  refined: { key: "refined", label: "精致", note: "小图标、2 行标签、大间隙",
+             windowSize: 740, deadZone: 50, ring1: 182, r2in: 202, r2out: 334,
+             gap: 2.0, icon: 26, iconRatio: 0.26, labelRatio: 0.66, labelSize: 13 },
+  standard:{ key: "standard", label: "标准", note: "现状基线（子环内缘 218 → 220，见页脚说明）",
+             windowSize: 740, deadZone: 56, ring1: 200, r2in: 220, r2out: 350,
+             gap: 1.2, icon: 30, iconRatio: 0.24, labelRatio: 0.65, labelSize: 14 },
+  roomy:   { key: "roomy", label: "宽松", note: "大图标、3 行标签、紧间隙",
+             windowSize: 740, deadZone: 60, ring1: 200, r2in: 220, r2out: 352,
+             gap: 1.0, icon: 34, iconRatio: 0.24, labelRatio: 0.65, labelSize: 15 },
+};
+
+// ---- 不变量：与 DesignTokens.Validate() 里与几何/皮肤有关的那几条同构 ----
+function labelMaxHalfWidth(geom) {
+  const iconRadius = geom.r2in + (geom.r2out - geom.r2in) * geom.iconRatio;
+  const labelRadius = geom.r2in + (geom.r2out - geom.r2in) * geom.labelRatio;
+  const byIcon = (labelRadius - iconRadius) - geom.icon / 2 - 4;
+  const sweep = (360 / 20) * Math.PI / 180;               // 满圈 20 项（MaxChildSectors）
+  const chord = 2 * labelRadius * Math.sin(sweep / 2);
+  const gapPx = 2 * labelRadius * geom.gap * Math.PI / 180;
+  const byWedge = (chord - gapPx - 6) / 2;
+  return Math.min(byIcon, byWedge);
+}
+function validate(geom, skin) {
+  const p = [];
+  const bulge = skin.motion.hover.bulgePx;
+  if (geom.windowSize > 740) p.push(`windowSize ${geom.windowSize} 超过内存预算上限 740`);
+  const ratio = geom.deadZone / geom.r2out;
+  if (ratio < 0.12 || ratio > 0.28) p.push(`死区占外径 ${(ratio * 100).toFixed(0)}%，超出 12–28%`);
+  if (!(geom.deadZone < geom.ring1)) p.push("死区必须小于环一外缘");
+  if (!(geom.ring1 < geom.r2in)) p.push("环一外缘必须小于子环内缘");
+  if (!(geom.r2in < geom.r2out)) p.push("子环内缘必须小于外缘");
+  if (geom.r2out > geom.windowSize / 2) p.push("子环外缘放不进窗口");
+  if (geom.r2in < geom.ring1 + bulge + 4)
+    p.push(`子环内缘 ${geom.r2in} < 环一外缘 ${geom.ring1} + 鼓出 ${bulge} + 余量 4：悬停时鼓出会压在子环下`);
+  if (geom.r2out + bulge > geom.windowSize / 2)
+    p.push(`子环外缘 ${geom.r2out} + 鼓出 ${bulge} 超窗（会被裁掉）`);
+  const half = labelMaxHalfWidth(geom);
+  if (half < 30) p.push(`子环满圈 20 项时标签半宽只剩 ${half.toFixed(1)}（要求 ≥ 30）`);
+  return p;
+}
+
+// ============================================================================
+// 皮肤：材质 + 动效。
+//   cur = 三次贝塞尔文本（与 tokens.json 里同一个语法，WAAPI 直接吃）
+//   steps(n) 是离散阶梯 —— 对应 WPF 的 DiscreteDoubleKeyFrame
+// ============================================================================
+const SKINS = [
+  {
+    id: "fluent-dark", name: "① 默认·深色", tagline: "Fluent 深色（现状）",
+    css: { dimA: 0.40, fill: [32,32,32], fillA: 0.92, stroke: [255,255,255], strokeA: 0.19, strokeW: 1,
+           hoverFill: [0,120,212], hoverFillA: 1, hoverStroke: [255,255,255], hoverStrokeA: 0.78,
+           haloW: 0, haloA: 0, haloColor: [0,0,0],
+           deadFill: [18,18,18], deadStrokeA: 0.24, label: [255,255,255], labelA: 1,
+           hintA: 0.55, badgeA: 0.35, font: "'Microsoft YaHei UI','Segoe UI',sans-serif" },
+    motion: { scale: { from: 0.86, ms: 300, cur: "cubic-bezier(0.34,1.56,0.64,1)" },
+              rotate:{ from: -24,  ms: 380, cur: "cubic-bezier(0.16,1,0.3,1)" },
+              fade:  { ms: 167, cur: "cubic-bezier(0,0,0,1)" },
+              child: { form: "slide", ms: 260, cur: "cubic-bezier(0.16,1,0.3,1)", slidePx: 60, staggerMs: 0 },
+              hover: { ms: 130, cur: "cubic-bezier(0,0,0,1)", bulgePx: 12 } },
+    meta: { material: "半透明深底 #202020@92% + 白描边 19%；悬停用 Fluent 蓝 #0078D4",
+            cost: "零（就是现状基线）", costLevel: "low",
+            src: "出处：Fluent 深色材质与描边规范。",
+            tokens: "无" }
+  },
+  {
+    id: "fluent-light", name: "② 浅色", tagline: "Fluent 浅色（明暗互换）",
+    css: { dimA: 0.28, fill: [243,243,243], fillA: 0.94, stroke: [0,0,0], strokeA: 0.08, strokeW: 1,
+           hoverFill: [0,120,212], hoverFillA: 1, hoverStroke: [255,255,255], hoverStrokeA: 0.9,
+           haloW: 0, haloA: 0, haloColor: [0,0,0],
+           deadFill: [236,236,236], deadStrokeA: 0.16, label: [27,27,27], labelA: 1,
+           hintA: 0.6, badgeA: 0.25, font: "'Microsoft YaHei UI','Segoe UI',sans-serif" },
+    motion: null,   // 与 ① 完全相同
+    meta: { material: "浅色底 #F3F3F3@94% + 黑描边 8%（Fluent 浅色描边 rgba(0,0,0,.06)）；悬停 #0078D4",
+            cost: "低（只是配色反转，但要复核对比度）", costLevel: "low",
+            src: "出处：Fluent 颜色/描边规范：深色描边 rgba(255,255,255,.07)、浅色 rgba(0,0,0,.06)，浅色强调色 #0078D4。",
+            tokens: "无（文字色已是令牌）" }
+  },
+  {
+    id: "neon", name: "③ 霓虹", tagline: "高饱和发光（赛博）",
+    css: { dimA: 0.55, fill: [6,10,20], fillA: 0.88, stroke: [0,229,255], strokeA: 0.55, strokeW: 1.2,
+           hoverFill: [0,229,255], hoverFillA: 0.22, hoverStroke: [0,229,255], hoverStrokeA: 1,
+           haloW: 6, haloA: 0.20, haloColor: [0,229,255],
+           deadFill: [4,7,14], deadStrokeA: 0.5, label: [224,248,255], labelA: 1,
+           hintA: 0.75, badgeA: 0.5, font: "'Microsoft YaHei UI','Segoe UI',sans-serif" },
+    motion: { scale: { from: 0.78, ms: 240, cur: "cubic-bezier(0.34,1.8,0.5,1)" },
+              rotate:{ from: -36,  ms: 300, cur: "cubic-bezier(0.2,1.2,0.3,1)" },
+              fade:  { ms: 120, cur: "cubic-bezier(0,0,0,1)" },
+              child: { form: "pop", ms: 220, cur: "cubic-bezier(0.34,1.56,0.64,1)", slidePx: 30, staggerMs: 30 },
+              hover: { ms: 90, cur: "cubic-bezier(0,0,0,1)", bulgePx: 16 } },
+    meta: { material: "近黑底 + 青色描边 55% + 一圈 6px 光晕；悬停是半透明青光而不是实心色块",
+            cost: "中（光晕＝多一层描边几何；悬停填充要半透明→缺一个 alpha 令牌）", costLevel: "mid",
+            src: "出处：Kando 的内置主题 Neon Lights（同类轮盘工具）；Radify 的材质皮肤 Carbon／AstroGold 说明霓虹/金属是这类工具的常见一档。光晕用额外描边而不是 WPF Effect —— Effect 会让元素每帧走位图渲染。",
+            tokens: "strokeWidthPx、haloPx／haloAlpha／haloColor、hoverFillAlpha" }
+  },
+  {
+    id: "translucent", name: "④ 半透明", tagline: "几乎只剩描边（最轻）",
+    css: { dimA: 0.20, fill: [255,255,255], fillA: 0.10, stroke: [255,255,255], strokeA: 0.30, strokeW: 1,
+           hoverFill: [255,255,255], hoverFillA: 0.20, hoverStroke: [255,255,255], hoverStrokeA: 0.85,
+           haloW: 0, haloA: 0, haloColor: [0,0,0],
+           deadFill: [255,255,255], deadStrokeA: 0.30, label: [255,255,255], labelA: 1,
+           hintA: 0.7, badgeA: 0.3, font: "'Microsoft YaHei UI','Segoe UI',sans-serif" },
+    motion: { scale: { from: 0.94, ms: 420, cur: "cubic-bezier(0.05,0.7,0.1,1)" },
+              rotate:{ from: 0,   ms: 0,   cur: "linear" },
+              fade:  { ms: 240, cur: "cubic-bezier(0.05,0.7,0.1,1)" },
+              child: { form: "slide", ms: 340, cur: "cubic-bezier(0.16,1,0.3,1)", slidePx: 40, staggerMs: 0 },
+              hover: { ms: 220, cur: "cubic-bezier(0.05,0.7,0.1,1)", bulgePx: 8 } },
+    meta: { material: "白填充 10% + 白描边 30%，没有实心面；遮罩也压得更轻",
+            cost: "低（纯配色）；但明亮桌面上文字可读性会掉，要么加文字阴影（成本中）要么抬填充",
+            src: "出处：Fluent 的 Acrylic 用于弹出类界面（轮盘就是弹出类）。注意原型里的模糊只是示意 —— 分层窗口拿不到系统 Acrylic。",
+            tokens: "hoverFillAlpha；若要做文字投影另需 textShadow" }
+  },
+  {
+    id: "m3-expressive", name: "⑤ Material 弹性", tagline: "实心色板 + 空间弹簧",
+    css: { dimA: 0.32, fill: [28,27,31], fillA: 1.0, stroke: [73,69,79], strokeA: 0.9, strokeW: 1,
+           hoverFill: [208,188,255], hoverFillA: 1, hoverStroke: [73,69,79], hoverStrokeA: 1,
+           haloW: 0, haloA: 0, haloColor: [0,0,0],
+           deadFill: [20,19,23], deadStrokeA: 0.9, label: [230,225,229], labelA: 1,
+           hintA: 0.7, badgeA: 0.4, font: "'Microsoft YaHei UI','Segoe UI',sans-serif" },
+    motion: { scale: { from: 0.70, ms: 400, cur: "cubic-bezier(0.38,1.21,0.22,1)" },
+              rotate:{ from: -14,  ms: 460, cur: "cubic-bezier(0.38,1.21,0.22,1)" },
+              fade:  { ms: 200, cur: "cubic-bezier(0.05,0.7,0.1,1)" },
+              child: { form: "pop", ms: 300, cur: "cubic-bezier(0.34,1.56,0.64,1)", slidePx: 50, staggerMs: 35 },
+              hover: { ms: 160, cur: "cubic-bezier(0.38,1.21,0.22,1)", bulgePx: 16 } },
+    meta: { material: "全实心（M3 的 tonal 面）+ outline 描边；悬停是主色块 #D0BCFF 配深字",
+            cost: "低-中（色板与弹簧是参数；M3 的圆角卡片在饼菜单里等价物是圆角扇形，那要重画几何，成本高，不做）",
+            src: "出处：Material 3 Expressive 的 motion scheme —— spatial 弹簧可见过冲（damping 0.8/0.6、stiffness 380/800），effect 通道恒为临界阻尼；规范明确「弹性属于位移，不属于颜色与透明度」。",
+            tokens: "无（动效本就是令牌）" }
+  },
+  {
+    id: "high-contrast", name: "⑥ 高对比", tagline: "无障碍档（同时是动效克制档）",
+    css: { dimA: 0.72, fill: [0,0,0], fillA: 1.0, stroke: [255,255,255], strokeA: 1, strokeW: 2,
+           hoverFill: [255,255,0], hoverFillA: 1, hoverStroke: [255,255,255], hoverStrokeA: 1,
+           haloW: 0, haloA: 0, haloColor: [0,0,0],
+           deadFill: [0,0,0], deadStrokeA: 1, label: [255,255,255], labelA: 1,
+           hintA: 0.9, badgeA: 0.7, font: "'Microsoft YaHei UI','Segoe UI',sans-serif" },
+    motion: { scale: { from: 0.98, ms: 120, cur: "linear" },
+              rotate:{ from: 0,   ms: 0,   cur: "linear" },
+              fade:  { ms: 120, cur: "linear" },
+              child: { form: "fade", ms: 100, cur: "linear", slidePx: 0, staggerMs: 0 },
+              hover: { ms: 0, cur: "linear", bulgePx: 0 } },
+    meta: { material: "纯黑实心 + 2px 纯白描边 + 100% 白字；悬停是纯黄块（对比度最大）",
+            cost: "低（另需一个「悬停时文字色」令牌：黄底上要黑字）",
+            src: "出处：Windows 高对比主题 + Material 的无障碍建议「尊重减少动画：退回标准档或纯淡入」，以及「不要把弹性给颜色与透明度」。",
+            tokens: "hoverLabelColor（黄底上的黑字）" }
+  },
+  {
+    id: "retro", name: "⑦ 复古像素", tagline: "硬边 + 等宽字 + 阶梯动效",
+    css: { dimA: 0.50, fill: [27,27,47], fillA: 1.0, stroke: [248,248,242], strokeA: 0.9, strokeW: 2,
+           hoverFill: [233,69,96], hoverFillA: 1, hoverStroke: [248,248,242], hoverStrokeA: 1,
+           haloW: 0, haloA: 0, haloColor: [0,0,0],
+           deadFill: [20,20,36], deadStrokeA: 0.9, label: [248,248,242], labelA: 1,
+           hintA: 0.8, badgeA: 0.6, font: "'Cascadia Mono',Consolas,monospace" },
+    motion: { scale: { from: 0.72, ms: 240, cur: "steps(4, jump-end)" },
+              rotate:{ from: 0,   ms: 0,   cur: "linear" },
+              fade:  { ms: 80, cur: "linear" },
+              child: { form: "step", ms: 250, cur: "linear", slidePx: 0, staggerMs: 0 },
+              hover: { ms: 0, cur: "linear", bulgePx: 0 } },
+    meta: { material: "硬边实心 + 2px 描边 + 等宽字（Cascadia Mono 缺失则回退 Consolas）",
+            cost: "中（离散阶梯要单独构造关键帧；WPF 侧对应 DiscreteDoubleKeyFrame）",
+            src: "出处：Winamp 时代的换肤传统（皮肤同时改外观与行为）+ 8-bit 视觉语汇；steps() 在 WPF 里对应离散关键帧。",
+            tokens: "同⑥（悬停文字色）" }
+  },
+];
+// ② 复用 ① 的动效：Fluent 的明暗主题只换材质，不换动效 —— 这本身就是一条要传达的设计原则。
+SKINS[1].motion = SKINS[0].motion;
+const skinById = (id) => SKINS.find((s) => s.id === id);
+
+// ============================================================================
+// 画一个轮盘（含死区、一级扇区、一个悬停扇区、可展开的子环）
+// 返回句柄，供动画按帧改几何 / 改颜色 / 改透明度。
+// ============================================================================
+const ROOT_NAMES = ["开发", "浏览器", "终端", "截图", "音乐", "下载", "文件夹", "设置"];
+const CHILD_NAMES = ["编辑器", "Git", "终端", "调试器", "数据库"];
+const CHILD_SWEEP = 125;          // 5 项 × 25°（childMinSectorDegrees 的下限，真实且最挤）
+const HOVER_INDEX = 0;
+
+function buildWheel(host, geom, skin, opts) {
+  const hovered = opts.hovered === true;
+  const childOpen = opts.childOpen === true;
+  const bulge = hovered ? skin.motion.hover.bulgePx : 0;
+
+  const c = skin.css;
+  const baseFill = rgba(c.fill, c.fillA);
+  const baseStroke = rgba(c.stroke, c.strokeA);
+  const hoverFill = rgba(c.hoverFill, c.hoverFillA);
+  const hoverStroke = rgba(c.hoverStroke, c.hoverStrokeA);
+
+  const n = ROOT_NAMES.length, sweep = 360 / n;
+  const iconRadius = geom.deadZone + (geom.ring1 - geom.deadZone) * geom.iconRatio;
+  const labelRadius = geom.deadZone + (geom.ring1 - geom.deadZone) * geom.labelRatio;
+
+  let html = `<svg viewBox="0 0 ${geom.windowSize} ${geom.windowSize}" preserveAspectRatio="xMidYMid meet">`;
+
+  // 光晕：先画一圈比扇区大一档的半透明描边垫在下面（不用 Effect，见霓虹那档的说明）
+  const halo = c.haloW > 0
+    ? `<g opacity="${c.haloA}">` + Array.from({ length: n }, (_, i) => {
+        const mid = i * sweep;
+        const d = ringSector(geom.deadZone, geom.ring1 + 1, mid - sweep / 2 + geom.gap, mid + sweep / 2 - geom.gap);
+        return `<path d="${d}" fill="none" stroke="${rgba(c.haloColor, 1)}" stroke-width="${c.haloW}"></path>`;
+      }).join("") + `</g>`
+    : "";
+
+  // 一级扇区
+  html += `<g id="roots">`;
+  for (let i = 0; i < n; i++) {
+    const mid = i * sweep;
+    const isHover = hovered && i === HOVER_INDEX;
+    const outer = geom.ring1 + (isHover ? bulge : 0);
+    const d = ringSector(geom.deadZone, outer, mid - sweep / 2 + geom.gap, mid + sweep / 2 - geom.gap);
+    html += `<path data-root="${i}" d="${d}"
+      fill="${isHover ? hoverFill : baseFill}"
+      stroke="${isHover ? hoverStroke : baseStroke}"
+      stroke-width="${isHover ? Math.max(c.strokeW, 1.2) : c.strokeW}"></path>`;
+  }
+  // 带子项的扇区在外缘画一个小三角（徽标色令牌），说明「这门后面还有一层」
+  for (const i of [HOVER_INDEX]) {
+    const mid = i * sweep;
+    const [bx, by] = polar(geom.ring1 - 9, mid);
+    html += `<path d="M ${bx - 6} ${by - 4} L ${bx + 6} ${by - 4} L ${bx} ${by + 5} Z"
+      fill="${rgba(c.label, c.hintA)}" opacity="${hovered ? 1 : c.hintA}"></path>`;
+  }
+  html += `</g>`;
+
+  // 中心死区
+  html += `<circle cx="${CX}" cy="${CY}" r="${geom.deadZone}" fill="${rgba(c.deadFill, 1)}"
+             stroke="${rgba(c.stroke, c.deadStrokeA)}" stroke-width="${c.strokeW}"></circle>
+           <text x="${CX}" y="${CY + 5}" text-anchor="middle" fill="${rgba(c.label, c.hintA)}"
+             font-size="13" font-family="${c.font}"
+             >${opts.editMode ? "完成" : "Esc"}</text>`;
+
+  // 一级图标与文字
+  for (let i = 0; i < n; i++) {
+    const mid = i * sweep;
+    const isHover = hovered && i === HOVER_INDEX;
+    const [ix, iy] = polar(iconRadius, mid);
+    const [lx, ly] = polar(labelRadius, mid);
+    const iconFill = isHover ? rgba(c.hoverStroke, 1) : rgba(c.label, 0.82);
+    html += `<circle cx="${ix}" cy="${iy}" r="${geom.icon / 2 - 3}" fill="${iconFill}"></circle>
+      <text x="${lx}" y="${ly + geom.labelSize * 0.35}" text-anchor="middle"
+        fill="${rgba(c.label, c.labelA)}" font-size="${geom.labelSize}"
+        font-family="${c.font}">${ROOT_NAMES[i]}</text>`;
+  }
+
+  // 子环：带内缘固定、外缘按进度拉开（进度 0 = 与内缘重合 = 不可见）
+  const band = geom.r2out - geom.r2in;
+  const childIconRadius = geom.r2in + band * geom.iconRatio;
+  const childLabelRadius = geom.r2in + band * geom.labelRatio;
+  const cStart = -CHILD_SWEEP / 2, cStep = CHILD_SWEEP / CHILD_NAMES.length;
+
+  html += `<g id="childband"><path data-band="1" d="${ringSector(geom.r2in, geom.r2in, cStart + geom.gap, cStart + CHILD_SWEEP - geom.gap)}"
+      fill="${rgba(c.fill, Math.min(1, c.fillA + 0.06))}" stroke="${baseStroke}" stroke-width="${c.strokeW}"></path></g>`;
+  html += `<g id="childitems">`;
+  for (let i = 0; i < CHILD_NAMES.length; i++) {
+    const mid = cStart + cStep * (i + 0.5);
+    const [ix, iy] = polar(childIconRadius, mid);
+    const [lx, ly] = polar(childLabelRadius, mid);
+    html += `<g data-child="${i}">
+      <circle cx="${ix}" cy="${iy}" r="${Math.max(6, geom.icon / 2 - 5)}" fill="${rgba(c.label, 0.6)}"></circle>
+      <text x="${lx}" y="${ly + geom.labelSize * 0.35}" text-anchor="middle"
+        fill="${rgba(c.label, c.labelA)}" font-size="${geom.labelSize - 1}"
+        font-family="${c.font}">${CHILD_NAMES[i]}</text></g>`;
+  }
+  html += `</g></svg>`;
+
+  host.innerHTML = html;
+
+  const handle = {
+    geom, skin, svg: host.querySelector("svg"),
+    rootPaths: Array.from(host.querySelectorAll("[data-root]")),
+    bandPath: host.querySelector("[data-band]"),
+    childGroups: Array.from(host.querySelectorAll("[data-child]")),
+    baseFill, baseStroke, hoverFill, hoverStroke,
+    bulge, childProgress: childOpen ? 1 : 0,
+    center: { x: CX, y: CY },
+  };
+  setChildProgress(handle, handle.childProgress);
+  return handle;
+}
+
+// 子环进度：唯一写入者是这里（几何 + 透明度），滑出只动 transform ——
+// 与真实实现同一条规矩：一个机制一个写入者。
+function setChildProgress(h, p) {
+  const { geom, skin } = h;
+  const c = skin.css;
+  h.childProgress = p;
+
+  const start = -CHILD_SWEEP / 2;
+  const outer = geom.r2in + (geom.r2out - geom.r2in) * p;
+  if (h.bandPath)
+    h.bandPath.setAttribute("d",
+      ringSector(geom.r2in, Math.max(geom.r2in, outer), start + geom.gap, start + CHILD_SWEEP - geom.gap));
+
+  h.childGroups.forEach((g, i) => {
+    let a = p;
+    if (skin.motion.child.form === "step") {
+      // 阶梯：每项在自己那一小段里硬切出现（逐格）
+      const slot = 1 / h.childGroups.length;
+      a = p >= slot * (i + 1) ? 1 : 0;
+    }
+    g.setAttribute("opacity", a.toFixed(3));
+  });
+}
+
+// 悬停鼓出：按进度改被悬停扇区的几何与颜色（每帧只重写一个扇区）
+function setHoverProgress(h, p) {
+  const { geom, skin } = h;
+  const c = skin.css;
+  const n = ROOT_NAMES.length, sweep = 360 / n, mid = HOVER_INDEX * sweep;
+  const bulge = skin.motion.hover.bulgePx * p;
+
+  const mix = (from, to, t) => from.map((v, i) => Math.round(v + (to[i] - v) * t));
+  const fill = rgba(mix(c.fill, c.hoverFill, p), c.fillA + (c.hoverFillA - c.fillA) * p);
+  const stroke = rgba(mix(c.stroke, c.hoverStroke, p), c.strokeA + (c.hoverStrokeA - c.strokeA) * p);
+
+  const path = h.rootPaths[HOVER_INDEX];
+  if (path) {
+    path.setAttribute("d", ringSector(geom.deadZone, geom.ring1 + bulge,
+      mid - sweep / 2 + geom.gap, mid + sweep / 2 - geom.gap));
+    path.setAttribute("fill", fill);
+    path.setAttribute("stroke", stroke);
+  }
+}
+
+// ============================================================================
+// 动效播放：几何类走 rAF（像真实实现那样逐帧重画路径），
+// 变换/透明度类走 WAAPI（曲线文本与 tokens.json 完全同语法，无需翻译）。
+// ============================================================================
+let running = [];               // 当前所有 WAAPI 动画
+let rafId = 0;
+
+const easeResolvers = {};
+function easeFn(cur) {
+  if (easeResolvers[cur]) return easeResolvers[cur];
+  // 只支持三次贝塞尔与线性（本原型用到的全部）；steps() 交给 WAAPI 自己处理，不走这里。
+  const m = /cubic-bezier\(([-\d.]+),([-\d.]+),([-\d.]+),([-\d.]+)\)/.exec(cur);
+  let fn;
+  if (cur === "linear" || !m) {
+    fn = (t) => t;
+  } else {
+    const [x1, y1, x2, y2] = m.slice(1).map(Number);
+    const bez = (t, a, b) => 3 * (1 - t) * (1 - t) * t * a + 3 * (1 - t) * t * t * b + t * t * t;
+    fn = (x) => {
+      let lo = 0, hi = 1, t = x;
+      for (let i = 0; i < 24; i++) {            // 二分求 x → t，够精确且足够快
+        t = (lo + hi) / 2;
+        if (bez(t, x1, x2) < x) lo = t; else hi = t;
+      }
+      return bez(t, y1, y2);
+    };
+  }
+  return (easeResolvers[cur] = fn);
+}
+
+// 曲线在中段的取值。自检用它核对"曲线真的被用到了"：中段应当既不是 0 也不是 1。
+const midProgress = (skin) => easeFn(skin.motion.hover.cur)(0.5);
+
+// 逐帧几何动画：geometry(progress) 由调用方给，progress 已过缓动
+function animateGeometry(ms, cur, onFrame) {
+  const start = performance.now();
+  const ease = easeFn(cur);
+  const tick = (now) => {
+    const raw = ms <= 0 ? 1 : Math.min(1, (now - start) / ms);
+    onFrame(ease(raw));
+    if (raw < 1) rafId = requestAnimationFrame(tick);
+  };
+  if (ms <= 0) { onFrame(1); return; }
+  rafId = requestAnimationFrame(tick);
+}
+
+function stopAll() {
+  running.forEach((a) => { try { a.cancel(); } catch { /* 已结束 */ } });
+  running = [];
+  if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
+}
+
+const rotEl = document.getElementById("rot");
+const scaleEl = document.getElementById("scale");
+const dimEl = document.getElementById("dim");
+
+// 入场：缩放 / 旋转 / 淡入三条通道各自独立（与 EntrancePlan 的三条通道一一对应）
+function playEntrance(skin, target) {
+  const m = skin.motion;
+  const rot = target ? target.rot : rotEl;
+  const scale = target ? target.scale : scaleEl;
+
+  const anims = [];
+  if (m.rotate.ms > 0 && Math.abs(m.rotate.from) > 0.01) {
+    anims.push(rot.animate(
+      [{ transform: `rotate(${m.rotate.from}deg)` }, { transform: "rotate(0deg)" }],
+      { duration: m.rotate.ms, easing: m.rotate.cur, fill: "both" }));
+  } else {
+    rot.style.transform = "rotate(0deg)";
+  }
+  const scaleAnim = scale.animate(
+    [{ transform: `scale(${m.scale.from})` }, { transform: "scale(1)" }],
+    { duration: m.scale.ms, easing: m.scale.cur, fill: "both" });
+  anims.push(scaleAnim);
+  anims.push(rot.animate([{ opacity: 0 }, { opacity: 1 }],
+    { duration: m.fade.ms, easing: m.fade.cur, fill: "both" }));
+
+  if (!target) running = running.concat(anims);
+  return { anims, scaleAnim };
+}
+
+// 子环里各项的位移（滑出 / 弹出）。透明度不在这里写（由 setChildProgress 独占）。
+function playChildMotion(skin, h) {
+  const m = skin.motion.child;
+  const { geom } = h;
+  const parentMid = HOVER_INDEX * (360 / ROOT_NAMES.length);
+  const start = -CHILD_SWEEP / 2, step = CHILD_SWEEP / CHILD_NAMES.length;
+  const midRadius = geom.r2in + (geom.r2out - geom.r2in) / 2;
+  const anims = [];
+
+  h.childGroups.forEach((g, i) => {
+    const mid = start + step * (i + 0.5);
+    if (m.form === "slide" || m.form === "pop") {
+      const to = polar(midRadius, mid);
+      const from = polar(midRadius - m.slidePx, parentMid);
+      const dx = (from[0] - to[0]).toFixed(1);
+      const dy = (from[1] - to[1]).toFixed(1);
+      const kf = m.form === "slide"
+        ? [{ transform: `translate(${dx}px,${dy}px)` }, { transform: "translate(0,0)" }]
+        : [{ transform: `translate(${dx * 0.4}px,${dy * 0.4}px) scale(0.55)` }, { transform: "translate(0,0) scale(1)" }];
+      anims.push(g.animate(kf, { duration: m.ms, easing: m.cur, fill: "both",
+                                 delay: m.staggerMs ? i * m.staggerMs : 0 }));
+    }
+  });
+  running = running.concat(anims);
+}
+
+// ============================================================================
+// 界面装配
+// ============================================================================
+let state = { skin: SKINS[0], geom: GEOMETRIES.standard, handle: null, busy: false };
+
+function applySkinToPanel(skin, geom) {
+  const c = skin.css;
+  const p = document.getElementById("panel");
+  p.style.setProperty("--pm-surface", rgba(c.fill, c.fillA));
+  p.style.setProperty("--pm-stroke", rgba(c.stroke, Math.max(0.35, c.strokeA)));
+  p.style.setProperty("--pm-text", rgba(c.label, c.labelA));
+  p.style.setProperty("--pm-muted", rgba(c.label, 0.62));
+  p.style.setProperty("--pm-accent", rgba(c.hoverFill, c.hoverFillA));
+  p.style.setProperty("--pm-accent-soft", rgba(c.hoverFill, 0.28));
+  p.style.setProperty("--pm-field", rgba(c.stroke, 0.12));
+
+  document.getElementById("pm-skinname").textContent = `${skin.name} · ${skin.tagline}`;
+  document.getElementById("pm-motion").textContent =
+    `自带动效：入场 缩放 ${skin.motion.scale.ms}ms / 旋转 ${skin.motion.rotate.ms || 0}ms、` +
+    `子环 ${skin.motion.child.ms}ms、悬停 ${skin.motion.hover.ms}ms（鼓出 ${skin.motion.hover.bulgePx}px）`;
+  document.getElementById("pm-dim").style.width = Math.round(c.dimA / 0.9 * 100) + "%";
+  document.getElementById("pm-dimval").textContent = Math.round(c.dimA * 100) + "%（皮肤默认）";
+  document.getElementById("pm-accent").textContent = rgba(c.hoverFill, 1);
+  document.getElementById("pm-foot").textContent =
+    `当前密度：${geom.label}（${geom.note}）· 系统关闭动画时本皮肤的动效全部归零`;
+
+  document.querySelectorAll("#pm-skins .swatch").forEach((el) => {
+    const s = skinById(el.dataset.skin);
+    el.style.background = rgba(s.css.fill, Math.max(0.35, s.css.fillA));
+    el.style.borderColor = el.dataset.skin === skin.id ? rgba(c.hoverFill, 1) : rgba(s.css.stroke, s.css.strokeA);
+    el.querySelector(".dot").style.background = rgba(s.css.hoverFill, 1);
+  });
+  document.querySelectorAll("#pm-geoms .chip").forEach((el) =>
+    el.classList.toggle("on", el.dataset.geom === geom.key));
+}
+
+function renderAll(play) {
+  const { skin, geom } = state;
+  stopAll();
+
+  // 画廊：全部皮肤静止呈现终态（悬停 + 子环展开），一眼比材质。
+  // 结构在 buildUi 里一次建好，这里只重画 SVG —— 每次换皮肤都重建 DOM 会让
+  // 「谁在舞台上」这件事变得难以追踪（上一版原型就栽在这类自我叠加的逻辑上）。
+  document.querySelectorAll("#gallery .card").forEach((card) => {
+    const s = skinById(card.dataset.skin);
+    buildWheel(card.querySelector(".mini .wheelScale"), geom, s, { hovered: true, childOpen: true });
+    card.querySelector(".minidim").style.background = rgba([0, 0, 0], s.css.dimA);
+    card.classList.toggle("on", card.dataset.skin === skin.id);
+  });
+
+  // 大舞台
+  dimEl.style.background = rgba([0, 0, 0], skin.css.dimA);
+  state.handle = buildWheel(scaleEl, geom, skin, { hovered: false, childOpen: false });
+
+  const problems = validate(geom, skin);
+  const verdict = document.getElementById("verdict");
+  verdict.innerHTML = problems.length
+    ? `<span style="color:#e08a7a">组合校验未通过：${problems.join("；")}</span>`
+    : `<span style="color:#7fd18f">组合校验通过</span>` +
+      `<span class="hint">（死区占比 ${(geom.deadZone / geom.r2out * 100).toFixed(0)}%、` +
+      `子环满圈标签半宽 ${labelMaxHalfWidth(geom).toFixed(1)}、` +
+      `悬停鼓出余量 ${(geom.r2in - geom.ring1).toFixed(0)}px ≥ ${skin.motion.hover.bulgePx + 4}）</span>`;
+
+  const s = skin.meta, m = skin.motion;
+  document.getElementById("s-name").textContent = `${skin.name} · ${skin.tagline}`;
+  document.getElementById("s-material").textContent = s.material;
+  document.getElementById("s-entrance").textContent =
+    `缩放 ${m.scale.from} → 1，${m.scale.ms}ms，${m.scale.cur}` +
+    (m.rotate.ms > 0 ? `；旋转 ${m.rotate.from}° → 0，${m.rotate.ms}ms，${m.rotate.cur}` : "；不旋转") +
+    `；淡入 ${m.fade.ms}ms`;
+  document.getElementById("s-child").textContent =
+    `${{ slide: "径向滑出", pop: "错开弹出", fade: "只淡入", step: "逐格硬切" }[m.child.form]}` +
+    `${m.child.slidePx ? ` ${m.child.slidePx}px` : ""}，${m.child.ms}ms，${m.child.cur}` +
+    `${m.child.staggerMs ? `，错开 ${m.child.staggerMs}ms` : ""}`;
+  document.getElementById("s-hover").textContent =
+    m.hover.bulgePx > 0
+      ? `鼓出 ${m.hover.bulgePx}px，${m.hover.ms}ms，${m.hover.cur}`
+      : `不鼓出，只换颜色（${m.hover.ms}ms）`;
+  document.getElementById("s-cost").innerHTML =
+    `<span class="cost ${s.costLevel}">${s.cost}</span>`;
+  document.getElementById("s-src").textContent = s.src;
+  document.getElementById("s-tokens").textContent = s.tokens;
+
+  applySkinToPanel(skin, geom);
+  setStatus(`皮肤：${skin.name} · 密度：${geom.label}`);
+
+  if (play) playEntrance(skin);
+}
+
+function setStatus(text) { document.getElementById("status").textContent = text; }
+
+// 完整演示：入场 → 悬停 → 子环（用该皮肤自己的时长）
+function playDemo(skin, h) {
+  return new Promise((resolve) => {
+    stopAll();
+    playEntrance(skin);
+    const m = skin.motion;
+    const tHover = Math.max(m.scale.ms, m.rotate.ms, m.fade.ms) + 120;
+    setTimeout(() => {
+      if (state.handle !== h) return resolve();
+      animateGeometry(m.hover.ms, m.hover.cur, (p) => setHoverProgress(h, p));
+      setStatus(`${skin.name}：悬停（鼓出 ${m.hover.bulgePx}px／${m.hover.ms}ms）`);
+    }, tHover);
+    setTimeout(() => {
+      if (state.handle !== h) return resolve();
+      playChildMotion(skin, h);
+      animateGeometry(m.child.ms, m.child.cur, (p) => setChildProgress(h, p));
+      setStatus(`${skin.name}：子环展开（${{ slide: "径向滑出", pop: "错开弹出", fade: "只淡入", step: "逐格硬切" }[m.child.form]}／${m.child.ms}ms）`);
+      setTimeout(resolve, m.child.ms + 260);
+    }, tHover + m.hover.ms + 260);
+  });
+}
+
+let demoToken = 0;
+async function runDemo(skin) {
+  const token = ++demoToken;
+  const h = state.handle;
+  await playDemo(skin, h);
+  if (token === demoToken) setStatus(`${skin.name}：演示完成`);
+}
+
+async function runAllEntrances() {
+  const token = ++demoToken;
+  for (const s of SKINS) {
+    if (token !== demoToken) return;
+    state.skin = s;
+    renderAll(false);
+    setStatus(`依次对比：${s.name}（缩放 ${s.motion.scale.ms}ms / 旋转 ${s.motion.rotate.ms || 0}ms）`);
+    playEntrance(s);
+    await new Promise((r) => setTimeout(r, Math.max(1500, s.motion.scale.ms + s.motion.rotate.ms + 500)));
+  }
+  if (token === demoToken) setStatus("依次对比结束");
+}
+
+function selectGeom(key) {
+  state.geom = GEOMETRIES[key];
+  renderAll(true);
+}
+
+function buildUi() {
+  const gallery = document.getElementById("gallery");
+  // 结构一次建好（desk → 遮罩 → 轮盘，与真实层级一致：遮罩在轮盘下面）
+  gallery.innerHTML = SKINS.map((s) => `
+    <div class="card" data-skin="${s.id}">
+      <div class="name">${s.name}</div>
+      <div class="line">${s.tagline}</div>
+      <div class="mini">
+        <div class="desk"></div>
+        <div class="minidim"></div>
+        <div class="wheelScale"></div>
+      </div>
+      <div class="tag cost ${s.meta.costLevel}">成本：${s.meta.cost}</div>
+    </div>`).join("");
+
+  gallery.querySelectorAll(".card").forEach((el) =>
+    el.addEventListener("click", () => {
+      demoToken++;
+      state.skin = skinById(el.dataset.skin);
+      renderAll(false);
+      runDemo(state.skin);
+    }));
+
+  document.getElementById("geomrow").innerHTML = Object.values(GEOMETRIES).map((g) =>
+    `<button class="chip" data-geom="${g.key}">${g.label}<span class="hint"> · ${g.note}</span></button>`).join("");
+  document.getElementById("geomrow").querySelectorAll("button").forEach((el) =>
+    el.addEventListener("click", () => { demoToken++; selectGeom(el.dataset.geom); }));
+
+  document.getElementById("pm-skins").innerHTML = SKINS.map((s) =>
+    `<div class="swatch" data-skin="${s.id}" title="${s.name}"><span class="dot"></span></div>`).join("");
+  document.getElementById("pm-skins").querySelectorAll(".swatch").forEach((el) =>
+    el.addEventListener("click", () => { demoToken++; state.skin = skinById(el.dataset.skin); renderAll(true); }));
+
+  document.getElementById("pm-geoms").innerHTML = Object.values(GEOMETRIES).map((g) =>
+    `<span class="chip" data-geom="${g.key}">${g.label}</span>`).join("");
+  document.getElementById("pm-geoms").querySelectorAll(".chip").forEach((el) =>
+    el.addEventListener("click", () => { demoToken++; selectGeom(el.dataset.geom); }));
+
+  document.getElementById("btn-entrance").addEventListener("click", () => { demoToken++; playEntrance(state.skin); setStatus(`入场：${state.skin.name}`); });
+  document.getElementById("btn-demo").addEventListener("click", () => runDemo(state.skin));
+  document.getElementById("btn-all").addEventListener("click", () => runAllEntrances());
+  document.getElementById("btn-stop").addEventListener("click", () => {
+    demoToken++;
+    renderAll(false);          // 落定态 = 新句柄，所以不必（也不能）去改旧句柄的进度
+    setStatus("已停止（回到落定态）");
+  });
+}
+
+// ============================================================================
+// 页内自检：每一条都**能失败**（否则"通过"没有意义）
+// ============================================================================
+function readScale(el) {
+  const t = getComputedStyle(el).transform;
+  const m = /matrix\(([-\d.]+),/.exec(t);
+  return m ? parseFloat(m[1]) : NaN;
+}
+
+function selfCheck() {
+  const out = [];
+  const probe = document.createElement("div");
+  probe.style.cssText = "position:absolute;left:-9999px;top:0;width:10px;height:10px;opacity:1";
+  probe.innerHTML = `<div class="rot"><div class="scale"></div></div>`;
+  document.body.appendChild(probe);
+  const pRot = probe.querySelector(".rot"), pScale = probe.querySelector(".scale");
+
+  try {
+    // 1) 校验函数本身能失败：故意给一个超出内存上限的窗口
+    const bogus = Object.assign({}, GEOMETRIES.standard, { windowSize: 900 });
+    const bad = validate(bogus, skinById("neon"));
+    out.push(["非法几何会被校验拦下", bad.length > 0, bad.join("；") || "竟然通过了"]);
+
+    // 2) 入场缩放真的到达了终态（把 currentTime 推到底再看计算样式 ——
+    //    隐藏标签页/后台时动画时钟不走，靠等是等不出结论的）
+    const skin = skinById("fluent-dark");
+    const { anims, scaleAnim } = playEntrance(skin, { rot: pRot, scale: pScale });
+    anims.forEach((a) => a.pause());
+    scaleAnim.currentTime = 0;
+    const s0 = readScale(pScale);
+    scaleAnim.currentTime = scaleAnim.effect.getTiming().duration;
+    const s1 = readScale(pScale);
+    out.push(["入场缩放 起点≠终点且终点=1",
+              Math.abs(s0 - skin.motion.scale.from) < 0.02 && Math.abs(s1 - 1) < 0.02,
+              `起点 ${s0}、终点 ${s1}`]);
+
+    // 3) 逐帧几何真的在改属性（悬停鼓出、子环拉开），且终态落在令牌值上。
+    //    读的是**改动后的属性**而不是我自己的状态变量：状态变量说"我算过"，属性才说明"画面会变"。
+    const h = buildWheel(scaleEl, GEOMETRIES.standard, skin, { hovered: false, childOpen: false });
+    const dBefore = h.rootPaths[HOVER_INDEX].getAttribute("d");
+    setHoverProgress(h, 1);
+    const dAfter = h.rootPaths[HOVER_INDEX].getAttribute("d");
+    const bandBefore = h.bandPath.getAttribute("d");
+    setChildProgress(h, 1);
+    const bandAfter = h.bandPath.getAttribute("d");
+    const p = midProgress(skin);      // 中段应当既不是起点也不是终点（曲线真的被用到了）
+    out.push(["悬停/子环几何逐帧真的变了，且中段≠终点",
+              dBefore !== dAfter && bandBefore !== bandAfter && p !== 1 && p > 0,
+              `鼓出中段 ${p.toFixed(2)}／终态 ${skin.motion.hover.bulgePx}px`]);
+
+    // 4) 换皮肤真的换了材质（读**计算样式** —— 浏览器实际会画的那个值）
+    const skinA = skinById("high-contrast"), skinB = skinById("neon");
+    const ha = buildWheel(scaleEl, GEOMETRIES.standard, skinA, { hovered: true, childOpen: false });
+    const fa = getComputedStyle(ha.rootPaths[HOVER_INDEX]).fill;
+    const hb = buildWheel(scaleEl, GEOMETRIES.standard, skinB, { hovered: true, childOpen: false });
+    const fb = getComputedStyle(hb.rootPaths[HOVER_INDEX]).fill;
+    out.push(["换皮肤真的换了颜色（计算样式）", fa !== fb, `${fa} → ${fb}`]);
+    // 5) 皮肤×密度的**全部组合**都要通过真实不变量（这正是实现时 Validate() 要跑的；
+    //    放在页内而不是外部脚本里，是为了让原型自己就能证明这一点）
+    const combos = [];
+    for (const s of SKINS) for (const g of Object.values(GEOMETRIES)) {
+      const problems = validate(g, s);
+      combos.push({ skin: s.id, geom: g.key, ok: problems.length === 0, problems });
+    }
+    const failed = combos.filter((c) => !c.ok);
+    out.push([`皮肤×密度 ${combos.length} 种组合全部通过不变量`, failed.length === 0,
+      failed.length ? JSON.stringify(failed) : `${combos.length}/${combos.length} 通过`]);
+  } finally {
+    probe.remove();
+  }
+
+  const pass = out.filter((r) => r[1]).length;
+  document.getElementById("selfcheck").innerHTML =
+    `<b>页内自检：${pass}/${out.length} 通过</b>` +
+    out.map((r) => `<div class="${r[1] ? "ok" : "bad"}">${r[1] ? "✓" : "✗"} ${r[0]}　<span class="hint">${r[2]}</span></div>`).join("");
+  return out;
+}
+
+window.addEventListener("error", (e) => {
+  const el = document.getElementById("selfcheck");
+  if (el) el.innerHTML = `<span class="bad">页面脚本出错：${e.message}</span>`;
+});
+
+try {
+  buildUi();
+  renderAll(false);
+  // 自检需要动到舞台的 DOM，放在自检通过之后再把落定态还原并播放一次入场
+  const results = selfCheck();
+  renderAll(false);
+  playEntrance(state.skin);
+  if (results.every((r) => r[1])) setStatus(`就绪 · 自检 ${results.length}/${results.length} 通过 · 皮肤：${state.skin.name}`);
+} catch (err) {
+  document.getElementById("selfcheck").innerHTML = `<span class="bad">初始化失败：${err.message}</span>`;
+}
+</script>
+</body>
+</html>

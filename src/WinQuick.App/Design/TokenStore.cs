@@ -1,43 +1,120 @@
 using System.IO;
 using System.Reflection;
+using System.Windows;
 using System.Windows.Media;
 using WinQuick.Core.Design;
 
 namespace WinQuick.App.Design;
 
 /// <summary>
-/// 视觉规格的访问入口。tokens.json 以嵌入资源形式随程序发布并在这里解析一次。
+/// 视觉规格的访问入口。tokens.json（基线）与 skins.json（皮肤目录）都以嵌入资源形式
+/// 随程序发布，在这里解析。
 ///
 /// 校验失败会直接抛异常而不是退化到默认值 —— 规格写错时应该立刻发现，
 /// 而不是让界面悄悄用一组没人设计过的值。
+///
+/// ## 皮肤是「合并」出来的，不是「第二份规格」
+///
+/// <see cref="Current"/> 永远是"基线 + 当前皮肤覆盖"的合并结果，并且**合并后仍然跑
+/// 同一套 <see cref="DesignTokens.Validate"/>**。所以皮肤不可能绕开被单测锁住的任何不变量。
+/// 切换皮肤＝重新合并 + 重新解析 + 重新装资源，不涉及任何"两份真源"的同步。
 /// </summary>
 public static class TokenStore
 {
-    private const string ResourceName = "WinQuick.tokens.json";
+    private const string TokensResource = "WinQuick.tokens.json";
+    private const string SkinsResource = "WinQuick.skins.json";
 
-    public static DesignTokens Current { get; } = Load();
+    private static readonly string BaseJson;
+    private static DesignTokens _current;
+
+    /// <summary>
+    /// 静态构造里**显式按顺序**赋值。
+    ///
+    /// 不能靠字段初始化器的书写顺序：`_current` 的初始化要读 <see cref="Skins"/>，
+    /// 而 `Skins` 的初始化里要读 <see cref="BaseJson"/> —— 三者有依赖，
+    /// 而初始化器按**声明顺序**执行。写成字段初始化器时我把 Skins 声明在了 _current 之后，
+    /// 结果整个类型初始化抛 NullReferenceException（--render-preview 一跑就炸）。
+    /// 显式构造器让这个依赖关系一眼可见，编译器也不会再替我们决定顺序。
+    /// </summary>
+    static TokenStore()
+    {
+        BaseJson = ReadEmbedded(TokensResource);
+        Skins = SkinCatalog.Parse(ReadEmbedded(SkinsResource));
+        CurrentSkinId = SkinCatalog.DefaultId;
+        _current = Load(null);
+    }
+
+    /// <summary>当前生效的规格（基线 + 当前皮肤）。</summary>
+    public static DesignTokens Current => _current;
+
+    /// <summary>当前皮肤 id。<see cref="SkinCatalog.DefaultId"/> 表示就是基线本身。</summary>
+    public static string CurrentSkinId { get; private set; }
+
+    /// <summary>皮肤目录（面板用它列出可选皮肤）。</summary>
+    public static SkinCatalog Skins { get; }
 
     public static ColorTokens Colors => Current.Color;
     public static RadiusTokens Radii => Current.Radius;
 
-    private static DesignTokens Load()
+    /// <summary>
+    /// 切换皮肤。返回问题描述（null = 成功）。
+    ///
+    /// **不抛异常**：配置里写了一个不存在的皮肤 id（比如用户手改过 config.json、
+    /// 或者皮肤文件被删了）不该让程序起不来 —— 退回默认皮肤，并把这件事报给调用方显示。
+    /// </summary>
+    public static string? ApplySkin(string? skinId)
     {
-        var assembly = Assembly.GetExecutingAssembly();
-        using var stream = assembly.GetManifestResourceStream(ResourceName)
-            ?? throw new InvalidOperationException(
-                $"找不到嵌入资源 {ResourceName}。检查 WinQuick.App.csproj 里的 EmbeddedResource 项。");
+        string? problem = null;
+        if (!string.IsNullOrWhiteSpace(skinId) && !Skins.Contains(skinId))
+        {
+            problem = $"没有名为「{skinId}」的皮肤，已退回默认皮肤";
+            skinId = SkinCatalog.DefaultId;
+        }
 
-        using var reader = new StreamReader(stream);
-        var tokens = DesignTokens.Parse(reader.ReadToEnd());
+        var next = Load(skinId);
+
+        CurrentSkinId = Skins.Contains(skinId) ? skinId! : SkinCatalog.DefaultId;
+        _current = next;
+
+        // 面板与托盘那侧的资源要跟着换。XAML 全部走 DynamicResource，所以一次重装就够。
+        TokenResources.Install(force: true);
+
+        return problem;
+    }
+
+    /// <summary>
+    /// 只看不换：算出某套皮肤合并后的令牌（面板用它画色板与动效摘要）。
+    ///
+    /// 为什么不做"预览色好漂亮"的独立配色表：那份表迟早和真效果不一致，
+    /// 而用户正是要拿这些色板做选择。
+    /// </summary>
+    public static DesignTokens PreviewTokens(string? skinId) =>
+        DesignTokens.Parse(Skins.Merge(BaseJson, skinId));
+
+    private static DesignTokens Load(string? skinId)
+    {
+        var tokens = DesignTokens.Parse(Skins.Merge(BaseJson, skinId));
 
         var problems = tokens.Validate();
         if (problems.Count > 0)
         {
             throw new InvalidOperationException(
-                "design/tokens.json 未通过校验：\n  - " + string.Join("\n  - ", problems));
+                $"{TokensResource}（皮肤：{skinId ?? SkinCatalog.DefaultId}）未通过校验：\n  - " +
+                string.Join("\n  - ", problems));
         }
 
         return tokens;
+    }
+
+    private static string ReadEmbedded(string name)
+    {
+        var assembly = Assembly.GetExecutingAssembly();
+        using var stream = assembly.GetManifestResourceStream(name)
+            ?? throw new InvalidOperationException(
+                $"找不到嵌入资源 {name}。检查 WinQuick.App.csproj 里的 EmbeddedResource 项。");
+
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
     }
 }
 

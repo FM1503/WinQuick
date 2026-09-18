@@ -106,6 +106,19 @@ public sealed record AppearanceConfig
 
     /// <summary>悬停高亮色（#RRGGBB）。null = 用设计值。</summary>
     public string? AccentColor { get; init; }
+
+    /// <summary>
+    /// 当前皮肤 id（见 design/skins.json）。null/空 = 默认皮肤（就是基线本身）。
+    /// 皮肤是合并到基线上的一层覆盖：它带材质（配色/描边/光晕/字体）与**动效**。
+    /// </summary>
+    public string? Skin { get; init; }
+
+    /// <summary>
+    /// 当前盘面形态（<c>pie</c> / <c>rounded</c> / <c>petal</c> / <c>dial</c>）。
+    /// 形态与皮肤是**正交**的两个维度：皮肤换材质与动效，形态换单元的几何外形。
+    /// null/空 = <c>pie</c>（现状）。
+    /// </summary>
+    public string? Form { get; init; }
 }
 
 public sealed record BehaviorConfig

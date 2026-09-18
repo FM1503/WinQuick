@@ -49,6 +49,15 @@ public sealed partial class RadialRingView
     /// <summary>冻结的基准几何（无鼓出、入场已落定的样子）。静止时直接复用它，逐像素可复现。</summary>
     private readonly PathGeometry[] _baseGeometry;
 
+    /// <summary>当前形态。决定单元外形、悬停反馈方式，以及要不要画刻度与指针。</summary>
+    private RingForm _form = RingForm.Pie;
+
+    /// <summary>光晕层（皮肤没配光晕时为 null）。与扇区共用一份几何，逐帧同步。</summary>
+    private ShapePath[]? _halos;
+
+    /// <summary>刻度盘的指针（旋转到悬停项的角度）。非刻度盘形态为 null。</summary>
+    private UIElement? _needle;
+
     /// <summary>
     private readonly MenuSpec _menu;
     private int _hover = -1;
@@ -60,11 +69,8 @@ public sealed partial class RadialRingView
     /// </summary>
     private string? _accentOverride;
 
-    /// <summary>当前生效的高亮色画刷。</summary>
-    private Brush AccentFill =>
-        _accentOverride is null
-            ? TokenBrushes.Brush(_tokens.Color.HoverFill)
-            : TokenBrushes.Brush(_accentOverride);
+    /// <summary>当前生效的高亮色（用户覆盖优先，见 <see cref="_accentOverride"/>）。</summary>
+    private string HoverFillHex => _accentOverride ?? _tokens.Color.HoverFill;
 
     /// <summary>更新高亮色并立即重绘当前悬停状态。</summary>
     public void SetAccentOverride(string? hex)
@@ -217,18 +223,24 @@ public sealed partial class RadialRingView
         var colors = _tokens.Color;
 
         _sectors[index].Fill = hovered
-            ? AccentFill
+            ? TokenBrushes.Brush(HoverFillHex, colors.HoverFillAlpha)
             : TokenBrushes.Brush(colors.SectorFill, colors.SectorFillAlpha);
         _sectors[index].Stroke = hovered
             ? TokenBrushes.Brush(colors.HoverStroke, colors.HoverStrokeAlpha)
             : TokenBrushes.Brush(colors.SectorStroke, colors.SectorStrokeAlpha);
 
-        _labels[index].SetHover(hovered);
+        // 悬停时的文字色单独一个令牌：纯色块（黄/红）当底时必须换成深色字，
+        // 否则读不出来 —— 这条有校验锁着（亮度差不足会被 Validate 拦下）。
+        _labels[index].SetHover(hovered, TokenBrushes.Brush(colors.HoverLabel));
 
         // 图标与子菜单标记跟着扇区明暗走，否则高亮时它们会像浮在错误的层上。
         _icons[index].Opacity = hovered ? 1.0 : 0.94;
         if (_childMarkers[index] is { } marker)
             marker.Stroke = _sectors[index].Stroke;
+
+        // 刻度盘的指针指向被悬停的那一格。
+        if (hovered && _needle is not null)
+            _needle.RenderTransform = new RotateTransform(_spans[index].CenterDeg, _center.X, _center.Y);
     }
 
     /// <summary>
@@ -254,12 +266,17 @@ public sealed partial class RadialRingView
     /// 复用同一个画布则只失效它的子元素，不触碰 Window 的内容对象。
     /// </param>
     public static RadialRingView Build(
-        MenuSpec menu, double? sizeOverride = null, bool editMode = false, Canvas? reuse = null)
+        MenuSpec menu, double? sizeOverride = null, bool editMode = false, Canvas? reuse = null,
+        RingForm form = RingForm.Pie)
     {
         var tokens = TokenStore.Current;
         var radius = tokens.Radius;
         var size = sizeOverride ?? radius.WindowSize;
         var center = new Point(size / 2, size / 2);
+
+        // 形态决定单元的外形与占位：花瓣内侧退一点、刻度盘外缘收一点给刻度让位。
+        // 命中测试仍然用 RadialLayout 的角度区间 —— 四种形态共用同一套区间。
+        var metrics = RingForms.Metrics(form, radius.DeadZone, radius.Ring1Outer, radius.SectorGapDegrees);
 
         var root = reuse ?? new Canvas();
         root.Children.Clear();
@@ -293,21 +310,43 @@ public sealed partial class RadialRingView
         var fill = TokenBrushes.Brush(colors.SectorFill, colors.SectorFillAlpha);
         var stroke = TokenBrushes.Brush(colors.SectorStroke, colors.SectorStrokeAlpha);
 
+        // 光晕：垫在扇区下面的一圈更粗描边（0 = 不画，绝大多数皮肤是 0）。
+        // 用几何而不是 WPF Effect —— Effect 让元素每帧走位图渲染，代价与面积相关。
+        // 数组一旦建立就**每一格都有值**（类型是非空数组），省得逐帧回调里还要判空。
+        var hasHalo = colors.HaloPx > 0;
+        var halos = hasHalo ? new ShapePath[count] : null;
+        var haloBrush = hasHalo ? TokenBrushes.Brush(colors.HaloColor, colors.HaloAlpha) : null;
+
         for (var i = 0; i < count; i++)
         {
             var span = spans[i];
 
-            var geometry = SectorGeometry.RingSector(
-                center, radius.DeadZone, radius.Ring1Outer,
-                span.StartDeg + radius.SectorGapDegrees,
-                span.EndDeg - radius.SectorGapDegrees);
+            var geometry = SectorGeometry.ForForm(
+                form, center, metrics.Inner, metrics.Outer,
+                span.StartDeg + metrics.GapDegrees,
+                span.EndDeg - metrics.GapDegrees,
+                metrics.CornerRadius);
+
+            if (halos is not null)
+            {
+                var halo = new ShapePath
+                {
+                    Data = geometry,
+                    Fill = null,
+                    Stroke = haloBrush,
+                    StrokeThickness = colors.HaloPx,
+                    IsHitTestVisible = false,
+                };
+                halos[i] = halo;
+                root.Children.Add(halo);          // 先加光晕，扇区盖在它上面
+            }
 
             var sector = new ShapePath
             {
                 Data = geometry,
                 Fill = fill,
                 Stroke = stroke,
-                StrokeThickness = 1,
+                StrokeThickness = colors.StrokeWidth,
             };
             sectors[i] = sector;
             baseGeometry[i] = geometry;
@@ -347,6 +386,12 @@ public sealed partial class RadialRingView
                 childMarkers[i] = AddChildMarker(root, center, radius.Ring1Outer, span.CenterDeg, stroke);
         }
 
+        // 刻度盘的装饰层：60 条刻度 + 一根指向悬停项的指针。
+        //
+        // 两者都**不参与命中测试**（IsHitTestVisible = false）—— 它们是装饰，
+        // 指着刻度点下去不该有任何反应。指针的角度由悬停状态驱动（见 SetHover）。
+        var needle = form == RingForm.Dial ? AddDialDecor(root, center, radius, tokens, stroke) : null;
+
         // 编辑态标识：环外一圈**持续显示**的虚线。
         //
         // 为什么需要它：用户反馈"松开鼠标就以为退出编辑态了"。行为上编辑态其实一直在
@@ -385,6 +430,9 @@ public sealed partial class RadialRingView
             AddSectorIndex = addIndex,
             EditMode = editMode,
             _escHint = escHint,
+            _form = form,
+            _halos = halos,
+            _needle = needle,
         };
 
         // 鼓出动画器在视图建好之后才建：它的回调必须指向视图的几何写入点
@@ -407,9 +455,21 @@ public sealed partial class RadialRingView
     {
         if (index < 0 || index >= _sectors.Length) return;
 
+        // 非饼形：反馈做成**沿半径方向的抬起**（位移 Transform），不重建几何。
+        //
+        // 为什么两种做法并存：饼形扇区的外扩是"形状本身变了"（外缘半径增大），
+        // 而圆角/花瓣/刻度盘的单元更像一块块独立的牌子，"整块往外挪"才是它们的语汇。
+        // 抬起走 Transform，是纯渲染变换，连亚像素都省了。
+        if (_form != RingForm.Pie)
+        {
+            ApplyRingLift(index, bulgePx);
+            return;
+        }
+
         if (bulgePx < 0.05)
         {
             _sectors[index].Data = _baseGeometry[index];
+            if (_halos is not null) _halos[index].Data = _baseGeometry[index];
             return;
         }
 
@@ -423,10 +483,29 @@ public sealed partial class RadialRingView
         // 但帧分布没有可测差异（8/14/11 对 13/15/13，在噪声内），而可变的几何与冻结几何的
         // 光栅化结果不一致（亚像素级）—— 于是"换菜单后画面与之前逐像素相同"这类判据会间歇变红。
         // 收益测不出来、代价是像素不可复现、还多了一种几何形态，所以回退。
-        _sectors[index].Data = SectorGeometry.RingSector(
+        var geometry = SectorGeometry.RingSector(
             _center, radius.DeadZone, outer,
             span.StartDeg + radius.SectorGapDegrees,
             span.EndDeg - radius.SectorGapDegrees);
+
+        _sectors[index].Data = geometry;
+        // 光晕是紧贴扇区的一圈更粗的描边，几何必须与扇区**同步**外扩，
+        // 否则悬停时扇区动、光晕不动，看起来像有两层没对齐的边。
+        if (_halos is not null) _halos[index].Data = geometry;
+    }
+
+    /// <summary>
+    /// 把某一格沿它的半径方向抬起 <paramref name="px"/> 像素（非饼形形态的悬停反馈）。
+    /// 扇区、图标、文字都要抬，否则文字会留在原地、看起来像从扇区上滑下去。
+    /// </summary>
+    private void ApplyRingLift(int index, double px)
+    {
+        var offset = Vec2.FromPolar(px, _spans[index].CenterDeg);
+        var transform = new TranslateTransform(offset.X, offset.Y);
+
+        _sectors[index].RenderTransform = transform;
+        _icons[index].RenderTransform = transform;
+        _labels[index].SetLift(offset.X, offset.Y);
     }
 
     /// <summary>
@@ -524,6 +603,77 @@ public sealed partial class RadialRingView
             : _hover >= 0 && _hover < _labels.Length
                 ? _menu.Items[_hover].Label
                 : "";
+
+    /// <summary>
+    /// 刻度盘的装饰层：60 条刻度（每 6°，每 5 条更长更亮）+ 一根指针 + 轮毂。
+    ///
+    /// 刻度是**静态几何**：一次建好就不再重建（只有换皮肤/换菜单才重建整棵视觉树），
+    /// 所以它几乎不占逐帧预算。指针只有一个旋转变换，悬停时改一下 RenderTransform。
+    /// 全部 IsHitTestVisible = false —— 装饰不该参与命中测试，指着刻度点下去不该有反应。
+    /// </summary>
+    private static UIElement AddDialDecor(
+        Canvas root, Point center, RadiusTokens radius, DesignTokens tokens, Brush stroke)
+    {
+        var colors = tokens.Color;
+        var g = new Canvas
+        {
+            IsHitTestVisible = false,
+            Width = radius.WindowSize,
+            Height = radius.WindowSize,
+        };
+
+        var outer = radius.Ring1Outer;
+        var tickBrush = TokenBrushes.Brush(colors.Label, colors.HintAlpha);
+
+        for (var k = 0; k < RingForms.DialTickCount; k++)
+        {
+            var deg = k * 360.0 / RingForms.DialTickCount;
+            var major = k % 5 == 0;
+            var r1 = (outer * 0.93) + (major ? 0 : 3);
+            var r2 = (outer * 1.07) - (major ? 0 : 4);
+            var a = SectorGeometry.Polar(center, r1, deg);
+            var b = SectorGeometry.Polar(center, r2, deg);
+
+            g.Children.Add(new Line
+            {
+                X1 = a.X, Y1 = a.Y, X2 = b.X, Y2 = b.Y,
+                Stroke = tickBrush,
+                StrokeThickness = major ? 1.6 : 1.0,
+                Opacity = major ? 0.75 : 0.35,
+            });
+        }
+
+        // 指针：从死区边缘指向外圈的一个细长三角形。
+        var needle = new Polygon
+        {
+            Points =
+            [
+                SectorGeometry.Polar(center, radius.DeadZone + 6, -3.2),
+                SectorGeometry.Polar(center, outer * 0.86, 0),
+                SectorGeometry.Polar(center, radius.DeadZone + 6, 3.2),
+            ],
+            Fill = TokenBrushes.Brush(colors.Label, 0.9),
+            IsHitTestVisible = false,
+        };
+        g.Children.Add(needle);
+
+        // 轮毂：让指针的转动有个"轴"。
+        var hub = new Ellipse
+        {
+            Width = 14,
+            Height = 14,
+            Fill = stroke,
+            Stroke = TokenBrushes.Brush(colors.Label),
+            StrokeThickness = 1.2,
+            IsHitTestVisible = false,
+        };
+        Canvas.SetLeft(hub, center.X - 7);
+        Canvas.SetTop(hub, center.Y - 7);
+        g.Children.Add(hub);
+
+        root.Children.Add(g);
+        return needle;      // 悬停时转的是它
+    }
 
     /// <summary>
     /// 图标。取不到 shell 图标时画首字占位 —— 一个缺失的图标不该让整项看起来像坏了。

@@ -46,6 +46,9 @@
        是为了不存在"改了 JSON 忘了重新生成"的第二种真源。 -->
   <ItemGroup>
     <EmbeddedResource Include="../../design/tokens.json" LogicalName="WinQuick.tokens.json" />
+    <!-- 皮肤目录：每套皮肤是一组**局部**的令牌覆盖，合并到上面的基线上，
+         合并结果仍然跑同一套不变量校验（DesignTokens.Validate）。 -->
+    <EmbeddedResource Include="../../design/skins.json" LogicalName="WinQuick.skins.json" />
     <!-- 托盘图标从嵌入资源加载，而不是 System.Drawing.SystemIcons.Application。
          用系统图标本来是临时占位，而它一旦加载失败就完全没有兜底路径 ——
          托盘会变成一个没有图标的条目，Windows 可能根本不显示它。 -->

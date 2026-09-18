@@ -77,6 +77,97 @@ public static class SectorGeometry
         innerArc.IsLargeArc = isLarge;
     }
 
+    /// <summary>
+    /// 按形态生成扇区路径。四种形态共用同一套角度区间（命中测试因此不用改），
+    /// 差别只在单元外形 —— 花瓣内侧收尖、圆角把尖角磨圆、刻度盘把外缘收进去给刻度让位。
+    /// </summary>
+    public static PathGeometry ForForm(
+        RingForm form, Point center, double innerRadius, double outerRadius,
+        double startDeg, double endDeg, double cornerRadius) => form switch
+    {
+        RingForm.Rounded => RoundedRingSector(center, innerRadius, outerRadius, startDeg, endDeg, cornerRadius),
+        RingForm.Petal => PetalSector(center, innerRadius, outerRadius, startDeg, endDeg),
+        _ => RingSector(center, innerRadius, outerRadius, startDeg, endDeg),
+    };
+
+    /// <summary>
+    /// 圆角环形扇区：把两个尖角换成**以尖角为控制点的二次曲线**。
+    ///
+    /// 这不是精确的内切圆弧，但视觉上就是圆角，而且只用到已有的段类型
+    /// （ArcSegment + QuadraticBezierSegment），不必去解内切圆的几何。
+    /// </summary>
+    public static PathGeometry RoundedRingSector(
+        Point center, double innerRadius, double outerRadius,
+        double startDeg, double endDeg, double cornerRadius)
+    {
+        var sweep = endDeg - startDeg;
+        var corner = Math.Max(0.5, Math.Min(cornerRadius, sweep * 0.2));
+
+        // 角在角度上的占位：弧长 = r·θ，所以 θ = corner / r（弧度）。
+        // 上限取 1/4 跨度，防止窄扇区上两个角撞在一起导致图形退化。
+        var maxDeg = sweep / 4;
+        var daIn = Math.Min(corner / innerRadius * 180.0 / Math.PI, maxDeg);
+        var daOut = Math.Min(corner / outerRadius * 180.0 / Math.PI, maxDeg);
+        var isLarge = sweep > 180;
+
+        var figure = new PathFigure
+        {
+            StartPoint = Polar(center, innerRadius, startDeg + daIn),
+            IsClosed = true,
+            IsFilled = true,
+        };
+        figure.Segments.Add(new ArcSegment(
+            Polar(center, innerRadius, endDeg - daIn), new Size(innerRadius, innerRadius), 0, false,
+            SweepDirection.Clockwise, true));
+        figure.Segments.Add(new QuadraticBezierSegment(
+            Polar(center, innerRadius, endDeg), Polar(center, outerRadius, endDeg - daOut), true));
+        figure.Segments.Add(new ArcSegment(
+            Polar(center, outerRadius, startDeg + daOut), new Size(outerRadius, outerRadius), 0, isLarge,
+            SweepDirection.Counterclockwise, true));
+        figure.Segments.Add(new QuadraticBezierSegment(
+            Polar(center, outerRadius, startDeg), Polar(center, innerRadius, startDeg + daIn), true));
+
+        var geometry = new PathGeometry();
+        geometry.Figures.Add(figure);
+        geometry.Freeze();
+        return geometry;
+    }
+
+    /// <summary>
+    /// 花瓣：内侧收成一个尖、外侧是宽圆弧（叶片形）。
+    ///
+    /// 外侧用真实圆弧（半径 = 外径），两侧用二次曲线从外缘回到内侧的尖点，
+    /// 控制点取中段半径处、角向略外扩 —— 侧面因此微微外凸，像一片叶子而不是三角形。
+    /// </summary>
+    public static PathGeometry PetalSector(
+        Point center, double innerRadius, double outerRadius, double startDeg, double endDeg)
+    {
+        var mid = (startDeg + endDeg) / 2;
+        var half = (endDeg - startDeg) / 2;
+        var waist = innerRadius + ((outerRadius - innerRadius) * 0.5);
+        var bow = half * 1.18;
+        var isLarge = (endDeg - startDeg) > 180;
+
+        var figure = new PathFigure
+        {
+            StartPoint = Polar(center, innerRadius, mid),
+            IsClosed = true,
+            IsFilled = true,
+        };
+        figure.Segments.Add(new QuadraticBezierSegment(
+            Polar(center, waist, mid - bow), Polar(center, outerRadius, mid - half), true));
+        figure.Segments.Add(new ArcSegment(
+            Polar(center, outerRadius, mid + half), new Size(outerRadius, outerRadius), 0, isLarge,
+            SweepDirection.Clockwise, true));
+        figure.Segments.Add(new QuadraticBezierSegment(
+            Polar(center, waist, mid + bow), Polar(center, innerRadius, mid), true));
+
+        var geometry = new PathGeometry();
+        geometry.Figures.Add(figure);
+        geometry.Freeze();
+        return geometry;
+    }
+
     /// <summary>极坐标转屏幕坐标（y 轴向下）。</summary>
     public static Point Polar(Point center, double radius, double deg)
     {

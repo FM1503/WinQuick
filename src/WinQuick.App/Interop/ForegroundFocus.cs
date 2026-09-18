@@ -77,6 +77,17 @@ public sealed class ForegroundFocus
         // 原窗口可能已经关掉了（用户在这期间关了它），所以要判存活。
         if (target == default || !PInvoke.IsWindow(target)) return;
 
+        // **别把焦点交给另一个虚拟桌面上的窗口。**
+        //
+        // SetForegroundWindow 到别的桌面会让 Windows 把用户切过去 ——
+        // 那是用户实测报的"用了轮盘反而被拽回工具所在的桌面"。
+        // 触发场景很具体：覆盖层在桌面 A 上打开，用户切到桌面 B（覆盖层随即被收起），
+        // 收起时这一步归还焦点就会把用户拽回 A。
+        //
+        // 判据是"目标窗口在不在**当前**桌面"，不是"和我们一不一样"——
+        // 后者在这种情况下两边都在 A 上，判不出来。
+        if (!VirtualDesktop.IsOnCurrentDesktop((nint)target)) return;
+
         PInvoke.SetForegroundWindow(target);
     }
 

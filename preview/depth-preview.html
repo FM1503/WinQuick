@@ -1,0 +1,785 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>WinQuick · 伪 3D 候选（HTML 最小成本原型 v2）</title>
+<style>
+  :root { --bg:#14161c; --fg:#e8eaf0; --muted:#9aa3b2; --line:#ffffff1a;
+          --accent:#6ea8fe; --ok:#7fd18f; --warn:#e2c56a; --bad:#e08a7a; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:14px/1.6 "Segoe UI","Microsoft YaHei",system-ui,sans-serif; }
+  header { padding:16px 20px 4px; }
+  h1 { margin:0 0 6px; font-size:17px; font-weight:600; }
+  p { margin:4px 0; }
+  code { background:#ffffff12; padding:1px 5px; border-radius:4px; font-size:12.5px; }
+  .muted { color:var(--muted); }
+  .note { border-left:3px solid var(--accent); background:#6ea8fe10; padding:7px 11px;
+          margin:8px 0; border-radius:0 6px 6px 0; font-size:13px; }
+  .note.warn { border-color:var(--warn); background:#e2c56a10; }
+  button { background:#ffffff10; color:var(--fg); border:1px solid var(--line);
+           border-radius:8px; padding:6px 12px; font:inherit; cursor:pointer; }
+  button:hover { background:#ffffff1c; }
+  .hint { color:#7b8496; font-size:12.5px; }
+
+  /* ===== 左右布局：左列选项、右列预览，同屏可见 ===== */
+  #app { display:flex; gap:16px; align-items:flex-start; padding:10px 20px 30px; }
+  #list { width:344px; flex:0 0 auto; }
+  #list .card { display:flex; gap:9px; align-items:center; border:1px solid var(--line);
+                border-radius:10px; padding:7px 9px; margin-bottom:7px; background:#ffffff06;
+                cursor:pointer; transition:border-color .12s,background .12s; }
+  #list .card:hover { border-color:#ffffff40; background:#ffffff0d; }
+  #list .card.on { border-color:var(--accent); background:#6ea8fe14; }
+  #list .thumb { width:52px; height:52px; flex:0 0 auto; position:relative;
+                 background:#0d1017; border-radius:7px; overflow:hidden; }
+  #list .thumb svg { position:absolute; inset:0; width:100%; height:100%; }
+  #list .name { font-weight:600; font-size:13.5px; }
+  #list .line { color:var(--muted); font-size:12px; }
+  #list .cost { font-size:11.5px; margin-top:1px; }
+  .cost.low { color:var(--ok); } .cost.mid { color:var(--warn); } .cost.high { color:var(--bad); }
+
+  #stagebox { flex:0 0 auto; position:relative; width:540px; height:540px; border-radius:12px;
+              overflow:hidden; border:1px solid var(--line); }
+  .desk { position:absolute; inset:0;
+          background:linear-gradient(150deg,#3a4664 0%,#1a2133 45%,#0e121b 100%); }
+  .desk::before { content:""; position:absolute; right:8%; top:12%; width:38%; height:40%;
+                  background:linear-gradient(#eef1f8,#d8dde8); border-radius:4px; opacity:.9; }
+  .desk::after { content:""; position:absolute; left:0; right:0; bottom:0; height:14%;
+                 background:#0b0e15e0; border-top:1px solid #ffffff22; }
+  #dim { position:absolute; inset:0; background:rgba(0,0,0,.42); }
+  #root { position:absolute; left:50%; top:50%; width:540px; height:540px;
+          margin:-270px 0 0 -270px; transform-origin:50% 50%; }
+  #root svg { position:absolute; inset:0; width:100%; height:100%; }
+
+  #side { flex:1 1 auto; min-width:330px; max-width:520px; }
+  .btnrow { display:flex; gap:8px; flex-wrap:wrap; margin:0 0 8px; }
+  #status { min-height:20px; color:var(--accent); font-size:13px; }
+  table.spec { border-collapse:collapse; width:100%; margin-top:6px; font-size:13px; }
+  table.spec td { border-top:1px solid var(--line); padding:4px 8px 4px 0; vertical-align:top; }
+  table.spec td:first-child { color:var(--muted); white-space:nowrap; width:88px; }
+  #selfcheck { font-size:12.5px; margin-top:10px; }
+  #selfcheck .ok { color:var(--ok); } #selfcheck .bad { color:var(--bad); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>WinQuick · 伪 3D 候选（v2：改了轮廓，也改了布局）</h1>
+  <p class="muted">上一版六档都没做出立体感，原因是同一个：<b>它们全都是「一个平面圆盘 + 加点光影」</b>，
+     轮廓始终是圆的。立体感首先来自 <b>轮廓</b>（圆 → 椭圆）与 <b>近大远小</b>，光和影只是修饰。
+     这一版六档全部改轮廓；几何仍与真实程序一致（740 窗口、死区 56、一级环 56–200）。</p>
+</header>
+
+<div style="padding:0 20px">
+  <div class="note">
+    <b>三条把「平」变成「立」的线索</b>（按有效性排序）：① <b>轮廓压扁</b> —— 盘面按视角压成椭圆，
+    水平半径不变、垂直半径乘 cos(倾角)；② <b>近大远小</b> —— 近的那几格更大更亮、远的更小更暗
+    （iOS 滚轮那套 sin/cos 配方）；③ <b>厚度侧壁 + 落在遮罩上的椭圆阴影</b> —— 盘面有了厚度、
+    也才有了「离桌面多高」，立体才闭合。三者都是矢量与变换，<b>不需要真透视、文字不发虚</b>。
+  </div>
+  <div class="note warn">
+    <b>只有 ⑥ 是真透视</b>（整体 rotateX，连文字一起倾斜）。它在 HTML 里好看，但到 WPF 要付代价：
+    投影把元素渲进中间纹理、<b>关掉 ClearType，文字会发虚</b>。所以 ⑥ 放进来是让你**看见**它，
+    不是推荐它 —— 建议优先在 ①–⑤ 里挑（它们同样是「立」的，而且字是清的）。
+  </div>
+</div>
+
+<div id="app">
+  <aside id="list"></aside>
+
+  <div id="stagebox">
+    <div class="desk"></div>
+    <div id="dim"></div>
+    <div id="root"></div>
+  </div>
+
+  <div id="side">
+    <div class="btnrow">
+      <button id="btn-entrance">重播入场</button>
+      <button id="btn-hover">演示悬停</button>
+      <button id="btn-demo">完整演示</button>
+      <button id="btn-all">依次对比全部</button>
+      <button id="btn-stop">停</button>
+    </div>
+    <div id="status">就绪</div>
+    <table class="spec">
+      <tr><td>候选</td><td id="s-name"></td></tr>
+      <tr><td>立体线索</td><td id="s-depth"></td></tr>
+      <tr><td>专属入场</td><td id="s-entrance"></td></tr>
+      <tr><td>悬停</td><td id="s-hover"></td></tr>
+      <tr><td>实现成本</td><td id="s-cost"></td></tr>
+      <tr><td>风险</td><td id="s-risk"></td></tr>
+      <tr><td>出处</td><td id="s-src"></td></tr>
+    </table>
+    <div id="selfcheck">自检中…</div>
+  </div>
+</div>
+
+<script>
+// ============================================================================
+// 盘面几何：把「圆盘」变成「斜着看的盘」
+//
+//   squash —— 垂直半径的压扁系数（= cos 倾角）。1 = 平视（圆），越小越"躺下"。
+//   gain   —— 近端放大系数（透视味）。0 = 正交投影（纯椭圆），>0 = 近端更宽。
+//
+// 命中测试的逆映射是闭式的：给定点先算角度 θ → 该角度的进深 → 反算这一点的
+// "有效半径"范围再比较。gain 只按 θ 变化，所以不需要迭代。
+// ============================================================================
+const CX = 370, CY = 370, WIN = 740;
+const DEAD = 56, R_OUT = 200;
+const SWEEP = 45;
+const NAMES = ["开发", "浏览器", "终端", "截图", "音乐", "下载", "文件夹", "设置"];
+const N = NAMES.length;
+const HOVER = 0;
+
+const C = { fill:"rgba(32,32,32,0.94)", stroke:"rgba(255,255,255,0.20)",
+            hover:"#0078D4", hoverStroke:"rgba(255,255,255,0.80)", label:"#FFFFFF",
+            font:"'Microsoft YaHei UI','Segoe UI',sans-serif",
+            wall:"rgba(8,8,10,0.96)", wallEdge:"rgba(255,255,255,0.07)" };
+
+const depthOf = (deg) => (1 - Math.cos(deg * Math.PI / 180)) / 2;
+
+function discPoint(r, deg, k) {
+  const rr = r * (1 + (k.gain || 0) * (depthOf(deg) * 2 - 1));
+  const a = deg * Math.PI / 180;
+  return [CX + rr * Math.sin(a), CY - rr * Math.cos(a) * k.squash];
+}
+const D = (r, deg, k) => discPoint(r, deg, k).map((v) => v.toFixed(2)).join(" ");
+
+function discSector(rIn, rOut, a1, a2, k) {
+  const rx = rOut, ry = rOut * k.squash;
+  const rix = rIn, riy = rIn * k.squash;
+  const large = (a2 - a1) > 180 ? 1 : 0;
+  return `M ${D(rOut, a1, k)} A ${rx} ${ry} 0 ${large} 1 ${D(rOut, a2, k)} ` +
+         `L ${D(rIn, a2, k)} A ${rix} ${riy} 0 ${large} 0 ${D(rIn, a1, k)} Z`;
+}
+function discBand(rIn, rOut, k) {
+  const rx = rOut, ry = rOut * k.squash, rix = rIn, riy = rIn * k.squash;
+  return `M ${D(rOut, 0, k)} A ${rx} ${ry} 0 1 1 ${D(rOut, 180, k)} A ${rx} ${ry} 0 1 1 ${D(rOut, 0, k)} Z ` +
+         `M ${D(rIn, 0, k)} A ${rix} ${riy} 0 1 0 ${D(rIn, 180, k)} A ${rix} ${riy} 0 1 0 ${D(rIn, 0, k)} Z`;
+}
+const about = (cx, cy, rot, s) =>
+  `translate(${cx}px,${cy}px)` + (rot ? ` rotate(${rot}deg)` : "") +
+  (s === undefined ? "" : ` scale(${s})`) + ` translate(${-cx}px,${-cy}px)`;
+const move = (dx, dy) => `translate(${dx.toFixed(2)}px,${dy.toFixed(2)}px)`;
+
+let _uid = 0;
+const uid = (p) => `${p}-${++_uid}`;
+
+// ============================================================================
+// 六档候选：全部**改轮廓**
+// ============================================================================
+const CANDIDATES = [
+  { id:"flat", name:"① 现状（平视）", tagline:"圆盘、无厚度，对照基线",
+    k:{ squash:1.0, gain:0, wall:0, light:0 },
+    depthScale:0, depth:"无（基线）",
+    cost:"零（就是现状）", costLevel:"low", risk:"零",
+    src:"出处：本项目现状。",
+    entrance:{ kind:"whole", scale:{from:0.86,ms:300,cur:"cubic-bezier(0.34,1.56,0.64,1)"},
+               rotate:{from:-24,ms:380,cur:"cubic-bezier(0.16,1,0.3,1)"},
+               fade:{ms:167,cur:"cubic-bezier(0,0,0,1)"}, total:420 },
+    hover:"只换颜色（现状）", hoverKind:"color" },
+
+  { id:"tilt35", name:"② 斜盘 35°", tagline:"盘面躺下 35°、项直立、侧壁 10px",
+    k:{ squash:0.82, gain:0, wall:10, light:0.10 },
+    depthScale:0.16, depth:"轮廓压扁（cos35°）＋近大远小 16%＋侧壁",
+    cost:"低（几何按视角一次生成；逐帧只改每项缩放）", costLevel:"low",
+    risk:"低（文字保持直立、不发虚；最上方那格比最下方小 16%）",
+    src:"出处：把盘面当作「桌面上的一枚圆盘」的投影几何（正交投影）；逐项近大远小取 iOS 滚轮的配方。",
+    entrance:{ kind:"tip", squash:{from:1.0,ms:340,cur:"cubic-bezier(0.16,1,0.3,1)"},
+               fade:{ms:167,cur:"cubic-bezier(0,0,0,1)"}, total:400 },
+    hover:"被悬停那格朝观察者抬起来（放大 1.10 + 上移 6px）", hoverKind:"move" },
+
+  { id:"tilt52", name:"③ 斜盘 52° + 厚盘", tagline:"躺得更下、更厚（18px），近大远小 28%",
+    k:{ squash:0.62, gain:0, wall:18, light:0.12 },
+    depthScale:0.28, depth:"轮廓压扁（cos52°）＋近大远小 28%＋厚侧壁",
+    cost:"低（同 ②，参数更狠）", costLevel:"low",
+    risk:"中（压扁多 → 上下两格挤得更近，竖直方向可读性下降，小字号标签要复核）",
+    src:"出处：同 ②；厚度层是游戏武器轮盘的常见语汇（Unity/Unreal 的轮盘资源普遍带厚度）。",
+    entrance:{ kind:"tip", squash:{from:1.0,ms:360,cur:"cubic-bezier(0.22,1.15,0.3,1)"},
+               fade:{ms:167,cur:"cubic-bezier(0,0,0,1)"}, total:420 },
+    hover:"抬起（放大 1.12 + 上移 9px）", hoverKind:"move" },
+
+  { id:"persp", name:"④ 透视斜盘（近端更宽）", tagline:"近端半径 ×1.12、远端 ×0.88 —— 有透视味",
+    k:{ squash:0.70, gain:0.12, wall:14, light:0.14 },
+    depthScale:0.22, depth:"压扁＋透视（半径随进深变化）＋厚度＋顶部高光带",
+    cost:"低（同 ②，多一个随角度变化的半径系数）", costLevel:"low",
+    risk:"中（命中测试要按「有效半径」反算，闭式可解但多一步；近端更宽会让下排两格离得更开）",
+    src:"出处：透视投影与正交投影的差别（近大远小不只体现在「项」上，也体现在「环」上）；产品先例见 Framer 的 3D Circular Menu（可调相机倾斜与半径）。",
+    entrance:{ kind:"tip", squash:{from:1.0,ms:380,cur:"cubic-bezier(0.16,1,0.3,1)"},
+               light:{ms:420,cur:"cubic-bezier(0.16,1,0.3,1)",delay:120},
+               fade:{ms:167,cur:"cubic-bezier(0,0,0,1)"}, total:480 },
+    hover:"抬起 + 高光带挪到那一格", hoverKind:"move" },
+
+  { id:"cards", name:"⑤ 立牌环（卡片站在斜面上）", tagline:"每项是一块竖起来的牌子，环只是椭圆轨道",
+    k:{ squash:0.64, gain:0.06, wall:0, light:0.10, cards:true },
+    depthScale:0.20, depth:"轮廓压扁＋直立卡片（顶面高光 + 侧面）＋椭圆轨道",
+    cost:"中（每项多两个小面；卡片尺寸要按角度算，避免上下两排撞在一起）", costLevel:"mid",
+    risk:"中-高（项数多时上下两排会挤；每项的「侧面」要按进深给不同宽度，否则立面朝向不对）",
+    src:"出处：3D 启动器 / 游戏 HUD 的「立牌」语汇；层次按 Fluent 的 Elevation（近的锐、远的软）。",
+    entrance:{ kind:"rise", ms:300, cur:"cubic-bezier(0.22,1.2,0.36,1)",
+               staggerMs:28, fade:{ms:150,cur:"cubic-bezier(0,0,0,1)"}, total:500 },
+    hover:"那块牌子朝观察者立起来（放大 1.12 + 上移 10px）", hoverKind:"move" },
+
+  { id:"real3d", name:"⑥ 真透视（整体倾斜）", tagline:"连文字一起倾斜 —— 最像 3D，但 WPF 里字会发虚",
+    k:{ squash:1.0, gain:0, wall:14, light:0.12, cssRotateX:42 },
+    depthScale:0, depth:"整体 CSS 3D（rotateX 42°）—— 对应实现里的 Matrix3DProjection",
+    cost:"中-高（倾斜期间每帧整窗透视重采样）", costLevel:"mid",
+    risk:"高（WPF 里文字会发虚：投影把元素渲进中间纹理、ClearType 被关掉；HTML 看不出来）",
+    src:"出处：真透视的唯一做法（Matrix3DProjection）；技术代价见 M9 §2.3。放进来是为了让你看见它，不是因为推荐。",
+    entrance:{ kind:"cssTilt", fromDeg:58, ms:380, cur:"cubic-bezier(0.16,1,0.3,1)",
+               fade:{ms:150,cur:"cubic-bezier(0,0,0,1)"}, total:420 },
+    hover:"与现状相同（倾斜是常驻的）", hoverKind:"color" },
+];
+const byId = (id) => CANDIDATES.find((c) => c.id === id);
+
+// ============================================================================
+// 画一个斜盘
+// ============================================================================
+function buildWheel(host, cand, opts = {}) {
+  host.innerHTML = "";
+  const k = { ...cand.k };
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", `0 0 ${WIN} ${WIN}`);
+  svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
+  host.appendChild(svg);
+
+  const layer = (id) => {
+    const g = document.createElementNS(ns, "g");
+    g.setAttribute("data-layer", id);
+    svg.appendChild(g);
+    return g;
+  };
+  const el = (tag, attrs) => {
+    const node = document.createElementNS(ns, tag);
+    for (const key in attrs) node.setAttribute(key, attrs[key]);
+    return node;
+  };
+
+  // 1) 接触阴影：椭圆，落在遮罩上
+  const shadowLayer = layer("shadow");
+  {
+    const id = uid("sh");
+    const defs = el("defs");
+    const grad = el("radialGradient", { id });
+    grad.appendChild(el("stop", { offset:"0.5", "stop-color":"#000", "stop-opacity":"0.6" }));
+    grad.appendChild(el("stop", { offset:"0.8", "stop-color":"#000", "stop-opacity":"0.2" }));
+    grad.appendChild(el("stop", { offset:"1", "stop-color":"#000", "stop-opacity":"0" }));
+    defs.appendChild(grad);
+    shadowLayer.appendChild(defs);
+    const ry = (R_OUT + 26) * Math.max(0.35, k.squash);
+    const sh = el("ellipse", { cx:CX, cy:CY + 12 + (k.wall || 0), rx:R_OUT + 26, ry,
+                               fill:`url(#${id})` });
+    shadowLayer.appendChild(sh);
+    shadowLayer.__shadow = sh;
+  }
+
+  // 2) 侧壁（厚度）：整圈环带向**屏幕下方**偏移
+  const wallLayer = layer("wall");
+  if (k.wall > 0) {
+    const wall = el("path", { d: discBand(DEAD - 4, R_OUT, { squash:k.squash, gain:k.gain }),
+                              fill:C.wall, stroke:C.wallEdge, "stroke-width":1 });
+    wall.setAttribute("transform", `translate(0,${k.wall})`);
+    wallLayer.appendChild(wall);
+    const rim = el("path", { d: discBand(R_OUT - 2, R_OUT, { squash:k.squash, gain:k.gain }),
+                             fill:"#fff", "fill-opacity":"0.10" });
+    rim.setAttribute("transform", `translate(0,${k.wall})`);
+    wallLayer.appendChild(rim);
+  }
+
+  // 3) 扇区（立牌环则画一条椭圆轨道）
+  const ringLayer = layer("ring");
+  const sectors = [];
+  if (k.cards) {
+    ringLayer.appendChild(el("path", { d: discBand(DEAD, R_OUT, k),
+                                       fill:"rgba(20,22,28,0.75)",
+                                       stroke:"rgba(255,255,255,0.10)", "stroke-width":1 }));
+  }
+  for (let i = 0; i < N; i++) {
+    const mid = i * SWEEP;
+    const isHover = opts.hovered && i === HOVER && !k.cards;
+    if (!k.cards) {
+      const path = el("path", {
+        d: discSector(DEAD, R_OUT, mid - SWEEP / 2 + 1.2, mid + SWEEP / 2 - 1.2, k),
+        fill: isHover ? C.hover : C.fill,
+        stroke: isHover ? C.hoverStroke : C.stroke, "stroke-width": 1 });
+      ringLayer.appendChild(path);
+      sectors.push({ path, angle: mid, i, isCard:false });
+    } else {
+      sectors.push({ path:null, angle: mid, i, isCard:true });
+    }
+  }
+
+  // 4) 顶部斜光 + 外缘棱边
+  const lightLayer = layer("light");
+  if (k.light > 0) {
+    const id = uid("lt");
+    const defs = el("defs");
+    const grad = el("linearGradient", { id, gradientUnits:"userSpaceOnUse",
+                                        x1:CX - R_OUT, y1:CY - R_OUT * k.squash,
+                                        x2:CX + R_OUT, y2:CY + R_OUT * k.squash });
+    grad.appendChild(el("stop", { offset:"0", "stop-color":"#fff", "stop-opacity":`${k.light}` }));
+    grad.appendChild(el("stop", { offset:"0.5", "stop-color":"#fff", "stop-opacity":"0.02" }));
+    grad.appendChild(el("stop", { offset:"1", "stop-color":"#000", "stop-opacity":"0.12" }));
+    defs.appendChild(grad);
+    lightLayer.appendChild(defs);
+    lightLayer.appendChild(el("path", { d: discBand(DEAD, R_OUT, k), fill:`url(#${id})` }));
+    lightLayer.appendChild(el("path", { d: discBand(R_OUT - 3, R_OUT - 1, k),
+                                        fill:"#fff", "fill-opacity":"0.18" }));
+    lightLayer.setAttribute("opacity", opts.lightOn === false ? "0" : "1");
+  }
+
+  // 5) 图标与文字：**直立** —— 立体感来自「斜盘 + 直立项」的对比
+  const iconLayer = layer("icons");
+  const labelLayer = layer("labels");
+  const iconRadius = DEAD + (R_OUT - DEAD) * 0.28;
+  const labelRadius = DEAD + (R_OUT - DEAD) * 0.66;
+  const items = [];
+
+  for (let i = 0; i < N; i++) {
+    const mid = i * SWEEP;
+    const isHover = opts.hovered && i === HOVER;
+    const depth = depthOf(mid);
+    const scale = 1 + (cand.depthScale * (depth * 2 - 1)) / 2;
+
+    if (k.cards) {
+      const [cx0, cy0] = discPoint((DEAD + R_OUT) / 2, mid, k);
+      const w = 96, h = 40, thick = 7 + 7 * depth;
+      const card = el("g");
+      const side = el("rect", { x:cx0 - w / 2, y:cy0 - h / 2 + thick, width:w, height:h, rx:10,
+                                fill:"rgba(8,8,11,0.9)" });
+      const face = el("rect", { x:cx0 - w / 2, y:cy0 - h / 2, width:w, height:h, rx:10,
+                               fill: isHover ? C.hover : "rgba(38,40,48,0.98)",
+                               stroke: isHover ? C.hoverStroke : C.stroke, "stroke-width":1 });
+      const top = el("rect", { x:cx0 - w / 2 + 3, y:cy0 - h / 2 + 2.5, width:w - 6, height:3, rx:1.5,
+                              fill:"#fff", "fill-opacity":"0.14" });
+      const dot = el("circle", { cx:cx0 - w / 2 + 18, cy:cy0, r:9,
+                                fill: isHover ? "#fff" : "rgba(255,255,255,0.85)" });
+      const label = el("text", { x:cx0 - w / 2 + 34, y:cy0 + 5, fill:C.label, "font-size":13,
+                                "font-family":C.font });
+      label.textContent = NAMES[i];
+      card.appendChild(side); card.appendChild(face); card.appendChild(top);
+      card.appendChild(dot); card.appendChild(label);
+      iconLayer.appendChild(card);
+      sectors[i].card = card;
+      sectors[i].scale = scale;
+      items.push({ card, angle: mid, scale });
+      continue;
+    }
+
+    const [ix, iy] = discPoint(iconRadius, mid, { squash:k.squash, gain:k.gain });
+    const [lx, ly] = discPoint(labelRadius, mid, { squash:k.squash, gain:k.gain });
+    const icon = el("circle", { cx:ix, cy:iy, r:(9 * scale).toFixed(2),
+                               fill: isHover ? "#fff" : "rgba(255,255,255,0.85)" });
+    const label = el("text", { x:lx, y:(ly + 5 * scale).toFixed(2), "text-anchor":"middle",
+                              fill:C.label, "font-size":(13 * scale).toFixed(1),
+                              "font-family":C.font });
+    label.textContent = NAMES[i];
+    iconLayer.appendChild(icon);
+    labelLayer.appendChild(label);
+    sectors[i].icon = icon;
+    sectors[i].label = label;
+    sectors[i].scale = scale;
+    items.push({ icon, label, angle: mid, scale });
+  }
+
+  // 6) 中心
+  const centerLayer = layer("center");
+  centerLayer.appendChild(el("ellipse", { cx:CX, cy:CY, rx:DEAD - 4, ry:((DEAD - 4) * k.squash).toFixed(2),
+                                          fill:"#121212",
+                                          stroke:"rgba(255,255,255,0.24)", "stroke-width":1 }));
+  const hint = el("text", { x:CX, y:CY + 5, "text-anchor":"middle", fill:C.fill,
+                            "font-family":C.font, "font-size":13, opacity:0.6 });
+  hint.textContent = "Esc";
+  centerLayer.appendChild(hint);
+
+  const handle = {
+    svg, k, cand, sectors, items, iconRadius, labelRadius,
+    layers:{ shadow:shadowLayer, wall:wallLayer, ring:ringLayer, light:lightLayer,
+             icons:iconLayer, labels:labelLayer, center:centerLayer },
+    // 倾斜动画改的是**几何参数**（一次性重画），不是逐帧变换 —— 与实现里
+    // "按视角生成几何"是同一条路径（几何重建 12 个扇区实测 0 掉帧）。
+    reshape: (squash) => {
+      const kk = { ...k, squash };
+      for (const s of sectors) {
+        const scale = 1 + (cand.depthScale * (depthOf(s.angle) * 2 - 1)) / 2;
+        if (s.path) s.path.setAttribute("d",
+          discSector(DEAD, R_OUT, s.angle - SWEEP / 2 + 1.2, s.angle + SWEEP / 2 - 1.2, kk));
+        if (s.icon) {
+          const [ix, iy] = discPoint(iconRadius, s.angle, kk);
+          s.icon.setAttribute("cx", ix.toFixed(2));
+          s.icon.setAttribute("cy", iy.toFixed(2));
+        }
+        if (s.label) {
+          const [lx, ly] = discPoint(labelRadius, s.angle, kk);
+          s.label.setAttribute("x", lx.toFixed(2));
+          s.label.setAttribute("y", (ly + 5 * scale).toFixed(2));
+        }
+        if (s.card) {
+          const [cx0, cy0] = discPoint((DEAD + R_OUT) / 2, s.angle, kk);
+          void cx0; void cy0;
+        }
+      }
+      const band = (node) => node && node.setAttribute("d", discBand(DEAD - 4, R_OUT, kk));
+      void band;
+    },
+  };
+  return handle;
+}
+
+// ============================================================================
+// 入场与悬停
+// ============================================================================
+let running = [], rafId = 0, rafSeq = 0;
+const stopAll = () => {
+  running.forEach((a) => { try { a.cancel(); } catch { /* 已结束 */ } });
+  running = [];
+  if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
+  rafSeq++;
+};
+const track = (a) => { running.push(a); return a; };
+const _ease = {};
+function easeFn(cur) {
+  if (_ease[cur]) return _ease[cur];
+  const m = /cubic-bezier\(([-\d.]+),([-\d.]+),([-\d.]+),([-\d.]+)\)/.exec(cur || "");
+  if (!m) return (_ease[cur] = (t) => t);
+  const [x1, y1, x2, y2] = m.slice(1).map(Number);
+  const bez = (t, a, b) => 3 * (1 - t) * (1 - t) * t * a + 3 * (1 - t) * t * t * b + t * t * t;
+  return (_ease[cur] = (x) => { let lo = 0, hi = 1, t = x;
+    for (let i = 0; i < 24; i++) { t = (lo + hi) / 2; if (bez(t, x1, x2) < x) lo = t; else hi = t; }
+    return bez(t, y1, y2); });
+}
+
+function playEntrance(cand, handle) {
+  const root = document.getElementById("root");
+  const e = cand.entrance;
+  const anims = [];
+
+  if (e.fade)
+    anims.push(root.animate([{ opacity:0 }, { opacity:1 }],
+      { duration:e.fade.ms, easing:e.fade.cur, fill:"both" }));
+
+  if (cand.id === "flat") {
+    anims.push(root.animate([{ transform:`scale(${e.scale.from})` }, { transform:"scale(1)" }],
+      { duration:e.scale.ms, easing:e.scale.cur, fill:"both" }));
+    anims.push(root.animate([{ transform:`rotate(${e.rotate.from}deg)` }, { transform:"rotate(0deg)" }],
+      { duration:e.rotate.ms, easing:e.rotate.cur, fill:"both" }));
+  }
+
+  if (e.kind === "tip") {
+    const seq = ++rafSeq;
+    const start = performance.now();
+    const ease = easeFn(e.squash.cur);
+    const from = e.squash.from, to = handle.k.squash;
+    const tick = (now) => {
+      const raw = Math.min(1, (now - start) / e.squash.ms);
+      handle.reshape(from + (to - from) * ease(raw));
+      if (raw < 1 && seq === rafSeq) rafId = requestAnimationFrame(tick);
+    };
+    rafId = requestAnimationFrame(tick);
+    if (e.light)
+      anims.push(track(handle.layers.light.animate([{ opacity:0 }, { opacity:1 }],
+        { duration:e.light.ms, easing:e.light.cur, delay:e.light.delay, fill:"both" })));
+    anims.push(track(handle.layers.shadow.animate([{ opacity:0.2 }, { opacity:1 }],
+      { duration:e.squash.ms, easing:e.squash.cur, fill:"both" })));
+  }
+
+  if (e.kind === "rise") {
+    handle.items.forEach((it, idx) => {
+      anims.push(track(it.card.animate(
+        [{ transform:"translate(0,28px) scale(0.86)", opacity:0 },
+         { transform:"translate(0,0) scale(1)", opacity:1 }],
+        { duration:e.ms, easing:e.cur, delay:idx * e.staggerMs, fill:"both" })));
+    });
+  }
+
+  if (e.kind === "cssTilt") {
+    anims.push(root.animate(
+      [{ transform:`rotateX(${e.fromDeg}deg) scale(0.92)` }, { transform:"rotateX(0deg) scale(1)" }],
+      { duration:e.ms, easing:e.cur, fill:"both" }));
+    anims.push(track(handle.layers.shadow.animate([{ opacity:0.2 }, { opacity:1 }],
+      { duration:e.ms, easing:e.cur, fill:"both" })));
+  }
+
+  running = running.concat(anims);
+  return anims;
+}
+
+function playHover(cand, handle) {
+  const s = handle.sectors[HOVER];
+  const anims = [];
+  if (cand.hoverKind !== "move") return anims;
+
+  if (s.card) {
+    anims.push(track(s.card.animate(
+      [{ transform:"translate(0,0) scale(1)" }, { transform:"translate(0,-10px) scale(1.12)" }],
+      { duration:180, easing:"cubic-bezier(0.34,1.56,0.64,1)", fill:"both" })));
+    return anims;
+  }
+
+  const lift = cand.id === "tilt52" ? 9 : 6;
+  const grow = cand.id === "tilt52" ? 1.12 : 1.10;
+  const base = s.scale || 1;
+  for (const node of [s.icon, s.label]) {
+    anims.push(track(node.animate(
+      [{ transform:`${about(CX, CY, 0, base)} ${move(0, 0)}` },
+       { transform:`${about(CX, CY, 0, base * grow)} ${move(0, -lift)}` }],
+      { duration:180, easing:"cubic-bezier(0.34,1.56,0.64,1)", fill:"both" })));
+  }
+  return anims;
+}
+
+// ============================================================================
+// 界面
+// ============================================================================
+let state = { cand: CANDIDATES[0], handle: null };
+let demoToken = 0;
+
+function renderAll() {
+  stopAll();
+  const root = document.getElementById("root");
+  root.style.transform = "";
+  root.style.perspective = state.cand.k.cssRotateX ? "900px" : "";
+
+  document.querySelectorAll("#list .card").forEach((card) => {
+    card.classList.toggle("on", card.dataset.cand === state.cand.id);
+  });
+
+  state.handle = buildWheel(root, state.cand, { hovered:false, lightOn:true });
+  fillSpec();
+  setStatus(`候选：${state.cand.name}`);
+}
+
+// 左列缩略图：只画**轮廓**，一眼看出这档是圆还是椭圆、有多扁
+function drawThumb(host, cand) {
+  const k = cand.k;
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 0 740 740");
+  host.appendChild(svg);
+  const el = (tag, attrs) => {
+    const n = document.createElementNS(ns, tag);
+    for (const key in attrs) n.setAttribute(key, attrs[key]);
+    return n;
+  };
+  if (k.cards) {
+    svg.appendChild(el("ellipse", { cx:CX, cy:CY, rx:R_OUT, ry:R_OUT * k.squash, fill:"none",
+                                    stroke:"rgba(255,255,255,0.35)", "stroke-width":10 }));
+    for (let i = 0; i < N; i++) {
+      const [x, y] = discPoint((DEAD + R_OUT) / 2, i * SWEEP, k);
+      svg.appendChild(el("rect", { x:(x - 26).toFixed(1), y:(y - 12).toFixed(1), width:52, height:24,
+                                   rx:6, fill:"rgba(255,255,255,0.5)" }));
+    }
+    return;
+  }
+  svg.appendChild(el("ellipse", { cx:CX, cy:CY, rx:R_OUT, ry:(R_OUT * k.squash).toFixed(1),
+                                  fill:"rgba(255,255,255,0.16)",
+                                  stroke:"rgba(255,255,255,0.45)", "stroke-width":10 }));
+  svg.appendChild(el("ellipse", { cx:CX, cy:CY, rx:DEAD, ry:(DEAD * k.squash).toFixed(1),
+                                  fill:"rgba(255,255,255,0.08)" }));
+  if (k.cssRotateX) svg.style.transform = `rotateX(${k.cssRotateX}deg)`;
+}
+
+function fillSpec() {
+  const c = state.cand;
+  document.getElementById("s-name").textContent = `${c.name} · ${c.tagline}`;
+  document.getElementById("s-depth").textContent = c.depth;
+  document.getElementById("s-entrance").textContent = describeEntrance(c);
+  document.getElementById("s-hover").textContent = c.hover;
+  document.getElementById("s-cost").innerHTML = `<span class="cost ${c.costLevel}">${c.cost}</span>`;
+  document.getElementById("s-risk").textContent = c.risk;
+  document.getElementById("s-src").textContent = c.src;
+}
+
+function describeEntrance(c) {
+  const e = c.entrance;
+  switch (c.id) {
+    case "flat": return `整盘 缩放 ${e.scale.from}→1 / ${e.scale.ms}ms / ${e.scale.cur}；` +
+                        `旋转 ${e.rotate.from}°→0 / ${e.rotate.ms}ms；淡入 ${e.fade.ms}ms`;
+    case "tilt35": return `盘面立起来：压扁系数 1.0 → ${c.k.squash}（＝躺下 35°）/ ${e.squash.ms}ms / ${e.squash.cur}；` +
+                         `阴影同时从 0.2 收到 1；淡入 ${e.fade.ms}ms`;
+    case "tilt52": return `盘面躺得更下：1.0 → ${c.k.squash}（52°）/ ${e.squash.ms}ms / ${e.squash.cur}；淡入 ${e.fade.ms}ms`;
+    case "persp": return `盘面立起来 1.0 → ${c.k.squash} / ${e.squash.ms}ms；` +
+                        `高光带在盘面到位后亮起 ${e.light.ms}ms（延迟 ${e.light.delay}ms）；淡入 ${e.fade.ms}ms`;
+    case "cards": return `每块立牌从平面长起来：位移 28px + 缩放 0.86 → 1 / ${e.ms}ms / ${e.cur}，逐项相位差 ${e.staggerMs}ms；淡入 ${e.fade.ms}ms`;
+    case "real3d": return `整体 rotateX ${e.fromDeg}° → 0°（perspective 900px）+ 缩放 0.92→1 / ${e.ms}ms / ${e.cur}；淡入 ${e.fade.ms}ms`;
+    default: return "";
+  }
+}
+
+function setStatus(t) { document.getElementById("status").textContent = t; }
+
+function playDemo(cand, handle) {
+  return new Promise((resolve) => {
+    stopAll();
+    playEntrance(cand, handle);
+    setStatus(`${cand.name}：入场中…`);
+    setTimeout(() => {
+      if (state.handle !== handle) return resolve();
+      playHover(cand, handle);
+      setStatus(`${cand.name}：悬停`);
+    }, cand.entrance.total + 140);
+    setTimeout(() => { if (state.handle === handle) resolve(); }, cand.entrance.total + 900);
+  });
+}
+
+async function runDemo() {
+  const token = ++demoToken;
+  const handle = state.handle;
+  await playDemo(state.cand, handle);
+  if (token === demoToken) setStatus(`${state.cand.name}：演示完成`);
+}
+
+async function runAll() {
+  const token = ++demoToken;
+  for (const c of CANDIDATES) {
+    if (token !== demoToken) return;
+    state.cand = c;
+    renderAll();
+    setStatus(`依次对比：${c.name}`);
+    playEntrance(c, state.handle);
+    await new Promise((r) => setTimeout(r, c.entrance.total + 620));
+  }
+  if (token === demoToken) setStatus("依次对比结束");
+}
+
+function buildUi() {
+  const list = document.getElementById("list");
+  list.innerHTML = CANDIDATES.map((c) => `
+    <div class="card" data-cand="${c.id}">
+      <div class="thumb"></div>
+      <div>
+        <div class="name">${c.name}</div>
+        <div class="line">${c.tagline}</div>
+        <div class="cost ${c.costLevel}">成本：${c.cost}</div>
+      </div>
+    </div>`).join("");
+
+  list.querySelectorAll(".card").forEach((cardEl) => {
+    const cand = byId(cardEl.dataset.cand);
+    drawThumb(cardEl.querySelector(".thumb"), cand);
+    cardEl.addEventListener("click", () => {
+      state.cand = cand;
+      renderAll();
+      runDemo();
+    });
+  });
+
+  document.getElementById("btn-entrance").addEventListener("click", () => {
+    demoToken++; stopAll(); playEntrance(state.cand, state.handle);
+    setStatus(`入场：${state.cand.name}`);
+  });
+  document.getElementById("btn-hover").addEventListener("click", () => {
+    demoToken++; stopAll(); playHover(state.cand, state.handle);
+    setStatus(`悬停：${state.cand.name}`);
+  });
+  document.getElementById("btn-demo").addEventListener("click", () => runDemo());
+  document.getElementById("btn-all").addEventListener("click", () => runAll());
+  document.getElementById("btn-stop").addEventListener("click", () => {
+    demoToken++; renderAll(); setStatus("已停止（回到落定态）");
+  });
+}
+
+// ============================================================================
+// 页内自检（每条都能失败）
+// ============================================================================
+function buildOffscreen(cand) {
+  const host = document.createElement("div");
+  host.style.cssText = "position:absolute;left:-9999px;top:0;width:740px;height:740px";
+  document.body.appendChild(host);
+  const h = buildWheel(host, cand, { hovered:false, lightOn:true });
+  const box = h.svg.getBBox();
+  host.remove();
+  return { box, handle: h };
+}
+
+function selfCheck() {
+  const out = [];
+
+  // ① 六档几何都在窗口内且非空
+  const boxes = CANDIDATES.map((c) => ({ id:c.id, b:buildOffscreen(c).box }));
+  const outside = boxes.filter(({ b }) => b.x < -1 || b.y < -1 ||
+    b.x + b.width > WIN + 1 || b.y + b.height > WIN + 1 || b.width < 10 || b.height < 10);
+  out.push(["六档几何都落在 740×740 内且非空", outside.length === 0,
+    outside.length ? JSON.stringify(outside) : boxes.map(({ id,b }) =>
+      `${id} ${b.width.toFixed(0)}×${b.height.toFixed(0)}`).join("、")]);
+
+  // ② **这一版的核心判据**：倾斜档的外缘必须真的是椭圆（高/宽 < 0.94）。
+  //    上一版六档全是正圆 —— 那正是"看着平"的原因，这条断言就是为了让那种情况红掉。
+  const flatBox = buildOffscreen(byId("flat")).box;
+  const tilts = CANDIDATES.filter((c) => c.k.squash < 0.999).map((c) => {
+    const b = buildOffscreen(c).box;
+    return { id:c.id, ratio:b.height / b.width };
+  });
+  out.push(["倾斜档的轮廓真的是椭圆（高/宽 < 0.94）",
+    tilts.length >= 3 && tilts.every((t) => t.ratio < 0.94),
+    `平视档 高/宽=${(flatBox.height / flatBox.width).toFixed(2)}；` +
+    tilts.map((t) => `${t.id}=${t.ratio.toFixed(2)}`).join("、")]);
+
+  // ③ 进深函数：12 点最远、6 点最近且单调
+  const d0 = depthOf(0), d90 = depthOf(90), d180 = depthOf(180);
+  out.push(["进深函数：12 点最远、6 点最近且单调",
+    d0 < 0.001 && d180 > 0.999 && d0 < d90 && d90 < d180,
+    `0°=${d0.toFixed(2)}、90°=${d90.toFixed(2)}、180°=${d180.toFixed(2)}`]);
+
+  // ④ 近大远小真的落到几何上（6 点那格的图标半径 > 12 点那格）
+  const t2 = buildOffscreen(byId("tilt35")).handle;
+  const nearR = Number(t2.sectors[4].icon.getAttribute("r"));
+  const farR = Number(t2.sectors[0].icon.getAttribute("r"));
+  out.push(["近大远小真的落到几何上（6 点图标半径 > 12 点）", nearR > farR + 0.3,
+    `近 ${nearR.toFixed(2)} vs 远 ${farR.toFixed(2)}`]);
+
+  // ⑤ 层序：阴影 → 侧壁 → 环 → 高光 → 图标文字 → 中心（写反会盖住东西）
+  const order = [...t2.svg.querySelectorAll("g[data-layer]")].map((n) => n.dataset.layer);
+  const idx = (n) => order.indexOf(n);
+  out.push(["层序：阴影 → 侧壁 → 环 → 高光 → 图标文字 → 中心",
+    idx("shadow") < idx("wall") && idx("wall") < idx("ring") && idx("ring") < idx("light") &&
+    idx("light") < idx("icons") && idx("icons") < idx("center"),
+    order.join(" → ")]);
+
+  // ⑥ 每档入场都有动画；位移类悬停也有动画
+  const host = document.createElement("div");
+  host.style.cssText = "position:absolute;left:-9999px;top:0;width:740px;height:740px";
+  document.body.appendChild(host);
+  const counts = [];
+  for (const c of CANDIDATES) {
+    const h = buildWheel(host, c, { hovered:false, lightOn:false });
+    stopAll();
+    const a = playEntrance(c, h).length;
+    const hv = playHover(c, h).length;
+    counts.push(`${c.id}:${a}/${c.hoverKind === "move" ? hv : "-"}`);
+    stopAll();
+  }
+  host.remove();
+  out.push(["每档入场都有动画；位移类悬停也有动画",
+    counts.every((t) => !t.includes(":0")) && counts.every((t) => !t.endsWith("/0")),
+    counts.join("　")]);
+
+  const pass = out.filter((r) => r[1]).length;
+  document.getElementById("selfcheck").innerHTML =
+    `<b>页内自检：${pass}/${out.length} 通过</b>` +
+    out.map((r) => `<div class="${r[1] ? "ok" : "bad"}">${r[1] ? "✓" : "✗"} ${r[0]}　<span class="hint">${r[2]}</span></div>`).join("");
+  return out;
+}
+
+window.addEventListener("error", (e) => {
+  const el2 = document.getElementById("selfcheck");
+  if (el2) el2.innerHTML = `<span class="bad">页面脚本出错：${e.message}</span>`;
+});
+
+try {
+  buildUi();
+  renderAll();
+  const results = selfCheck();
+  renderAll();
+  playEntrance(state.cand, state.handle);
+  setStatus(results.every((r) => r[1])
+    ? `就绪 · 自检 ${results.length}/${results.length} 通过 · 候选：${state.cand.name}`
+    : "就绪，但自检未全通过（见右侧页脚）");
+} catch (err) {
+  document.getElementById("selfcheck").innerHTML = `<span class="bad">初始化失败：${err.message}</span>`;
+}
+</script>
+</body>
+</html>

@@ -1,4 +1,4 @@
-﻿using System.Windows;
+using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
@@ -351,6 +351,18 @@ public sealed class RadialWindow : Window
         // 尺寸由令牌决定，皮肤**不许**改它（SkinCatalog 有守卫），但这里仍然重新读一次 ——
         // 免得"窗口尺寸"与"画布尺寸"哪天各自读了一份而悄悄不一致。
         Width = Height = _tokens.Radius.WindowSize;
+
+        // **优先就地换材质，不重建视觉树。**
+        // 实测：重建一次约净留 0.65MB（重建后的内容要重新渲染进分层窗口，
+        // 那部分内存强制回收也只回来一半），而用户点几下皮肤就能累积几十 MB。
+        // 就地换材质一个元素都不新建，就没有这笔账。
+        if (_view.TryApplySkinInPlace(form))
+        {
+            // 光晕/几何那类结构差异走不通就地更新时，它自己会返回 false，落到下面的重建。
+            SurfaceOps.MenuRebuild(swapped: false);
+            ApplyExtendedStyles();
+            return;
+        }
 
         ApplyMenu(_menu);
         ApplyExtendedStyles();
@@ -738,6 +750,10 @@ public sealed class RadialWindow : Window
         _rotate.Angle = _tokens.Motion.EntranceFromRotateDeg;
         _view.Root.Opacity = 0;
     }
+
+    /// <summary>诊断用：某格当前的填充/描边读数（换皮肤的功能核对着它）。</summary>
+    internal (string Fill, string Stroke, double StrokeWidth) SectorStyleForProbe(int index) =>
+        _view.SectorStyleForProbe(index);
 
     /// <summary>诊断用：某格当前的逐格入场进度（0 = 还没长出来）。</summary>
     internal (double Scale, double Opacity) EntranceStateForProbe => (_scale.ScaleX, _view.Root.Opacity);

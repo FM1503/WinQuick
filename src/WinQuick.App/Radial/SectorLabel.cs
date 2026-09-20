@@ -30,7 +30,7 @@ internal sealed class SectorLabel
 
     private readonly Canvas _clipHost;
     private readonly TextBlock _text;
-    private readonly Brush _baseForeground;
+    private Brush _baseForeground;
     private readonly double _availableWidth;
     private readonly double _availableHeight;
     private readonly string _fullText;
@@ -313,6 +313,17 @@ internal sealed class SectorLabel
     /// 那是「材质」的一部分，所以文字色是令牌（<c>color.hoverLabel</c>），
     /// 且被 Validate 的亮度差检查锁着。
     /// </summary>
+    /// <summary>
+    /// 换基础前景色（就地换材质时用）。当前不在悬停态才立刻生效 ——
+    /// 悬停态的文字色由 <see cref="SetHover"/> 决定，换完基础色后调用方会重上一遍悬停态。
+    /// </summary>
+    public void SetBaseForeground(Brush brush)
+    {
+        _baseForeground = brush;
+        if (_text.Opacity < 0.99) return;      // 悬停态（不透明度 1）时不覆盖
+        _text.Foreground = brush;
+    }
+
     public void SetHover(bool hovered, Brush hoverForeground)
     {
         _text.Opacity = hovered ? 1.0 : 0.92;

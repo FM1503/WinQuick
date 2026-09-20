@@ -1,4 +1,4 @@
-﻿using System.Windows;
+using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
@@ -90,6 +90,12 @@ public sealed class OverlayController : IDisposable
     private readonly ForegroundFocus _focus = new();
     private readonly DispatcherTimer _topmostTimer;
 
+    /// <summary>
+    /// 休眠后的空闲内存清理（延迟触发）。用户要求："关闭轮盘到后台常驻时自动清理自身占用"。
+    /// 为什么延迟：工作集被换出后下次唤出要重新缺页，延迟覆盖"关掉马上又打开"的常见情形。
+    /// </summary>
+    private readonly DispatcherTimer _idleTrimTimer;
+
     /// <summary>退场动画播完后才真正隐藏窗口。动画不影响动作执行，只影响"什么时候看不见"。</summary>
     private readonly DispatcherTimer _exitTimer;
     private HwndSource? _radialSource;
@@ -106,6 +112,22 @@ public sealed class OverlayController : IDisposable
         };
         // 定时器先做廉价检查，只在真的需要时才重申 —— 无条件重申会让分层窗口
         // 持续重新合成，表现为闪烁（用户报的现象）。
+        _idleTrimTimer = new DispatcherTimer(DispatcherPriority.Background)
+        {
+            Interval = TimeSpan.FromMilliseconds(
+                Math.Max(1000, TokenStore.Current.Interaction.IdleTrimDelayMs)),
+        };
+        _idleTrimTimer.Tick += (_, _) =>
+        {
+            _idleTrimTimer.Stop();
+
+            // 期间又被唤出了就不清理（那会把刚用上的页换出去）。
+            if (IsVisible) return;
+            if (!_settings.Behavior.TrimMemoryWhenIdle) return;
+
+            Diagnostics.MemoryTrim.Run();
+        };
+
         _topmostTimer.Tick += (_, _) =>
         {
             // 用户把桌面切走了就收起覆盖层 —— 否则那些窗口留在原来那个桌面上，
@@ -565,6 +587,9 @@ public sealed class OverlayController : IDisposable
     private void Show((int X, int Y, int Width, int Height)? preserveRadialPosition)
     {
         if (_disposed || IsVisible) return;
+
+        // 唤醒就取消待办的内存清理：刚换出的页马上要用，清理会白做一次还拖慢唤出。
+        _idleTrimTimer.Stop();
 
         _preserveRadialPosition = preserveRadialPosition;
 
@@ -1087,6 +1112,16 @@ public sealed class OverlayController : IDisposable
     {
         // 期间若已被重新显示（Hide 之后紧接着 Show），这次的收尾就作废。
         if (IsVisible) return;
+
+        // 真正进入休眠了 → 起一个延迟清理（用户要求：关闭轮盘后自动回收自身占用）。
+        // 只在真的睡着时起；唤醒路径上第一件事就是把它停掉。
+        if (TokenStore.Current.Interaction.IdleTrimDelayMs > 0)
+        {
+            _idleTrimTimer.Interval = TimeSpan.FromMilliseconds(
+                TokenStore.Current.Interaction.IdleTrimDelayMs);
+            _idleTrimTimer.Stop();
+            _idleTrimTimer.Start();
+        }
 
         // **休眠而不是卸载**：卸载会让下次唤出付一次 30~60ms 的窗口映射（实测）。
         _radial.Park();

@@ -70,18 +70,32 @@ public partial class SkinPanel : Window
     public void PlayEntrance() => PanelEntrance.Play(this);
 
     /// <summary>把列表建出来。皮肤/形态的选中态靠重绘（列表很短，不值得做增量更新）。</summary>
+    /// <summary>行控件引用：就地更新选中态用（**不重建列表**，理由见 Select）。</summary>
+    private readonly List<(string Id, Border Row, Border?[] Swatches)> _skinRows = [];
+    private readonly List<(RingForm Form, Border Row)> _formRows = [];
+
     private void BuildLists()
     {
         _loading = true;
         try
         {
+            _skinRows.Clear();
+            _formRows.Clear();
             SkinList.Children.Clear();
             foreach (var skin in _catalog.All)
-                SkinList.Children.Add(BuildSkinRow(skin));
+            {
+                var (row, swatches) = BuildSkinRow(skin);
+                SkinList.Children.Add(row);
+                _skinRows.Add((skin.Id, row, swatches));
+            }
 
             FormList.Children.Clear();
             foreach (var form in new[] { RingForm.Pie, RingForm.Rounded, RingForm.Petal, RingForm.Dial })
-                FormList.Children.Add(BuildFormRow(form));
+            {
+                var row = BuildFormRow(form);
+                FormList.Children.Add(row);
+                _formRows.Add((form, row));
+            }
         }
         finally
         {
@@ -89,7 +103,7 @@ public partial class SkinPanel : Window
         }
     }
 
-    private UIElement BuildSkinRow(SkinSpec skin)
+    private (Border Row, Border?[] Swatches) BuildSkinRow(SkinSpec skin)
     {
         var isCurrent = string.Equals(skin.Id, _currentSkin, StringComparison.OrdinalIgnoreCase);
         var colors = TokenStore.PreviewTokens(skin.Id).Color;
@@ -117,10 +131,14 @@ public partial class SkinPanel : Window
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(0, 0, 10, 0),
         };
-        swatch.Children.Add(SwatchBox(colors.SectorFill, colors.SectorFillAlpha, 22));
-        swatch.Children.Add(SwatchBox(colors.HoverFill, colors.HoverFillAlpha, 22, left: 3));
+        var swatchBoxes = new List<Border?>
+        {
+            SwatchBox(colors.SectorFill, colors.SectorFillAlpha, 22),
+            SwatchBox(colors.HoverFill, colors.HoverFillAlpha, 22, left: 3),
+        };
         if (colors.HaloPx > 0)
-            swatch.Children.Add(SwatchBox(colors.HaloColor, Math.Max(0.35, colors.HaloAlpha), 22, left: 3));
+            swatchBoxes.Add(SwatchBox(colors.HaloColor, Math.Max(0.35, colors.HaloAlpha), 22, left: 3));
+        foreach (var box in swatchBoxes) swatch.Children.Add(box!);
         Grid.SetColumn(swatch, 0);
         grid.Children.Add(swatch);
 
@@ -158,10 +176,10 @@ public partial class SkinPanel : Window
             if (_loading) return;
             Select(skin.Id, _currentForm);
         };
-        return row;
+        return (row, swatchBoxes.ToArray());
     }
 
-    private UIElement BuildFormRow(RingForm form)
+    private Border BuildFormRow(RingForm form)
     {
         var isCurrent = form == _currentForm;
 
@@ -237,12 +255,84 @@ public partial class SkinPanel : Window
 
         _apply(skinId, form);
 
-        // 选中态与色板重画：皮肤一换，面板自己的颜色也变了（资源重装过），
-        // 所以这里必须整表重建，不能只改高亮那一行。
-        BuildLists();
+        // **就地更新选中态，不重建列表。**
+        //
+        // 原来这里是 BuildLists()（清空重建 6+4 行）。实测的代价：这是**分层窗口里被渲染过**的内容，
+        // 每重建一次就净留一份渲染数据（在轮盘上量到约 0.65MB/次，强制回收也只回来一半）——
+        // 而点皮肤是这套界面里最频繁的操作，点十几下就能把常驻内存顶上去。
+        // 选中态本来只改若干 Border 的画刷，没有任何新元素需要创建。
+        UpdateSelectionVisuals();
 
         FooterStatus.Text = $"已切换到「{_catalog.Find(skinId)?.Name ?? SkinCatalog.DefaultId}」" +
                             $"·形态「{RingForms.NameOf(form)}」，立刻生效并已自动保存。";
+    }
+
+    /// <summary>
+    /// 就地把"当前选中"的画刷刷一遍（皮肤与形态两组行）。
+    ///
+    /// 皮肤一换，面板自己的配色也跟着变了（资源已重装），所以这里把所有行的
+    /// 背景/描边/色板都按新规格重刷，而不是重建行。
+    /// </summary>
+    private void UpdateSelectionVisuals()
+    {
+        var stroke = TokenResources.Brush("Color.Stroke");
+        var accent = TokenResources.Brush("Color.Accent");
+        var transparent = Brushes.Transparent;
+
+        foreach (var (id, row, swatches) in _skinRows)
+        {
+            var isCurrent = string.Equals(id, _currentSkin, StringComparison.OrdinalIgnoreCase);
+            row.Background = isCurrent ? accent : transparent;
+            row.BorderBrush = stroke;
+
+            // 色板也重刷：这是换皮肤后唯一必须跟着变的东西。
+            var colors = TokenStore.PreviewTokens(id).Color;
+            if (swatches.Length > 0) swatches[0]!.Background = TokenBrushes.Brush(colors.SectorFill, colors.SectorFillAlpha);
+            if (swatches.Length > 1) swatches[1]!.Background = TokenBrushes.Brush(colors.HoverFill, colors.HoverFillAlpha);
+            if (swatches.Length > 2) swatches[2]!.Background = TokenBrushes.Brush(colors.HaloColor, Math.Max(0.35, colors.HaloAlpha));
+        }
+
+        foreach (var (form, row) in _formRows)
+        {
+            row.Background = form == _currentForm ? accent : transparent;
+            row.BorderBrush = stroke;
+        }
+
+        // 面板里所有文字的颜色也跟着新规格走（资源已重装，DynamicResource 会自己更新，
+        // 但这里是"程序化创建的控件"，它们的 Foreground 是构造时按老规格设的 —— 要手动重刷）。
+        RefreshTextColors();
+    }
+
+    /// <summary>把面板里程序化创建的文字颜色重刷成当前规格（DynamicResource 管不到代码建的控件）。</summary>
+    private void RefreshTextColors()
+    {
+        var text = TokenResources.Brush("Color.Text");
+        var muted = TokenResources.Brush("Color.TextMuted");
+        var family = TokenResources.Get<FontFamily>("Font.Family");
+        var body = TokenResources.Get<double>("Font.BodySize");
+        var small = TokenResources.Get<double>("Font.SmallSize");
+
+        foreach (var root in new[] { SkinList, FormList })
+        {
+            foreach (var block in root.Children.OfType<Border>()
+                         .SelectMany(b => Descendants(b).OfType<TextBlock>()))
+            {
+                block.FontFamily = family;
+                block.FontSize = block.FontWeight == FontWeights.SemiBold ? body : small;
+                block.Foreground = block.FontWeight == FontWeights.SemiBold ? text : muted;
+            }
+        }
+    }
+
+    private static IEnumerable<DependencyObject> Descendants(DependencyObject root)
+    {
+        var count = VisualTreeHelper.GetChildrenCount(root);
+        for (var i = 0; i < count; i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            yield return child;
+            foreach (var grand in Descendants(child)) yield return grand;
+        }
     }
 
     private void OnCloseClick(object sender, RoutedEventArgs e) =>

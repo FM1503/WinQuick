@@ -2,6 +2,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
+using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using WinQuick.App.Diagnostics;
 using Windows.Win32;
@@ -32,6 +33,62 @@ public static class ShellIcons
 
     private static readonly Dictionary<string, BitmapSource?> MemoryCache = new(StringComparer.OrdinalIgnoreCase);
     private static readonly object Gate = new();
+
+    /// <summary>
+    /// 按**目标像素尺寸**缩好的图标缓存。
+    ///
+    /// 为什么必须预缩放（实测）：图标源是 96px，最终显示只有 34 DIP × 屏幕缩放（本机 175% 下约 60px）。
+    /// 之前让 WPF 在渲染时用 <c>BitmapScalingMode.HighQuality</c> 去缩 —— 那是 Fant 多级滤波，
+    /// **每个 Image 元素都会建一份多级缓存，而且元素被丢弃后这些非托管缓存不立即归还**。
+    /// 实测：反复重建视觉树 20 次，私有提交字节 **+13.2MB**（约 0.66MB/次，正好是 12 个图标
+    /// × 96² 的 1.5 倍量级）；把图标换成占位图后同样重建 20 次是 **+0.0MB** —— 元凶就是它。
+    ///
+    /// 预缩放一次之后，位图与显示尺寸 1:1，渲染不再做缩放，也就不再有那份缓存。
+    /// </summary>
+    public static BitmapSource? GetScaled(string? path, int targetPx)
+    {
+        if (string.IsNullOrWhiteSpace(path) || targetPx <= 0) return null;
+
+        lock (Gate)
+        {
+            var key = (path, targetPx);
+            if (ScaledCache.TryGetValue(key, out var cached)) return cached;
+
+            var scaled = Bake(Get(path), targetPx);
+            ScaledCache[key] = scaled;
+            return scaled;
+        }
+    }
+
+    private static readonly Dictionary<(string Path, int Px), BitmapSource?> ScaledCache = [];
+
+    /// <summary>
+    /// 把源图烘焙成 <paramref name="targetPx"/> 见方的位图。**只缩不放** ——
+    /// 源本来就更小时直接沿用（放大只会变糊，还多占内存），交给渲染端做廉价的双线性缩放。
+    /// </summary>
+    private static BitmapSource? Bake(BitmapSource? source, int targetPx)
+    {
+        if (source is null) return null;
+        if (source.PixelWidth <= targetPx + 2) return source;
+
+        try
+        {
+            var visual = new DrawingVisual();
+            using (var dc = visual.RenderOpen())
+                dc.DrawImage(source, new Rect(0, 0, targetPx, targetPx));
+
+            var baked = new RenderTargetBitmap(targetPx, targetPx, 96, 96, PixelFormats.Pbgra32);
+            baked.Render(visual);
+            baked.Freeze();
+            return baked;
+        }
+        catch (Exception ex)
+        {
+            // 烘焙失败就退回源图（观感略差，但不该因为缩放失败就不显示图标）。
+            CrashLog.Write("图标预缩放失败", ex);
+            return source;
+        }
+    }
 
     /// <summary>
     /// 取图标。<paramref name="path"/> 可以是文件路径，也可以是 shell 命名空间路径

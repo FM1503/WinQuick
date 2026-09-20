@@ -5,6 +5,10 @@ using System.Windows.Media;
 using System.Windows.Shapes;
 using H.NotifyIcon;
 using WinQuick.App.Diagnostics;
+using WinQuick.App.Design;
+using WinQuick.Core.Design;
+using WinQuick.App.Radial;
+using WinQuick.Core.Config;
 using WinQuick.App.Interop;
 
 namespace WinQuick.App.M0;
@@ -82,8 +86,90 @@ public static class MemoryProbe
                 Sample($"5. {cycles} 次唤出/关闭循环后");
             }
 
+            // ── 视觉树重建的增量（模拟"换皮肤/改菜单"这类真实操作）──
+            //
+            // **必须用真实窗口量。** 我第一版是在一个裸 Canvas 上重建 RadialRingView ——
+            // 那从不把树渲染进分层窗口，所以完全测不到窗口侧的开销，得出的"会回落、
+            // 不是泄漏"结论对产品路径不成立（用户实测常驻会停在 ~170MB 专用工作集）。
+            // 这一版建/显示一个**真的 RadialWindow**，然后走产品里"改菜单"的那条路径
+            // （ApplyMenu）重建 N 次，并在前后各强制回收一次。
+            var rebuilds = cli.GetInt("rebuilds", 0);
+            if (rebuilds > 0)
+            {
+                var menu = Hosting.DefaultMenu.Build();
+
+                // --no-icons：把图标全部去掉（走占位图路径）。
+                // 用来做**归因**对照：如果去掉图标后重建不再累积，就说明累积挂在
+                // 「Image 元素 + 位图渲染进分层窗口」这条路径上。
+                if (cli.Has("no-icons"))
+                {
+                    menu = menu with { Items = menu.Items.Select(StripIcons).ToList() };
+                    ProbeOutput.Line("已启用 --no-icons：图标替换为占位图");
+                }
+
+                var wheel = new RadialWindow(menu);
+                // 放屏幕外：探针不该在用户屏幕上闪东西。
+                wheel.WindowStartupLocation = WindowStartupLocation.Manual;
+                wheel.Left = -32000;
+                wheel.Top = -32000;
+                wheel.ShowActivated = false;
+                wheel.Show();
+                await SettleAsync(1500);
+                Sample("5. 真实轮盘窗口（分层，已显示一次）");
+
+                // --churn=skin（默认）：模拟用户点皮肤 —— 走 RebuildForSkin（现在是**就地换材质**）。
+                // --churn=menu：模拟改菜单 —— 走 ApplyMenu（结构变了，必须重建）。
+                var churn = cli.GetString("churn", "skin");
+                for (var i = 0; i < rebuilds; i++)
+                {
+                    if (churn == "menu") wheel.ApplyMenu(menu);
+                    else wheel.RebuildForSkin(RingForm.Pie);
+                    await SettleAsync(40);
+                }
+
+                await SettleAsync(1500);
+                Sample($"6. {rebuilds} 次「{churn}」后（真实窗口）");
+
+                // **能失败的功能核对**：换皮肤之后，这一格的材质必须真的换成新规格的颜色。
+                // 就地换材质那条路一旦写漏（比如忘了重上悬停态/忘了改描边），
+                // 表现就是"点了皮肤没反应"，而那是肉眼才看得出来的 —— 这里先钉住它。
+                {
+                    var before = wheel.SectorStyleForProbe(1);
+                    var problem = TokenStore.ApplySkin("contrast");
+                    wheel.RebuildForSkin(RingForm.Pie);
+                    var after = wheel.SectorStyleForProbe(1);
+                    var expectFill = TokenBrushes.Brush(
+                        TokenStore.Current.Color.SectorFill,
+                        TokenStore.Current.Color.SectorFillAlpha).ToString();
+
+                    ProbeOutput.Section("换皮肤（就地路径）的功能核对");
+                    ProbeOutput.Kv("皮肤应用", problem ?? "成功");
+                    ProbeOutput.Kv("换前填色", before.Fill);
+                    ProbeOutput.Kv("换后填色", after.Fill);
+                    ProbeOutput.Kv("规格里的填色", expectFill);
+                    ProbeOutput.Kv("描边宽度", $"{before.StrokeWidth} → {after.StrokeWidth}");
+                    ProbeOutput.Kv("结论",
+                        after.Fill != before.Fill && after.Fill == expectFill
+                            ? "通过（材质真的换了）"
+                            : "**失败**（就地更新没把新规格套上去）");
+
+                    TokenStore.ApplySkin(SkinCatalog.DefaultId);
+                    wheel.RebuildForSkin(RingForm.Pie);
+                    await SettleAsync(300);
+                }
+
+                ForceCollect();
+                await SettleAsync(2000);
+                Sample("7. 强制回收后");
+
+                await SettleAsync(5000);
+                Sample("8. 再静置 5 秒");
+
+                wheel.Close();
+            }
+
             await SettleAsync(Math.Max(0, warmupMs - 8000));
-            Sample("6. 长稳定后");
+            Sample("8. 长稳定后");
 
             Report();
             await HoldAsync(cli);
@@ -99,6 +185,33 @@ public static class MemoryProbe
             try { tray?.Dispose(); } catch { /* 托盘清理失败不该影响测量结果输出 */ }
             foreach (var d in rawDims) { try { d.Dispose(); } catch { } }
             Application.Current.Shutdown(0);
+        }
+    }
+
+    /// <summary>把一棵菜单项子树里的图标全部去掉（--no-icons 归因对照用）。</summary>
+    private static MenuItemSpec StripIcons(MenuItemSpec item) =>
+        item with { IconPath = null, Children = item.Children.Select(StripIcons).ToList() };
+
+    /// <summary>
+    /// 强制回收：连做三轮（含终结器与压缩），让 WPF 的非托管渲染数据也有机会被放掉。
+    /// 只用来**分辨**"真泄漏"与"还没回收"，不是产品行为。
+    /// </summary>
+    private static void ForceCollect()
+    {
+        for (var i = 0; i < 3; i++)
+        {
+            GC.Collect(2, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+            GC.WaitForPendingFinalizers();
+        }
+
+        try
+        {
+            Application.Current?.Dispatcher.Invoke(
+                () => { }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+        }
+        catch
+        {
+            // 探针里拿不到 Dispatcher 也无所谓：上面三轮回收已经是主要手段。
         }
     }
 

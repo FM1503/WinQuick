@@ -1,0 +1,767 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>WinQuick · 六种立体做法（形状不变形 · 入场保持现状）</title>
+<style>
+  :root { --bg:#0d1117; --fg:#e6edf6; --muted:#8d9aad; --line:#ffffff1a;
+          --accent:#8ab4ff; --ok:#7fd18f; --warn:#e2c56a; --bad:#e08a7a; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:14px/1.6 "Segoe UI","Microsoft YaHei",system-ui,sans-serif; }
+  header { padding:16px 20px 4px; }
+  h1 { margin:0 0 6px; font-size:17px; font-weight:600; }
+  p { margin:4px 0; }
+  code { background:#ffffff0f; color:#cfe0ff; padding:1px 5px; border-radius:4px; font-size:12.5px; }
+  .muted { color:var(--muted); }
+  .note { border-left:3px solid var(--accent); background:#8ab4ff10; padding:7px 11px;
+          margin:8px 0; border-radius:0 6px 6px 0; font-size:13px; }
+  .note.warn { border-color:var(--warn); background:#e2c56a10; }
+  button { background:#ffffff0d; color:var(--fg); border:1px solid var(--line);
+           border-radius:8px; padding:6px 12px; font:inherit; cursor:pointer; }
+  button:hover { background:#ffffff1a; }
+  .hint { color:#7b8496; font-size:12.5px; }
+
+  #app { display:flex; gap:16px; align-items:flex-start; padding:10px 20px 30px; }
+  #list { width:352px; flex:0 0 auto; }
+  #list .card { display:flex; gap:9px; align-items:center; border:1px solid var(--line);
+                border-radius:10px; padding:7px 9px; margin-bottom:7px; background:#ffffff05;
+                cursor:pointer; transition:border-color .12s,background .12s; }
+  #list .card:hover { border-color:#8ab4ff66; background:#8ab4ff0d; }
+  #list .card.on { border-color:var(--accent); background:#8ab4ff18; }
+  #list .thumb { width:56px; height:56px; flex:0 0 auto; position:relative;
+                 background:#0a0d13; border-radius:7px; overflow:hidden; }
+  #list .thumb svg { position:absolute; inset:0; width:100%; height:100%; }
+  #list .name { font-weight:600; font-size:13.5px; }
+  #list .line { color:var(--muted); font-size:12px; }
+  #list .cost { font-size:11.5px; margin-top:1px; }
+  .cost.low { color:var(--ok); } .cost.mid { color:var(--warn); } .cost.high { color:var(--bad); }
+
+  #stagebox { flex:0 0 auto; position:relative; width:560px; height:560px; border-radius:12px;
+              overflow:hidden; border:1px solid #ffffff20; }
+  .scene { position:absolute; inset:0; background:
+             radial-gradient(125% 105% at 28% 6%, #333a4c 0%, #1c2231 46%, #0b0f16 100%); }
+  #root { position:absolute; left:50%; top:50%; width:560px; height:560px;
+          margin:-280px 0 0 -280px; transform-origin:50% 50%; }
+  #root svg { position:absolute; inset:0; width:100%; height:100%; }
+
+  #side { flex:1 1 auto; min-width:330px; max-width:540px; }
+  .btnrow { display:flex; gap:8px; flex-wrap:wrap; margin:0 0 8px; }
+  #status { min-height:20px; color:var(--accent); font-size:13px; }
+  table.spec { border-collapse:collapse; width:100%; margin-top:6px; font-size:13px; }
+  table.spec td { border-top:1px solid var(--line); padding:4px 8px 4px 0; vertical-align:top; }
+  table.spec td:first-child { color:var(--muted); white-space:nowrap; width:92px; }
+  #selfcheck { font-size:12.5px; margin-top:10px; }
+  #selfcheck .ok { color:var(--ok); } #selfcheck .bad { color:var(--bad); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>WinQuick · 六种立体做法（<b>形状不变形</b>，入场保持现状）</h1>
+  <p class="muted">上一版形状歪了，根因是我的「倾斜「算错了：正交投影下，一块板绕自身切向轴倾斜
+     <b>只应产生径向缩短</b>，我却额外加了「竖直下沉"——对 3 点/9 点方向的格子就变成斜切，
+     于是每块都成了剪切过的四边形。<b>这一版不再动形状</b>：扇区就是干净的圆弧扇形 + 圆角，
+     立体感全部交给 <b>厚度（侧壁）+ 底座（托盘）+ 落影 + 斜面高光 + 环境遮蔽</b>。</p>
+</header>
+
+<div style="padding:0 20px">
+  <div class="note">
+    <b>每块的立体是「做出来的五件事"</b>（成熟做法里「深度永远不是一个投影「的落地）：
+    ① <b>侧壁</b> —— 同形同尺寸的面板向屏幕下方偏 10–20px 的一份深色副本（厚度从这儿来）；
+    ② <b>底座托盘</b> —— 一圈比扇区略大的暗色环，扇区「放在「它上面；
+    ③ <b>落影</b> —— 每块自己的投影落在托盘上，<b>悬停时随抬起变大变浓</b>；
+    ④ <b>斜面高光</b> —— 用同一支「左上亮→右下暗「的渐变描边（光照全盘一致）；
+    ⑤ <b>环境遮蔽</b> —— 托盘内缘贴着扇区的一圈暗，让接触处「压住"。
+  </div>
+  <div class="note warn">
+    两处物理性的差距（不是没做到）：柔和阴影用<b>渐变的影子块</b>代替模糊（WPF 逐帧模糊太贵）；
+    玻璃那档是「玻璃的样子「而非真玻璃（分层窗口拿不到系统材质，真折射不可得）。
+  </div>
+</div>
+
+<div id="app">
+  <aside id="list"></aside>
+
+  <div id="stagebox">
+    <div class="scene"></div>
+    <div id="root"></div>
+  </div>
+
+  <div id="side">
+    <div class="btnrow">
+      <button id="btn-entrance">重播入场</button>
+      <button id="btn-hover">演示悬停（第 1 格）</button>
+      <button id="btn-all">依次对比全部</button>
+      <button id="btn-stop">停</button>
+    </div>
+    <div id="status">就绪</div>
+    <table class="spec">
+      <tr><td>做法</td><td id="s-name"></td></tr>
+      <tr><td>立体怎么来的</td><td id="s-depth"></td></tr>
+      <tr><td>入场（六档相同）</td><td id="s-entrance"></td></tr>
+      <tr><td>悬停</td><td id="s-hover"></td></tr>
+      <tr><td>实现成本</td><td id="s-cost"></td></tr>
+      <tr><td>风险</td><td id="s-risk"></td></tr>
+      <tr><td>出处</td><td id="s-src"></td></tr>
+    </table>
+    <div id="selfcheck">自检中…</div>
+  </div>
+</div>
+
+<script>
+// ============================================================================
+// 形状：干净的圆弧扇形 + 圆角（**不做任何剪切/梯形/透视变形**）
+//
+// 上一版的错：正交投影下绕切向轴倾斜只该产生「径向缩短"，我额外加了竖直下沉，
+// 于是 3 点/9 点方向被斜切。这一版把所有变形都去掉：扇区就是扇形。
+// ============================================================================
+const CX = 370, CY = 370, WIN = 740;
+const DEAD = 52, R_OUT = 206;
+const SWEEP = 45, GAP_DEG = 2.8;
+const NAMES = ["开发", "浏览器", "终端", "截图", "音乐", "下载", "文件夹", "设置"];
+const N = NAMES.length;
+const HOVER = 0;
+const FONT = "'Microsoft YaHei UI','Segoe UI',sans-serif";
+
+let _uid = 0;
+const uid = (p) => `${p}-${++_uid}`;
+const P = (r, deg) => {
+  const a = deg * Math.PI / 180;
+  return [CX + r * Math.sin(a), CY - r * Math.cos(a)];
+};
+const F = (p) => `${p[0].toFixed(2)} ${p[1].toFixed(2)}`;
+const lerp = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+
+// 圆角扇形的**点**（绘制与自检共用一处定义 —— 检查要检查真几何，而不是另一份抄本）
+function wedgePoints(rIn, rOut, a1, a2, corner) {
+  const cOut = Math.min(corner / rOut * 180 / Math.PI, (a2 - a1) / 4);
+  const cIn = Math.min(corner / rIn * 180 / Math.PI, (a2 - a1) / 4);
+  return {
+    inner: [P(rIn, a1 + cIn), P(rIn, a2 - cIn)],
+    outer: [P(rOut, a2 - cOut), P(rOut, a1 + cOut)],
+    controls: [P(rOut, a2), P(rIn, a1)],      // 圆角的控制点＝原来的尖角（必在环带上）
+  };
+}
+function wedge(rIn, rOut, a1, a2, corner) {
+  const g = wedgePoints(rIn, rOut, a1, a2, corner);
+  const [I1, I2] = g.inner, [O2, O1] = g.outer, [Oc, Ic] = g.controls;
+  const large = (a2 - a1) > 180 ? 1 : 0;
+  return `M ${F(I1)} A ${rIn} ${rIn} 0 ${large} 1 ${F(I2)} Q ${F(Ic)} ${F(O2)} ` +
+         `A ${rOut} ${rOut} 0 ${large} 0 ${F(O1)} Q ${F(Oc)} ${F(I1)} Z`;
+}
+// 整圈环带（底座托盘用）
+function band(rIn, rOut) {
+  return `M ${F(P(rOut, 0))} A ${rOut} ${rOut} 0 1 1 ${F(P(rOut, 180))} A ${rOut} ${rOut} 0 1 1 ${F(P(rOut, 0))} Z ` +
+         `M ${F(P(rIn, 0))} A ${rIn} ${rIn} 0 1 0 ${F(P(rIn, 180))} A ${rIn} ${rIn} 0 1 0 ${F(P(rIn, 0))} Z`;
+}
+const arc = (r, a1, a2, w) =>
+  `M ${F(P(r, a1))} A ${r + w / 2} ${r + w / 2} 0 0 1 ${F(P(r, a2))}`;
+
+// ============================================================================
+// 六种「立体做法"：材质与厚薄不同，但都用同一套五件事
+// ============================================================================
+const BUILDS = [
+  {
+    id:"keycap", name:"① 厚键帽（Key cap）", tagline:"14px 厚 + 托盘底座 + 落影 + 斜面高光",
+    thick:14, tray:true, corner:12, lift:14,
+    body:{ kind:"grad", from:"#5b6474", to:"#2f3642" }, bevel:"#c8d4e6", ao:0.55,
+    spec:0.35, shadow:1.0, hoverMode:"raise",
+    depth:"侧壁 14px + 托盘 + 落影 + 同一支光渐变描边 + 托盘内缘环境遮蔽",
+    hover:"抬起 14px：厚度视觉上变高、落影变大变浓（其余七格不动）",
+    cost:"低（每格 4 层 + 一圈托盘）", costLevel:"low",
+    risk:"低（形状完全不变形；这套最容易一眼看懂）",
+    src:"出处：The Art of Color Depth 的技法（渐变主体 + inset 斜面 + 顶部镜面 + 悬停亮层），加上「托盘 + 环境遮蔽「这类实物语汇。",
+  },
+  {
+    id:"glass", name:"② 厚玻璃（Glass slab）", tagline:"18px 厚 + 亮边框 + 内发光 + 托盘",
+    thick:18, tray:true, corner:16, lift:12,
+    body:{ kind:"flat", fill:"rgba(196,222,255,0.15)" }, bevel:"#eaf4ff", glow:"rgba(150,205,255,0.55)",
+    ao:0.5, spec:0.45, shadow:0.9, hoverMode:"raise",
+    depth:"半透明主体 + 亮色渐变描边 + 顶部内发光 + 18px 侧壁 + 托盘 + 落影",
+    hover:"抬起 12px + 边框与内发光各亮一档",
+    cost:"低-中（发光＝多一层更粗更淡的描边）", costLevel:"low",
+    risk:"中（亮背景会吃掉对比度；真折射/真模糊物理上不可得）",
+    src:"出处：visionOS 的材质规范 —— 玻璃靠镜面高光与阴影传达远近；Liquid Glass（2025）同路。",
+  },
+  {
+    id:"chamfer", name:"③ 双面倒角（Chamfered）", tagline:"每块两个可见面：顶面 + 外侧斜面",
+    thick:16, tray:false, corner:8, lift:12, chamfer:18,
+    body:{ kind:"grad", from:"#48505e", to:"#262c36" }, bevel:"#b9c6d8", ao:0,
+    spec:0.30, shadow:0.85, hoverMode:"raise",
+    depth:"顶面 + **外侧倒角面**（第二张可见面）+ 16px 侧壁 + 落影：两个面的明暗差就是立体",
+    hover:"抬起 12px，倒角面加亮",
+    cost:"中（每块多一张倒角面）", costLevel:"mid",
+    risk:"中（倒角面的宽度要调：太窄看不出来，太宽会吃掉标签区）",
+    src:"出处：实物倒角（bevel/chamfer）语汇；The Art of Color Depth 里 Layered/Inset 两种技法都是这个思路。",
+  },
+  {
+    id:"stepped", name:"④ 高低错落（Stepped keys）", tagline:"相邻块高度交替 ±10px，各自投影",
+    thick:14, tray:true, corner:14, lift:12, step:10,
+    body:{ kind:"grad", from:"#535b6b", to:"#2b313c" }, bevel:"#c2cfe2", ao:0.5,
+    spec:0.32, shadow:1.0, hoverMode:"raise",
+    depth:"每块**自己的高度**（相邻交替 20px）+ 各自的侧壁与落影 + 托盘",
+    hover:"抬起 12px（从它自己的高度往上）",
+    cost:"低-中（同①，多一个逐块高度）", costLevel:"low",
+    risk:"中（错落会让「哪块高「变成记忆负担；但立体感在六档里最强）",
+    src:"出处：分层 HUD / 按键阵列的语汇；分层高度也是 Fluent 的 Elevation 语义（远近＝高度）。",
+  },
+  {
+    id:"plate", name:"⑤ 金属铭牌（Metal plate）", tagline:"16px 厚 + 拉丝渐变 + 硬镜面 + 托盘",
+    thick:16, tray:true, corner:10, lift:11,
+    body:{ kind:"band", stops:[["#565e6a",0],["#c9d2de",0.20],["#69717f",0.44],["#383e47",0.72],["#8e98a6",1]] },
+    bevel:"#e2eaf5", ao:0.6, spec:0.25, shadow:1.0, hoverMode:"glint",
+    depth:"多段渐变（拉丝高光）+ 16px 侧壁 + 托盘 + 落影 + 环境遮蔽",
+    hover:"抬起 11px，**亮棱线换段**（金属反光随角度走）",
+    cost:"中（多段渐变的停靠点要调）", costLevel:"mid",
+    risk:"中（金属对光照方向最敏感，方向一歪立刻像塑料）",
+    src:"出处：The Art of Color Depth 的 Metal 技法；桌面启动器也实装过这一挂（Radify 的 Carbon/Damasteel）。",
+  },
+  {
+    id:"clay", name:"⑥ 黏土块（Clay block）", tagline:"20px 厚 + 大圆角 + 软影 + 内上亮下暗",
+    thick:20, tray:true, corner:26, lift:13,
+    body:{ kind:"grad", from:"#9aa6f2", to:"#5b64b6" }, bevel:"#d3daff", ao:0.45,
+    spec:0.5, shadow:1.1, hoverMode:"raise", soft:true,
+    depth:"大圆角 + 20px 侧壁 + 外侧柔和投影 + 内上亮下暗（inset）+ 顶部镜面高光",
+    hover:"那一格抬起 13px，投影随之变大变浓",
+    cost:"低（同①，圆角更大）", costLevel:"low",
+    risk:"低（黏土对比度天然偏低，标签用纯白 + 描边保证可读）",
+    src:"出处：Claymorphism 的公开配方（1 外层软影 + 2 道 inset：左上亮、右下暗 + **大圆角**，圆角小就变斜面而不是黏土）。",
+  },
+];
+const byId = (id) => BUILDS.find((b) => b.id === id);
+
+// ============================================================================
+// 唯一的入场：与产品现状逐参数一致
+// ============================================================================
+const ENTRANCE_CURRENT = {
+  scale:{ from:0.86, ms:300, cur:"cubic-bezier(0.34,1.56,0.64,1)" },
+  rotate:{ from:-24, ms:380, cur:"cubic-bezier(0.16,1,0.3,1)" },
+  fade:{ ms:167, cur:"cubic-bezier(0,0,0,1)" },
+  total:400,
+};
+
+// ============================================================================
+// 画一面盘
+// ============================================================================
+function buildWheel(host, build, opts = {}) {
+  host.innerHTML = "";
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", `0 0 ${WIN} ${WIN}`);
+  svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
+  host.appendChild(svg);
+  const el = (tag, attrs) => {
+    const node = document.createElementNS(ns, tag);
+    for (const key in attrs) node.setAttribute(key, attrs[key]);
+    return node;
+  };
+  const layer = (id) => {
+    const g = document.createElementNS(ns, "g");
+    g.setAttribute("data-layer", id);
+    svg.appendChild(g);
+    return g;
+  };
+
+  // 共用渐变：光**全盘统一**（左上打光）
+  const defs = el("defs");
+  const idLight = uid("lt"), idGloss = uid("gl"), idSoft = uid("sf"), idShade = uid("sd"), idBody = uid("bd");
+  const R = R_OUT + 60;
+  const g1 = el("linearGradient", { id:idLight, gradientUnits:"userSpaceOnUse",
+                                    x1:CX - R, y1:CY - R, x2:CX + R, y2:CY + R });
+  g1.appendChild(el("stop", { offset:"0", "stop-color":"#ffffff", "stop-opacity":"0.9" }));
+  g1.appendChild(el("stop", { offset:"0.45", "stop-color":"#ffffff", "stop-opacity":"0.05" }));
+  g1.appendChild(el("stop", { offset:"1", "stop-color":"#000000", "stop-opacity":"0.6" }));
+  defs.appendChild(g1);
+  const g2 = el("linearGradient", { id:idGloss, gradientUnits:"userSpaceOnUse",
+                                    x1:CX, y1:CY - R_OUT, x2:CX, y2:CY + R_OUT });
+  g2.appendChild(el("stop", { offset:"0", "stop-color":"#ffffff", "stop-opacity":"0.6" }));
+  g2.appendChild(el("stop", { offset:"0.5", "stop-color":"#ffffff", "stop-opacity":"0.04" }));
+  g2.appendChild(el("stop", { offset:"1", "stop-color":"#ffffff", "stop-opacity":"0" }));
+  defs.appendChild(g2);
+  const g3 = el("linearGradient", { id:idShade, gradientUnits:"userSpaceOnUse",
+                                    x1:CX, y1:CY - R_OUT, x2:CX, y2:CY + R_OUT });
+  g3.appendChild(el("stop", { offset:"0", "stop-color":"#000", "stop-opacity":"0" }));
+  g3.appendChild(el("stop", { offset:"0.45", "stop-color":"#000", "stop-opacity":"0" }));
+  g3.appendChild(el("stop", { offset:"1", "stop-color":"#000", "stop-opacity":"0.55" }));
+  defs.appendChild(g3);
+  const g4 = el("radialGradient", { id:idSoft });
+  g4.appendChild(el("stop", { offset:"0.3", "stop-color":"#000", "stop-opacity":"0.5" }));
+  g4.appendChild(el("stop", { offset:"0.72", "stop-color":"#000", "stop-opacity":"0.2" }));
+  g4.appendChild(el("stop", { offset:"1", "stop-color":"#000", "stop-opacity":"0" }));
+  defs.appendChild(g4);
+  if (build.body.kind === "grad") {
+    const g = el("linearGradient", { id:idBody, gradientUnits:"userSpaceOnUse",
+                                     x1:CX, y1:CY - R_OUT, x2:CX, y2:CY + R_OUT });
+    g.appendChild(el("stop", { offset:"0", "stop-color":build.body.from }));
+    g.appendChild(el("stop", { offset:"1", "stop-color":build.body.to }));
+    defs.appendChild(g);
+  } else if (build.body.kind === "band") {
+    const g = el("linearGradient", { id:idBody, gradientUnits:"userSpaceOnUse",
+                                     x1:CX - R_OUT, y1:CY - R_OUT, x2:CX + R_OUT, y2:CY + R_OUT });
+    for (const [c, o] of build.body.stops) g.appendChild(el("stop", { offset:`${o}`, "stop-color":c }));
+    defs.appendChild(g);
+  }
+  svg.appendChild(defs);
+
+  const shadowLayer = layer("shadow"), trayLayer = layer("tray"), wallLayer = layer("wall");
+  const bodyLayer = layer("body"), faceLayer = layer("face");
+  const icons = layer("icons"), labels = layer("labels");
+
+  // ---- 底座托盘（扇区「放在「它上面）+ 托盘内缘的环境遮蔽
+  if (build.tray) {
+    trayLayer.appendChild(el("path", { d: band(DEAD - 12, R_OUT + 12),
+                                       fill:"rgba(10,13,19,0.72)" }));
+    trayLayer.appendChild(el("path", { d: band(DEAD - 12, DEAD - 3), fill:"#000",
+                                       "fill-opacity":`${build.ao * 0.5}` }));
+    trayLayer.appendChild(el("path", { d: band(R_OUT + 3, R_OUT + 12), fill:"#000",
+                                       "fill-opacity":`${build.ao * 0.4}` }));
+    trayLayer.appendChild(el("path", { d: band(DEAD - 12, R_OUT + 12), fill:"none",
+                                       stroke:`url(#${idLight})`, "stroke-width":1.2 }));
+  }
+
+  const tiles = [];
+  const half = SWEEP / 2 - GAP_DEG;
+
+  for (let i = 0; i < N; i++) {
+    const mid = i * SWEEP;
+    const isHover = opts.hovered && i === HOVER;
+    const baseStep = build.step ? (i % 2 === 0 ? build.step / 2 : -build.step / 2) : 0;
+    const d = wedge(DEAD, R_OUT, mid - half, mid + half, build.corner);
+    const tile = { i, mid, d, baseStep, isHover, hover: false,
+                   bodyFill: build.body.kind === "flat" ? build.body.fill : `url(#${idBody})` };
+
+    // ① 落影（在托盘上，向屏幕下方偏，越「高「越大越浓）
+    tile.shadowEl = el("path", { d, fill:`url(#${idSoft})`, transform:"" });
+    // ② 侧壁（厚度）：同形同尺寸，只差一个竖直偏移
+    tile.wallEl = el("path", { d, fill: build.soft ? "rgba(52,58,110,0.95)" : "rgba(10,12,17,0.95)",
+                               stroke:`url(#${idLight})`, "stroke-width":1, transform:"" });
+    // ③ 顶面
+    tile.bodyEl = el("path", { d, fill: tile.bodyFill, transform:"" });
+    // ④ 顶面下缘的暗（内阴影）+ 上缘的亮（斜面）
+    tile.shadeEl = el("path", { d, fill:`url(#${idShade})`, opacity:0.85, transform:"" });
+    // ⑤ 顶部镜面高光带（沿内缘的一条窄带）
+    tile.glossEl = el("path", { d: wedge(DEAD + 1, DEAD + 13, mid - half * 0.86, mid + half * 0.86, build.corner * 0.5),
+                                 fill:`url(#${idGloss})`, opacity:build.spec, transform:"" });
+    // 倒角面（③ 档专用）：外缘内侧的一圈窄带，作为「第二个可见面"
+    if (build.chamfer) {
+      tile.chamferEl = el("path", { d: wedge(R_OUT - build.chamfer, R_OUT, mid - half, mid + half, build.corner * 0.6),
+                                     fill: build.bevel, "fill-opacity":"0.20",
+                                     stroke:`url(#${idLight})`, "stroke-width":1, transform:"" });
+    }
+    tile.edgeEl = el("path", { d, fill:"none",
+                               stroke: tile.isHover && build.hoverMode === "glint" ? build.bevel : `url(#${idLight})`,
+                               "stroke-width":1.6, transform:"" });
+    if (build.glow)
+      tile.glowEl = el("path", { d, fill:"none", stroke:build.glow, "stroke-width":5,
+                                 opacity:0.5, transform:"" });
+    tile.icon = el("circle", { cx:0, cy:0, r:8.5, fill:"rgba(255,255,255,0.92)" });
+    tile.label = el("text", { "text-anchor":"middle", fill:"#ffffff", "font-size":12.5,
+                              "font-family":FONT, "paint-order":"stroke",
+                              stroke:"rgba(0,0,0,0.5)", "stroke-width":2.6 });
+    tile.label.textContent = NAMES[i];
+
+    shadowLayer.appendChild(tile.shadowEl);
+    if (build.chamfer) bodyLayer.appendChild(tile.chamferEl);
+    wallLayer.appendChild(tile.wallEl);
+    bodyLayer.appendChild(tile.bodyEl);
+    faceLayer.appendChild(tile.shadeEl);
+    faceLayer.appendChild(tile.glossEl);
+    faceLayer.appendChild(tile.glowEl || el("g"));
+    faceLayer.appendChild(tile.edgeEl);
+    icons.appendChild(tile.icon);
+    labels.appendChild(tile.label);
+    tiles.push(tile);
+  }
+
+  // 中心（与每块同一套光；不上托盘）
+  const center = layer("center");
+  const hubR = DEAD - 10;
+  center.appendChild(el("circle", { cx:CX, cy:CY, r:hubR,
+                                    fill: build.body.kind === "flat" ? "rgba(14,18,26,0.9)"
+                                                                     : `url(#${idBody})`,
+                                    stroke:`url(#${idLight})`, "stroke-width":1.4 }));
+  center.appendChild(el("path", { d:`M ${CX - hubR} ${CY} A ${hubR} ${hubR} 0 0 1 ${CX + hubR} ${CY} Z`,
+                                  fill:`url(#${idGloss})`, opacity:build.spec * 0.7 }));
+  const hint = el("text", { x:CX, y:CY + 4, "text-anchor":"middle", fill:"#fff", opacity:0.8,
+                            "font-size":12, "font-family":FONT, "paint-order":"stroke",
+                            stroke:"rgba(0,0,0,0.5)", "stroke-width":2.2 });
+  hint.textContent = "Esc";
+  center.appendChild(hint);
+
+  // 逐块摆位：dy = 自己的高度 + 悬停抬起；厚度体现为侧壁与顶面的竖直错位
+  function place(tile, hovered) {
+    const lift = hovered ? build.lift : 0;
+    const dy = tile.baseStep - lift;                 // 负 = 往上抬
+    const thick = build.thick + (hovered ? Math.round(build.thick * 0.35) : 0);
+    tile.edgeEl.setAttribute("transform", `translate(0,${dy})`);
+    tile.bodyEl.setAttribute("transform", `translate(0,${dy})`);
+    tile.shadeEl.setAttribute("transform", `translate(0,${dy})`);
+    tile.glossEl.setAttribute("transform", `translate(0,${dy})`);
+    if (tile.chamferEl) tile.chamferEl.setAttribute("transform", `translate(0,${dy})`);
+    if (tile.glowEl) tile.glowEl.setAttribute("transform", `translate(0,${dy})`);
+    tile.wallEl.setAttribute("transform", `translate(0,${dy + thick})`);
+    tile.shadowEl.setAttribute("transform", `translate(0,${dy + thick + 5})`);
+    tile.shadowEl.setAttribute("opacity", `${Math.min(1, build.shadow * (hovered ? 1 : 0.8))}`);
+    // 图标与文字跟着这一块
+    const ri = DEAD + (R_OUT - DEAD) * 0.30, rl = DEAD + (R_OUT - DEAD) * 0.70;
+    const [ix, iy] = P(ri, tile.mid), [lx, ly] = P(rl, tile.mid);
+    tile.icon.setAttribute("cx", ix.toFixed(2));
+    tile.icon.setAttribute("cy", (iy + dy).toFixed(2));
+    tile.label.setAttribute("x", lx.toFixed(2));
+    tile.label.setAttribute("y", (ly + dy + 4.4).toFixed(2));
+    if (build.hoverMode === "glint" && hovered) {
+      tile.edgeEl.setAttribute("stroke", "#ffffff");
+      if (tile.glossEl) tile.glossEl.setAttribute("opacity", `${Math.min(1, build.spec * 2.2)}`);
+    } else {
+      tile.edgeEl.setAttribute("stroke", `url(#${idLight})`);
+      if (tile.glossEl) tile.glossEl.setAttribute("opacity", `${build.spec}`);
+    }
+    tile.hover = hovered;
+  }
+  for (const t of tiles) place(t, t.isHover);
+
+  return { svg, build, tiles,
+           sectors: tiles.map((t) => ({ i:t.i, angle:t.mid, body:t.bodyEl, wall:t.wallEl })),
+           layers:{ shadow:shadowLayer, tray:trayLayer, wall:wallLayer, body:bodyLayer,
+                    face:faceLayer, icons, labels, center },
+           setHoverTile: (index, on) => { const t = tiles[index]; if (t) place(t, on); } };
+}
+
+// ============================================================================
+// 入场（唯一）与悬停（只动那一格）
+// ============================================================================
+let running = [], rafId = 0, rafSeq = 0;
+const stopAll = () => {
+  running.forEach((a) => { try { a.cancel(); } catch { /* 已结束 */ } });
+  running = [];
+  if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
+  rafSeq++;
+};
+const track = (a) => { running.push(a); return a; };
+const _ease = {};
+function easeFn(cur) {
+  if (_ease[cur]) return _ease[cur];
+  const m = /cubic-bezier\(([-\d.]+),([-\d.]+),([-\d.]+),([-\d.]+)\)/.exec(cur || "");
+  if (!m) return (_ease[cur] = (t) => t);
+  const [x1, y1, x2, y2] = m.slice(1).map(Number);
+  const bez = (t, a, b) => 3 * (1 - t) * (1 - t) * t * a + 3 * (1 - t) * t * t * b + t * t * t;
+  return (_ease[cur] = (x) => { let lo = 0, hi = 1, t = x;
+    for (let i = 0; i < 24; i++) { t = (lo + hi) / 2; if (bez(t, x1, x2) < x) lo = t; else hi = t; }
+    return bez(t, y1, y2); });
+}
+
+function playEntrance(build, handle) {
+  const root = document.getElementById("root");
+  const e = ENTRANCE_CURRENT;
+  const anims = [
+    track(root.animate([{ opacity:0 }, { opacity:1 }],
+      { duration:e.fade.ms, easing:e.fade.cur, fill:"both" })),
+    track(root.animate([{ transform:`scale(${e.scale.from})` }, { transform:"scale(1)" }],
+      { duration:e.scale.ms, easing:e.scale.cur, fill:"both" })),
+    track(root.animate([{ transform:`rotate(${e.rotate.from}deg)` }, { transform:"rotate(0deg)" }],
+      { duration:e.rotate.ms, easing:e.rotate.cur, fill:"both" })),
+  ];
+  void build; void handle;
+  return anims;
+}
+
+function playHover(build, handle) {
+  // 只动被悬停的那一格：抬起 + 厚度变大 + 落影变大（"抬起来「的物理反应）
+  const t = handle.tiles[HOVER];
+  if (!t) return [];
+  const seq = ++rafSeq;
+  const start = performance.now();
+  const ease = easeFn("cubic-bezier(0.34,1.56,0.64,1)");
+  const ms = 220;
+  const tick = (now) => {
+    const raw = Math.min(1, (now - start) / ms);
+    handle.setHoverTile(HOVER, ease(raw) > 0.5);
+    if (raw < 1 && seq === rafSeq) rafId = requestAnimationFrame(tick);
+  };
+  rafId = requestAnimationFrame(tick);
+  return [{ ms }];
+}
+
+// ============================================================================
+// 界面
+// ============================================================================
+let state = { build: BUILDS[0], handle: null };
+let demoToken = 0;
+
+function renderAll() {
+  stopAll();
+  const root = document.getElementById("root");
+  root.style.transform = "";
+  document.querySelectorAll("#list .card").forEach((card) =>
+    card.classList.toggle("on", card.dataset.build === state.build.id));
+  state.handle = buildWheel(root, state.build, { hovered:false });
+  fillSpec();
+  setStatus(`做法：${state.build.name}`);
+}
+
+function drawThumb(host, build) {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", `0 0 ${WIN} ${WIN}`);
+  host.appendChild(svg);
+  const el = (tag, attrs) => {
+    const n = document.createElementNS(ns, tag);
+    for (const key in attrs) n.setAttribute(key, attrs[key]);
+    return n;
+  };
+  const defs = el("defs");
+  const idB = uid("tb"), idL = uid("tl");
+  const R = R_OUT + 60;
+  if (build.body.kind === "grad") {
+    const g = el("linearGradient", { id:idB, gradientUnits:"userSpaceOnUse",
+                                     x1:CX, y1:CY - R_OUT, x2:CX, y2:CY + R_OUT });
+    g.appendChild(el("stop", { offset:"0", "stop-color":build.body.from }));
+    g.appendChild(el("stop", { offset:"1", "stop-color":build.body.to }));
+    defs.appendChild(g);
+  } else if (build.body.kind === "band") {
+    const g = el("linearGradient", { id:idB, gradientUnits:"userSpaceOnUse",
+                                     x1:CX - R_OUT, y1:CY - R_OUT, x2:CX + R_OUT, y2:CY + R_OUT });
+    for (const [c, o] of build.body.stops) g.appendChild(el("stop", { offset:`${o}`, "stop-color":c }));
+    defs.appendChild(g);
+  }
+  const g2 = el("linearGradient", { id:idL, gradientUnits:"userSpaceOnUse",
+                                    x1:CX - R, y1:CY - R, x2:CX + R, y2:CY + R });
+  g2.appendChild(el("stop", { offset:"0", "stop-color":"#fff", "stop-opacity":"0.9" }));
+  g2.appendChild(el("stop", { offset:"0.45", "stop-color":"#fff", "stop-opacity":"0.06" }));
+  g2.appendChild(el("stop", { offset:"1", "stop-color":"#000", "stop-opacity":"0.6" }));
+  defs.appendChild(g2);
+  svg.appendChild(defs);
+  const half = SWEEP / 2 - GAP_DEG;
+  if (build.tray)
+    svg.appendChild(el("path", { d: band(DEAD - 12, R_OUT + 12), fill:"rgba(10,13,19,0.7)" }));
+  for (let i = 0; i < N; i++) {
+    const mid = i * SWEEP;
+    const step = build.step ? (i % 2 === 0 ? build.step / 2 : -build.step / 2) : 0;
+    const d = wedge(DEAD, R_OUT, mid - half, mid + half, build.corner);
+    svg.appendChild(el("path", { d, fill:"#000", "fill-opacity":"0.4",
+                                 transform:`translate(0,${step + build.thick + 5})` }));
+    svg.appendChild(el("path", { d, fill: build.soft ? "rgba(52,58,110,0.95)" : "rgba(10,12,17,0.95)",
+                                 transform:`translate(0,${step + build.thick})` }));
+    svg.appendChild(el("path", { d, fill: build.body.kind === "flat" ? build.body.fill : `url(#${idB})`,
+                                 stroke:`url(#${idL})`, "stroke-width":3,
+                                 transform:`translate(0,${step})` }));
+  }
+}
+
+function fillSpec() {
+  const b = state.build;
+  document.getElementById("s-name").textContent = `${b.name} · ${b.tagline}`;
+  document.getElementById("s-depth").textContent = b.depth;
+  document.getElementById("s-entrance").textContent = describeEntrance();
+  document.getElementById("s-hover").textContent = b.hover;
+  document.getElementById("s-cost").innerHTML = `<span class="cost ${b.costLevel}">${b.cost}</span>`;
+  document.getElementById("s-risk").textContent = b.risk;
+  document.getElementById("s-src").textContent = b.src;
+}
+
+function describeEntrance() {
+  const e = ENTRANCE_CURRENT;
+  return `缩放 ${e.scale.from}→1 / ${e.scale.ms}ms / ${e.scale.cur}；` +
+         `旋转 ${e.rotate.from}°→0 / ${e.rotate.ms}ms / ${e.rotate.cur}；` +
+         `淡入 ${e.fade.ms}ms（三通道并行，与产品现状逐参数一致）`;
+}
+
+function setStatus(t) { document.getElementById("status").textContent = t; }
+
+async function runDemo() {
+  const token = ++demoToken;
+  stopAll();
+  playEntrance(state.build, state.handle);
+  setStatus(`${state.build.name}：入场中（现状那套）`);
+  await new Promise((r) => setTimeout(r, ENTRANCE_CURRENT.total + 320));
+  if (token !== demoToken) return;
+  playHover(state.build, state.handle);
+  setStatus(`${state.build.name}：悬停第 1 格`);
+}
+
+async function runAll() {
+  const token = ++demoToken;
+  for (const b of BUILDS) {
+    if (token !== demoToken) return;
+    state.build = b;
+    renderAll();
+    setStatus(`依次对比：${b.name}`);
+    playEntrance(b, state.handle);
+    await new Promise((r) => setTimeout(r, ENTRANCE_CURRENT.total + 660));
+  }
+  if (token === demoToken) setStatus("依次对比结束");
+}
+
+function buildUi() {
+  const list = document.getElementById("list");
+  list.innerHTML = BUILDS.map((b) => `
+    <div class="card" data-build="${b.id}">
+      <div class="thumb"></div>
+      <div>
+        <div class="name">${b.name}</div>
+        <div class="line">${b.tagline}</div>
+        <div class="cost ${b.costLevel}">成本：${b.cost}</div>
+      </div>
+    </div>`).join("");
+  list.querySelectorAll(".card").forEach((cardEl) => {
+    const build = byId(cardEl.dataset.build);
+    drawThumb(cardEl.querySelector(".thumb"), build);
+    cardEl.addEventListener("click", () => { state.build = build; renderAll(); runDemo(); });
+  });
+
+  document.getElementById("btn-entrance").addEventListener("click", () => {
+    demoToken++; stopAll(); playEntrance(state.build, state.handle);
+    setStatus(`重播入场：${state.build.name}（现状那套）`);
+  });
+  document.getElementById("btn-hover").addEventListener("click", () => {
+    demoToken++; stopAll(); playHover(state.build, state.handle);
+    setStatus(`悬停：${state.build.name}`);
+  });
+  document.getElementById("btn-all").addEventListener("click", () => runAll());
+  document.getElementById("btn-stop").addEventListener("click", () => {
+    demoToken++; renderAll(); setStatus("已停止（回到落定态）");
+  });
+}
+
+// ============================================================================
+// 页内自检（每条都能失败）
+// ============================================================================
+// 从路径文本里取出所有坐标，算它们到圆心的半径 —— 用它核对「形状没被剪切/拉伸"
+function radiiOf(d) {
+  const nums = d.match(/-?\d+(\.\d+)?/g) || [];
+  const out = [];
+  for (let i = 0; i + 1 < nums.length; i += 2) {
+    const x = Number(nums[i]), y = Number(nums[i + 1]);
+    if (Number.isNaN(x) || Number.isNaN(y)) continue;
+    out.push(Math.hypot(x - CX, y - CY));
+  }
+  return out;
+}
+
+function buildOffscreen(build) {
+  const host = document.createElement("div");
+  host.style.cssText = "position:absolute;left:-9999px;top:0;width:740px;height:740px";
+  document.body.appendChild(host);
+  const h = buildWheel(host, build, { hovered:false });
+  const box = h.svg.getBBox();
+  host.remove();
+  return { box, handle: h };
+}
+
+function selfCheck() {
+  const out = [];
+
+  // ① **本轮的硬要求**：形状不被剪切/拉伸 —— 每块的内缘点必须落在内径上、
+  //    外缘点必须落在外径上（上一版被斜切时它们会离开自己的半径，这条就会红）。
+  const bad = [];
+  let checked = 0;
+  const half0 = SWEEP / 2 - GAP_DEG;
+  for (const b of BUILDS) {
+    for (let i = 0; i < N; i++) {
+      const mid = i * SWEEP;
+      const g = wedgePoints(DEAD, R_OUT, mid - half0, mid + half0, b.corner);
+      const rOf = (pt) => Math.hypot(pt[0] - CX, pt[1] - CY);
+      for (const pt of g.inner) {
+        checked++;
+        if (Math.abs(rOf(pt) - DEAD) > 0.6) bad.push(`${b.id}#${i} 内缘 r=${rOf(pt).toFixed(1)}`);
+      }
+      for (const pt of g.outer) {
+        checked++;
+        if (Math.abs(rOf(pt) - R_OUT) > 0.6) bad.push(`${b.id}#${i} 外缘 r=${rOf(pt).toFixed(1)}`);
+      }
+      for (const pt of g.controls) {
+        checked++;
+        const r = rOf(pt);
+        if (r < DEAD - 0.6 || r > R_OUT + 0.6) bad.push(`${b.id}#${i} 控制点 r=${r.toFixed(1)}`);
+      }
+    }
+  }
+  out.push(["形状没有被剪切/拉伸（内外缘点都在自己的半径上）", bad.length === 0,
+    bad.length ? `${bad.length}/${checked} 处越界：${bad.slice(0, 3).join("；")}`
+               : `核对 ${checked} 个点，全部落在内径 ${DEAD} / 外径 ${R_OUT} 上`]);
+
+  // ② 每块都有厚度：侧壁与顶面同形，只差一个竖直偏移
+  const h2 = buildOffscreen(byId("keycap")).handle;
+  const same = h2.tiles.every((t) => t.wallEl.getAttribute("d") === t.bodyEl.getAttribute("d"));
+  const offsets = h2.tiles.map((t) => {
+    const m = /translate\(0,(-?[\d.]+)\)/.exec(t.wallEl.getAttribute("transform") || "");
+    const m2 = /translate\(0,(-?[\d.]+)\)/.exec(t.bodyEl.getAttribute("transform") || "");
+    return m && m2 ? Number(m[1]) - Number(m2[1]) : 0;
+  });
+  out.push(["厚度真的存在（侧壁与顶面同形、只差竖直偏移）",
+    same && offsets.every((o) => o > 5),
+    `同形 ${same}；偏移 ${offsets[0]}px（六档都应 > 5px）`]);
+
+  // ③ 光照全盘一致：所有面板共用同一支描边渐变
+  const strokes = new Set(h2.tiles.map((t) => t.edgeEl.getAttribute("stroke")));
+  out.push(["光照方向全盘一致（共用同一支描边渐变）", strokes.size === 1,
+    `取值种类 ${strokes.size}：${[...strokes][0]}`]);
+
+  // ④ 六档几何都在窗口内且非空
+  const boxes = BUILDS.map((b) => ({ id:b.id, b:buildOffscreen(b).box }));
+  const outside = boxes.filter(({ b }) => b.x < -1 || b.y < -1 ||
+    b.x + b.width > WIN + 1 || b.y + b.height > WIN + 1 || b.width < 10 || b.height < 10);
+  out.push(["六档几何都落在 740×740 内且非空", outside.length === 0,
+    outside.length ? JSON.stringify(outside) : boxes.map(({ id,b }) =>
+      `${id} ${b.width.toFixed(0)}×${b.height.toFixed(0)}`).join("、")]);
+
+  // ⑤ 悬停只改那一格，且确实抬高了（量顶面的位移）
+  const h5 = buildOffscreen(byId("keycap")).handle;
+  const before = h5.tiles.map((t) => t.bodyEl.getAttribute("transform"));
+  h5.setHoverTile(HOVER, true);
+  const after = h5.tiles.map((t) => t.bodyEl.getAttribute("transform"));
+  const changed = after.filter((v, i) => v !== before[i]).length;
+  const up = /translate\(0,(-?[\d.]+)\)/.exec(after[HOVER]);
+  out.push(["悬停只改那一格、且确实抬高了", changed === 1 && up && Number(up[1]) < -5,
+    `变化 ${changed} 格；第 1 格位移 ${up ? up[1] : "?"}px`]);
+
+  // ⑥ 入场参数与现状完全一致
+  out.push(["六档入场参数与现状完全一致",
+    BUILDS.every((b) => !b.entrance || JSON.stringify(b.entrance) === JSON.stringify(ENTRANCE_CURRENT)),
+    `缩放 ${ENTRANCE_CURRENT.scale.from}→1/${ENTRANCE_CURRENT.scale.ms}ms；` +
+    `旋转 ${ENTRANCE_CURRENT.rotate.from}°→0/${ENTRANCE_CURRENT.rotate.ms}ms；` +
+    `淡入 ${ENTRANCE_CURRENT.fade.ms}ms`]);
+
+  // ⑦ 每档入场都产出三条通道
+  const host = document.createElement("div");
+  host.style.cssText = "position:absolute;left:-9999px;top:0;width:740px;height:740px";
+  document.body.appendChild(host);
+  const counts = [];
+  for (const b of BUILDS) {
+    const h = buildWheel(host, b, { hovered:false });
+    stopAll();
+    counts.push(`${b.id}:${playEntrance(b, h).length}`);
+    stopAll();
+  }
+  host.remove();
+  out.push(["每档入场都产出 3 条通道（缩放/旋转/淡入）",
+    counts.every((t) => t.endsWith(":3")), counts.join("　")]);
+
+  const pass = out.filter((r) => r[1]).length;
+  document.getElementById("selfcheck").innerHTML =
+    `<b>页内自检：${pass}/${out.length} 通过</b>` +
+    out.map((r) => `<div class="${r[1] ? "ok" : "bad"}">${r[1] ? "✓" : "✗"} ${r[0]}　<span class="hint">${r[2]}</span></div>`).join("");
+  return out;
+}
+
+window.addEventListener("error", (e) => {
+  const el2 = document.getElementById("selfcheck");
+  if (el2) el2.innerHTML = `<span class="bad">页面脚本出错：${e.message}</span>`;
+});
+
+try {
+  buildUi();
+  renderAll();
+  const results = selfCheck();
+  renderAll();
+  playEntrance(state.build, state.handle);
+  setStatus(results.every((r) => r[1])
+    ? `就绪 · 自检 ${results.length}/${results.length} 通过 · 做法：${state.build.name}`
+    : "就绪，但自检未全通过（见右侧页脚）");
+} catch (err) {
+  document.getElementById("selfcheck").innerHTML = `<span class="bad">初始化失败：${err.message}</span>`;
+}
+</script>
+</body>
+</html>

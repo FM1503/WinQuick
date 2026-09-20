@@ -59,6 +59,9 @@ diff <(之前备份的 crash.log) "%LOCALAPPDATA%\WinQuick\logs\crash.log"
 2. **用 HTML 做最小成本原型**：单文件、双击即开、无依赖；**复刻真实几何与参数**
    （窗口比例、半径、角度约定、时长、曲线），否则用户挑的和你实现的会不是一回事。
    原型里要能**逐个播放、也能背靠背对比**，并给每条标注**时长/曲线/形态/实现成本/出处**。
+   **布局固定为「左列选项 + 右列预览」，左右并排**（用户提过：上下排会让他没法同时看到
+   列表和预览，换个档就要上下滚动）。左列每项放一个**只画轮廓的小缩略图** —— 挑形态/立体感时
+   差异主要就在轮廓上。
 3. **交给用户挑**（观感是一眼可判的，不该由 AI 逐轮猜）。
 4. 按选中的那一档实现，**只做针对该改动的最简检查**，然后交用户验收。
 
@@ -70,6 +73,8 @@ diff <(之前备份的 crash.log) "%LOCALAPPDATA%\WinQuick\logs\crash.log"
 | `preview/childring-preview.html` | 子环展开（六个候选；用户已选定 ③ 径向滑出） |
 | `preview/skin-preview.html` | **换肤（材质+动效）**：七套皮肤 × 三档密度，含设置面板外观区 mock |
 | `preview/form-preview.html` | **形态与专属动画**：六种形态（饼形/圆角/花瓣/刻度盘/卡片弧/网格）各配一段专属入场 |
+| `preview/depth-preview.html` | **伪 3D v2**：六档按视角改轮廓（斜盘 35°/52°、透视盘、立牌环、真透视、现状） |
+| `preview/sao-preview.html` | **六种立体做法**（形状不变形、光照全盘一致、入场保持现状）：厚键帽 / 厚玻璃 / 双面倒角 / 高低错落 / 金属铭牌 / 黏土块 |
 | `preview/_verify.mjs` | 上面这些原型的**逻辑**自检器：`node preview/_verify.mjs [file:///…]`（默认验 form-preview） |
 
 自检写在**各自页面**的 `selfCheck()` 里（那里才拿得到页面的几何与浏览器的真实值），
@@ -104,6 +109,7 @@ diff <(之前备份的 crash.log) "%LOCALAPPDATA%\WinQuick\logs\crash.log"
 | `docs/M6-particles.md` | 粒子动画调研与代价实测 |
 | `docs/M7-entrance-motion.md` | **入场动画**：调研、曲线数据、各轮调参与教训 |
 | `docs/M8-skins.md` | **换肤与形态**：调研、七套皮肤规格、四档形态、接线方案与执行记录 |
+| `docs/M9-pseudo3d.md` | **伪 3D**：光影/视差/逐项深度三条便宜路、六档候选、实现映射与待定项 |
 | `docs/review-2026-09.md` | 代码审查与架构性能分析（含 P1–P8 风险清单与执行记录） |
 
 ## 6. 其它既有约定

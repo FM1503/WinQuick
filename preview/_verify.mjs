@@ -65,12 +65,12 @@ await sleep(700);   // 让页内自检与首次渲染跑完
 const r = await evaluate(`(() => ({
   check: document.getElementById("selfcheck") ? document.getElementById("selfcheck").innerText.trim() : "(页面没有 selfcheck 元素)",
   status: document.getElementById("status") ? document.getElementById("status").innerText.trim() : "",
-  cards: document.querySelectorAll("#gallery .card").length,
-  wired: document.querySelectorAll("#gallery .card.on").length,
+  cards: document.querySelectorAll(".card").length,
+  wired: document.querySelectorAll(".card.on").length,
 }))()`);
 
 console.log(`原型：${URL}`);
-console.log(`画廊卡片：${r.cards} 张，当前选中：${r.wired}`);
+console.log(`选项卡片：${r.cards} 张，当前选中：${r.wired}`);
 if (r.status) console.log(`状态行：${r.status}`);
 console.log("—— 页内自检 ——");
 console.log(r.check);

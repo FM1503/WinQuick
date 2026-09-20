@@ -131,6 +131,14 @@ public sealed record BehaviorConfig
 
     /// <summary>失去焦点时是否关闭覆盖层。</summary>
     public bool HideOnFocusLoss { get; init; } = true;
+
+    /// <summary>
+    /// 关闭轮盘后（延迟一会儿）把本进程的工作集交给系统换出，降低常驻占用。
+    ///
+    /// 默认开：这是常驻托盘工具，空闲时不占着工作集是合理目标。
+    /// 关掉它的唯一理由是"不能接受下次唤出慢一点点"（代价见 <c>Diagnostics/MemoryTrim.cs</c>）。
+    /// </summary>
+    public bool TrimMemoryWhenIdle { get; init; } = true;
 }
 
 public sealed record StartupConfig

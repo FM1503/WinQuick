@@ -329,3 +329,5 @@ GetShellWindow
 WindowFromPoint
 DestroyWindow
 CreateWindowEx
+SetProcessWorkingSetSizeEx
+GetCurrentProcess

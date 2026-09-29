@@ -1,4 +1,4 @@
-using WinQuick.Core.Config;
+﻿using WinQuick.Core.Config;
 
 namespace WinQuick.Core.Tests;
 
@@ -410,5 +410,29 @@ public class MenuEditorTests
 
         Assert.Equal(["组", "C", "D"], menu.Items.Select(i => i.Label));
         Assert.Equal(["改过的子1", "子2", "子3"], menu.Items[0].Children.Select(i => i.Label));
+    }
+
+    /// <summary>
+    /// 子环里建分组（层级上限拆掉后的正常操作，用户要求）：
+    /// 建进指定父项的子项列表，默认 -1 仍建在第一层。
+    /// 宿主第一版无视 ParentIndex、一律建到第一层 —— 这条锁住"建对地方"。
+    /// </summary>
+    [Fact]
+    public void 建分组可以指定父项_默认仍在第一层()
+    {
+        var menu = SampleMenu();
+
+        var (intoParent, _) = MenuEditor.AddGroup(menu, "子分组", Item("首项"), parentIndex: 1);
+        Assert.Equal(["A", "组", "C"], intoParent.Items.Select(i => i.Label));
+        Assert.Equal(["子1", "子2", "子分组"], intoParent.Items[1].Children.Select(i => i.Label));
+        Assert.Equal("首项", intoParent.Items[1].Children[^1].Children.Single().Label);
+
+        var (atRoot, _) = MenuEditor.AddGroup(menu, "根分组", Item("首项"));
+        Assert.Equal(["A", "组", "C", "根分组"], atRoot.Items.Select(i => i.Label));
+        Assert.Equal(["子1", "子2"], atRoot.Items[1].Children.Select(i => i.Label));
+
+        var (bad, error) = MenuEditor.AddGroup(menu, "x", Item("首项"), parentIndex: 99);
+        Assert.Same(menu, bad);
+        Assert.NotNull(error);
     }
 }

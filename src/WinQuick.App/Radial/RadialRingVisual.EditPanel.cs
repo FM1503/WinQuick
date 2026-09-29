@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -170,8 +170,8 @@ public sealed partial class RadialRingView
     /// 子环那块只给一个按钮，但把"分组在哪里建"写清楚了：
     /// 多一次点击，换掉一次困惑。
     ///
-    /// 分组只建在第一层：子环里再放分组就是第三层，而当前只支持两层
-    /// （方案第七节：8 扇区下超过 2 层错误率对专家都不可接受）。
+    /// 两个「＋」都给「新建分组」：层级上限拆掉之后，子环里建分组（= 更深一级的分组）
+    /// 是正常操作 —— 用户明确要"第二层环有添加分组的途径"。
     /// </summary>
     /// <param name="isChild">true 表示这是子环的「＋」（加到当前展开的父项下面）。</param>
     public void ShowAddChoice(int addSectorIndex, bool isChild = false)
@@ -198,20 +198,21 @@ public sealed partial class RadialRingView
 
         };
 
-        // 「新建分组」只在第一层给：子环里再放分组就是第三层，当前不支持。
-        if (!isChild)
-        {
-            rows.Add(("\uE8F4", "新建分组…", () => EnterTextMode(
-                title: "分组名称",
-                initial: "新建分组",
-                hint: "下一步选一个程序作为它的第一项。之后把鼠标移到这个分组上，"
+        // 两个「＋」都给「新建分组」：层级上限拆掉之后，子环里建分组（= 更深一级的分组）
+        // 是正常操作 —— 用户明确要"第二层环有添加分组的途径"。
+        rows.Add(("\uE8F4", "新建分组…", () => EnterTextMode(
+            title: "分组名称",
+            initial: "新建分组",
+            hint: isChild
+                ? "下一步选一个程序作为它的第一项。之后点开这个分组，"
+                    + "进到下一层后点那里的「＋」继续添加。"
+                : "下一步选一个程序作为它的第一项。之后点开这个分组，"
                     + "在它的子环里点「＋」继续添加。",
-                onCommit: text =>
-                {
-                    DismissPanel();
-                    AddGroupRequested?.Invoke(this, (parentIndex, text));
-                })));
-        }
+            onCommit: text =>
+            {
+                DismissPanel();
+                AddGroupRequested?.Invoke(this, (parentIndex, text));
+            })));
 
         ShowPanel(
             kind: PanelKind.AddChoice,
@@ -222,7 +223,7 @@ public sealed partial class RadialRingView
                                   : TokenStore.Current.Radius.Ring1Outer + 26,
             rows,
             hint: isChild
-                ? "这里加的是该子菜单的项。要新建分组，请点最外圈的「＋」。"
+                ? "这里加的是该子菜单的项；「新建分组」会在这一层里建出更深一级的分组。"
                 : null);
     }
 

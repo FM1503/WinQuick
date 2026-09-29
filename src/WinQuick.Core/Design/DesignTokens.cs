@@ -108,6 +108,7 @@ public sealed record DesignTokens
             ("entranceRotateEasing", Motion.EntranceRotateEasing),
             ("childArcEasing", Motion.ChildArcEasing),
             ("childSlideEasing", Motion.ChildSlideEasing),
+            ("levelShiftEasing", Motion.LevelShiftEasing),
         };
         foreach (var (name, value) in easings)
             if (!MotionTokens.IsValidEasing(value))
@@ -133,6 +134,10 @@ public sealed record DesignTokens
         // 边界取"明显不合理"的值：滑出距离超过子环带宽会滑到圆心里去，时长太短则看不出方向感。
         if (Motion.ChildSlideMs is < 0 or > 900)
             problems.Add($"motion.childSlideMs={Motion.ChildSlideMs} 应在 0~900ms（0 = 不滑）");
+
+        // 0 是允许的（等于不做位移动画，直接落到目标形态），但不能为负。
+        if (Motion.LevelShiftMs is < 0 or > 900)
+            problems.Add($"motion.levelShiftMs={Motion.LevelShiftMs} 应在 0~900ms（0 = 直接切换）");
         // 这里不能用模式比较（is < 0 or > x）：模式右侧必须是常量，而带宽是算出来的。
         var childBandWidth = Radius.Ring2Outer - Radius.Ring2Inner;
         if (Motion.ChildSlidePx < 0 || Motion.ChildSlidePx > childBandWidth)
@@ -429,6 +434,20 @@ public sealed record MotionTokens
 
     /// <summary>子弧的缓动曲线。与入场用的是同一条（起步快、收尾缓），观感统一。</summary>
     public string ChildArcEasing { get; init; } = "cubic-bezier(0,0,0,1)";
+
+    /// <summary>
+    /// 层级位移（扇面展开）时长：点环 2 的分组扇区进下一层时，旧环 2 那一层
+    /// 从子弧展开成整圈、半径带从 218–350 收进 56–200 所用的时间。
+    ///
+    /// 与 <see cref="EntranceScaleMs"/> 取同一个值不是巧合：这一段的"展开"与入场的
+    /// "放大落位"在观感上是同一类动作（形体变化 + 落位），共用一条曲线才不会各弹各的。
+    /// </summary>
+    public int LevelShiftMs { get; init; } = 300;
+
+    /// <summary>
+    /// 层级位移的缓动曲线。默认与入场的旋转落位同一条（起步快、收尾很缓）。
+    /// </summary>
+    public string LevelShiftEasing { get; init; } = "cubic-bezier(0.16,1,0.3,1)";
 
     public int TopmostReassertMs { get; init; } = 800;
 

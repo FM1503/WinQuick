@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Windows;
 using System.Windows.Threading;
 using WinQuick.App.Diagnostics;
@@ -12,6 +12,7 @@ using WinQuick.App.Settings;
 using WinQuick.Core.Config;
 using WinQuick.Core.Geometry;
 using WinQuick.Core.Hotkey;
+using WinQuick.Core.Interaction;
 
 namespace WinQuick.App.Hosting;
 
@@ -171,28 +172,25 @@ public sealed class ResidentHost : IDisposable
     }
 
     /// <summary>
-    /// 某个项被点击（第一层或子弧里的子项）。
+    /// 某个项被点击（任意一层）。参数是它在菜单树里的**完整路径**。
     ///
     /// 顺序是刻意的：**先收界面，再执行动作**。
     /// 反过来的话，新启动的程序窗口会先冒出来、再被覆盖层挡住一下，观感像闪屏。
     /// 而且 Hide() 会立刻把前台焦点还给用户原来的窗口，这是「按下就立刻响应」的前提。
     /// </summary>
-    private void OnItemActivated(object? sender, (int ParentIndex, int ChildIndex) selection)
+    private void OnItemActivated(object? sender, IReadOnlyList<int> steps)
     {
-        if (selection.ParentIndex < 0 || selection.ParentIndex >= _menu.Items.Count) return;
+        var item = MenuLevels.Resolve(_menu, steps);
+        if (item is null) return;
 
-        var item = _menu.Items[selection.ParentIndex];
-
-        if (selection.ChildIndex >= 0)
+        if (item.HasChildren)
         {
-            // 选中的是子弧里的子项。
-            if (selection.ChildIndex >= item.Children.Count) return;
-            item = item.Children[selection.ChildIndex];
-        }
-        else if (item.HasChildren)
-        {
-            // 第一层里"有子项但没展开"的项被直接执行了 —— 不该发生，
-            // 说明点击路径有问题。明确报出来而不是静默什么都不做。
+            // 有子菜单的项被"执行"了 —— 说明点击分派把它当成了叶子。
+            // 明确报出来而不是静默什么都不做。
+            //
+            // 旧实现只有两级（`Items[父].Children[子]`），三级的分组项点下去
+            // 就会走到这里弹「还没有配置动作」（它的 Action 是 null）——
+            // 换成整条路径之后那条路不存在了，这里只剩真正的异常情况。
             _tray.ShowBalloon("WinQuick", $"「{item.Label}」有子菜单，应展开而不是执行。");
             return;
         }
@@ -216,16 +214,10 @@ public sealed class ResidentHost : IDisposable
     {
         // 上限与索引合法性都在 MenuEditor 里判（那里还有单测），这里不重复一遍 ——
         // 校验写在两处，迟早会有一处忘了改。
-        var path = _overlay.PickExecutableForMenu();
-        if (path is null) return;          // 用户取消
-
-        // 名称取程序的版本信息，与内置默认菜单同源：跟随系统语言，且不必用户自己想名字。
-        var item = new MenuItemSpec
-        {
-            Label = ShellNames.Get(path),
-            IconPath = path,
-            Action = MenuAction.Launch(path),
-        };
+        // 名称与动作由选择界面给出（系统位置走 shell、文件走 launch；名称取程序的版本信息，
+        // 与内置默认菜单同源：跟随系统语言，且不必用户自己想名字）。
+        var item = _overlay.PickMenuItemForAdd();
+        if (item is null) return;          // 用户取消
 
         var (updated, error) = MenuEditor.Add(_menu, parentIndex, item);
         if (error is not null)
@@ -274,22 +266,23 @@ public sealed class ResidentHost : IDisposable
     /// </summary>
     private void OnAddGroupRequested(object? sender, (int ParentIndex, string Label) request)
     {
-        var path = _overlay.PickExecutableForMenu();
-        if (path is null) return;          // 用户取消
+        var firstChild = _overlay.PickMenuItemForAdd();
+        if (firstChild is null) return;    // 用户取消
 
-        var firstChild = new MenuItemSpec
-        {
-            Label = ShellNames.Get(path),
-            IconPath = path,
-            Action = MenuAction.Launch(path),
-        };
-
-        var (updated, error) = MenuEditor.AddGroup(_menu, request.Label, firstChild);
+        // **ParentIndex 必须传下去**：子环的「＋」建的是"那个父项里面"的分组。
+        // 第一版这里无视它、一律建到第一层 —— 子环面板那时候不提供这个选项，
+        // 所以没暴露；现在提供了，无视它就是把分组建到错的地方。
+        var (updated, error) = MenuEditor.AddGroup(
+            _menu, request.Label, firstChild, request.ParentIndex);
         if (error is not null)
         {
             _tray.ShowBalloon("WinQuick 无法新建分组", error);
             return;
         }
+
+        // 建在子环里的话，重建之后把那个子弧重新展开 ——
+        // 用户刚建的分组就在里面，收起来会让人以为没建成。
+        if (request.ParentIndex >= 0) _reopenChildArcAfterRebuild = request.ParentIndex;
 
         PersistMenu(updated);
     }

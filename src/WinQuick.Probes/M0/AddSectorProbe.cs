@@ -1,5 +1,6 @@
-using System.Windows;
+﻿using System.Windows;
 using WinQuick.App.Diagnostics;
+using WinQuick.App.Interop;
 using WinQuick.App.Design;
 using WinQuick.App.Hosting;
 using WinQuick.App.Radial;
@@ -43,7 +44,7 @@ public static class AddSectorProbe
 
             // 事件录音：点击之后核对"该发的发了、不该发的没发"。
             int? addRequested = null;
-            (int Parent, int Child)? activated = null;
+            IReadOnlyList<int>? activated = null;
             overlay.AddItemRequested += (_, parentIndex) => addRequested = parentIndex;
             overlay.ItemActivated += (_, selection) => activated = selection;
 
@@ -166,7 +167,8 @@ public static class AddSectorProbe
             overlay.InvokePanelRowForProbe(programRow);
 
             ProbeOutput.Kv("选「添加程序…」→ AddItemRequested", addRequested?.ToString() ?? "(没有)");
-            ProbeOutput.Kv("　同时触发了 ItemActivated", activated is null ? "否" : $"是 {activated}");
+            ProbeOutput.Kv("　同时触发了 ItemActivated",
+                activated is null ? "否" : $"是 [{(activated.Count > 0 ? string.Join(",", activated) : "空")}]");
             results.Add(("选「添加程序…」后才请求加项",
                 addRequested == -1 && activated is null && !overlay.PanelAttached,
                 $"parent={addRequested?.ToString() ?? "无"}"));
@@ -208,7 +210,7 @@ public static class AddSectorProbe
                 overlay.ReleaseForProbe(leafPoint.X, leafPoint.Y);
                 ProbeOutput.Kv("在同一扇区松开后", activated is null ? "没执行（异常）" : $"执行了 {activated}");
                 results.Add(("同一扇区内按下又松开才算一次完整点击",
-                    activated is { Child: -1 } && activated.Value.Parent == leafIndex,
+                    activated is { Count: 1 } && activated[0] == leafIndex,
                     activated?.ToString() ?? "无"));
 
                 // 3) 按下 A、挪到 B 再松开 —— 不该执行（尤其不该执行 B）
@@ -638,7 +640,7 @@ public static class AddSectorProbe
                     activated?.ToString() ?? "(没有)");
                 ProbeOutput.Kv("　同时请求了加项", addRequested is null ? "否" : $"是 {addRequested}");
                 results.Add(("点叶子项是执行而不是加项",
-                    activated is { Child: -1 } && activated.Value.Parent == leaf && addRequested is null,
+                    activated is { Count: 1 } && activated[0] == leaf && addRequested is null,
                     $"activated={activated?.ToString() ?? "无"}，add={addRequested?.ToString() ?? "无"}"));
 
                 overlay.SetEditModeForProbe(true);
@@ -709,8 +711,9 @@ public static class AddSectorProbe
                     // 子环的「＋」必须**先出面板**，不能直接进文件浏览器。
                     // 用户报的就是"点＋号直接打开文件浏览器、看不到新建分组" ——
                     // 两个「＋」行为不一致正是那条的来源，所以这条核对要一直留着。
+                    var childPanelRows = overlay.PanelRowLabelsForProbe.ToList();
                     ProbeOutput.Kv("点子弧「＋」弹出的面板", overlay.PanelKindForProbe);
-                    ProbeOutput.Kv("　面板给出的选项", string.Join(" / ", overlay.PanelRowLabelsForProbe));
+                    ProbeOutput.Kv("　面板给出的选项", string.Join(" / ", childPanelRows));
                     ProbeOutput.Kv("　是否直接请求了加项（应当还没）", addRequested?.ToString() ?? "没有（对）");
 
                     results.Add(("点子环「＋」先出面板、不直接进文件浏览器",
@@ -723,10 +726,38 @@ public static class AddSectorProbe
 
                     ProbeOutput.Kv("　选「添加程序…」后 → AddItemRequested",
                         addRequested?.ToString() ?? "(没有)");
-                    ProbeOutput.Kv("　同时触发了 ItemActivated", activated is null ? "否" : $"是 {activated}");
+                    ProbeOutput.Kv("　同时触发了 ItemActivated",
+                activated is null ? "否" : $"是 [{(activated.Count > 0 ? string.Join(",", activated) : "空")}]");
                     results.Add(("子环面板选「添加程序…」后请求加进该父项",
                         addRequested == parentIndex && activated is null,
                         $"parent={addRequested?.ToString() ?? "无"}，期望 {parentIndex}"));
+
+                    // 子环的「＋」也要有「新建分组」：层级上限拆掉后这是正常操作
+                    //（用户报"第二层环没有添加分组的途径"），且请求必须带**这个父项**的索引
+                    // —— 宿主第一版无视它、一律建到第一层。
+                    var childGroupRow = childPanelRows.FindIndex(l => l.Contains("新建分组"));
+                    ProbeOutput.Kv("子环面板是否含「新建分组」",
+                        childGroupRow >= 0 ? $"有（第 {childGroupRow} 行）" : "没有");
+                    results.Add(("子环面板也给出「新建分组」", childGroupRow >= 0,
+                        $"面板行：{string.Join(" / ", childPanelRows)}"));
+
+                    if (childGroupRow >= 0)
+                    {
+                        // 上一行（添加程序）已经把面板收掉了，重新点开「＋」再走命名。
+                        ResetRecorders();
+                        groupRequested = null;   // 上一节建过根级分组，别让旧值顶替这次的结果
+                        overlay.ClickForProbe(childAddPoint.X, childAddPoint.Y);
+                        var row2 = overlay.PanelRowLabelsForProbe.ToList()
+                            .FindIndex(l => l.Contains("新建分组"));
+                        overlay.InvokePanelRowForProbe(row2);
+                        var childGroupKind = overlay.PanelKindForProbe;
+                        overlay.ConfirmPanelTextForProbe("子环分组");
+
+                        ProbeOutput.Kv("子环建分组：确认后请求", groupRequested ?? "(没有)");
+                        results.Add(("子环建分组：转入命名、确认后带该父项发出请求",
+                            childGroupKind == "TextInput" && groupRequested == $"{parentIndex}|子环分组",
+                            $"kind={childGroupKind}，请求 {groupRequested ?? "无"}，期望 {parentIndex}|子环分组"));
+                    }
                 }
 
                 // 这里**刻意不再**单独核"子项被点击时执行"。
@@ -1095,6 +1126,48 @@ public static class AddSectorProbe
         finally
         {
             overlay?.Dispose();
+        }
+
+        // ── 系统位置选择（「＋」现在弹的是选择界面，不再直接弹文件框）──
+        //
+        // 这一节核对两件**能失败**的事：
+        // ① 内置清单里的虚拟文件夹在本机是否真能解析出图标 —— 清单是"候选"，
+        //    而界面靠"取不到图标就不显示"来兜底，所以这里量的是"这台机器上还剩几条"；
+        // ② 选择界面自己能不能把清单画出来（离屏构造，不显示窗口）。
+        ProbeOutput.Section("系统位置清单（本机可解析性）");
+
+        var resolvable = 0;
+        var unresolvable = new List<string>();
+        foreach (var location in WinQuick.Core.Config.SystemLocations.VirtualFolders)
+        {
+            if (ShellIcons.GetScaled(location.Target, 32) is not null) resolvable++;
+            else unresolvable.Add(location.Label);
+        }
+
+        ProbeOutput.Kv("清单条数", WinQuick.Core.Config.SystemLocations.VirtualFolders.Count);
+        ProbeOutput.Kv("本机可解析", $"{resolvable} 条");
+        ProbeOutput.Kv("本机解析不了（界面会隐藏）", unresolvable.Count == 0 ? "无" : string.Join("、", unresolvable));
+
+        // 对照检查：回收站与此电脑必须能解析 —— 这两条是用户实际要用的，
+        // 它们要是失效，功能就等于没做（而"总体通过"不能靠别的项凑数）。
+        var recycleOk = ShellIcons.GetScaled("shell:RecycleBinFolder", 32) is not null;
+        var thisPcOk = ShellIcons.GetScaled("shell:MyComputerFolder", 32) is not null;
+        results.Add(("回收站与此电脑在本机能取到图标", recycleOk && thisPcOk,
+            $"回收站={recycleOk}，此电脑={thisPcOk}"));
+        results.Add(("清单里至少 8 条可用（解析不了的不影响界面）", resolvable >= 8,
+            $"{resolvable} 条"));
+
+        // 选择界面能画出列表（离屏构造：不显示、不打扰用户）。
+        try
+        {
+            var picker = new WinQuick.App.Radial.SystemLocationPicker();
+            var rows = picker.LocationCountForProbe;
+            picker.Close();
+            results.Add(("选择界面能列出系统位置（离屏构造）", rows >= 8, $"{rows} 行"));
+        }
+        catch (Exception ex)
+        {
+            results.Add(("选择界面能列出系统位置（离屏构造）", false, ex.GetType().Name + " " + ex.Message));
         }
 
         ProbeOutput.Section("结果");

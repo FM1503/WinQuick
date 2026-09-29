@@ -225,7 +225,7 @@ public static class ZOrderProbe
 
         // 模态调用会阻塞这一行，但上面那个计时器会在模态消息循环里继续跑。
         // 弹的是真正的系统文件对话框，所有者是轮盘窗口。
-        overlay.PickExecutableForMenu();
+        overlay.PickFileDialogForProbe();
 
         await Task.Delay(200);
 

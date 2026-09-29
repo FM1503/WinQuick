@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using WinQuick.App;
 using WinQuick.App.Diagnostics;
 using WinQuick.App.M0;   // 探针仍在 WinQuick.App.M0 命名空间（搬迁时刻意不改，见类注释）
@@ -115,6 +115,10 @@ internal static class ProbesHost
 
             case "--overlay-probe":
                 RunDetached(app, () => OverlayProbe.RunAsync(cli));
+                break;
+
+            case "--level-probe":
+                RunDetached(app, () => LevelProbe.RunAsync(cli));
                 break;
 
             case "--render-preview":

@@ -1,0 +1,93 @@
+<Window x:Class="WinQuick.App.Radial.SystemLocationPicker"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="添加到菜单"
+        Width="368" SizeToContent="Height"
+        ResizeMode="NoResize"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        ShowInTaskbar="False"
+        Topmost="True"
+        WindowStartupLocation="Manual"
+        UseLayoutRounding="True"
+        TextOptions.TextFormattingMode="Ideal">
+
+    <!-- 与设置/皮肤面板同一套做法与令牌：配色走 DynamicResource（换皮肤时跟着变），
+         标题栏按住即拖（WindowDrag），入场用 PanelEntrance。
+         它**不常驻**：每次要添加时才建、关掉即销毁 —— 所以不必像面板那样管位置记忆。 -->
+    <Window.Resources>
+        <Style x:Key="Caption" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource Wq.Color.Text}" />
+            <Setter Property="FontFamily" Value="{DynamicResource Wq.Font.Family}" />
+            <Setter Property="FontSize" Value="{DynamicResource Wq.Font.BodySize}" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+
+        <Style x:Key="Hint" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource Wq.Color.TextMuted}" />
+            <Setter Property="FontFamily" Value="{DynamicResource Wq.Font.Family}" />
+            <Setter Property="FontSize" Value="{DynamicResource Wq.Font.SmallSize}" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="Margin" Value="0,3,0,0" />
+        </Style>
+
+        <Style x:Key="FlatButton" TargetType="Button">
+            <Setter Property="Foreground" Value="{DynamicResource Wq.Color.Text}" />
+            <Setter Property="FontFamily" Value="{DynamicResource Wq.Font.Family}" />
+            <Setter Property="FontSize" Value="{DynamicResource Wq.Font.BodySize}" />
+            <Setter Property="Padding" Value="10,4" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bg" Background="Transparent"
+                                CornerRadius="{DynamicResource Wq.Size.ControlCornerRadius}"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bg" Property="Background"
+                                        Value="{DynamicResource Wq.Color.Stroke}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <Border Background="{DynamicResource Wq.Color.SurfaceSolid}"
+            BorderBrush="{DynamicResource Wq.Color.Stroke}"
+            BorderThickness="1"
+            CornerRadius="{DynamicResource Wq.Size.CornerRadius}">
+        <StackPanel Margin="18,14,18,16">
+
+            <Grid x:Name="TitleBar" Background="Transparent" Cursor="SizeAll"
+                  ToolTip="按住可拖动">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="添加到菜单"
+                           Foreground="{DynamicResource Wq.Color.Text}"
+                           FontFamily="{DynamicResource Wq.Font.Family}"
+                           FontSize="{DynamicResource Wq.Font.BodySize}"
+                           FontWeight="SemiBold" VerticalAlignment="Center" />
+                <Button Grid.Column="1" Style="{StaticResource FlatButton}" Content="✕"
+                        Click="OnCancelClick" />
+            </Grid>
+
+            <TextBlock Style="{StaticResource Hint}" Margin="0,8,0,2"
+                       Text="选一个系统位置，或浏览文件。" />
+
+            <Button Style="{StaticResource FlatButton}" HorizontalAlignment="Left"
+                    Content="浏览文件…" Click="OnBrowseClick" />
+
+            <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="320" Margin="0,8,0,0">
+                <StackPanel x:Name="LocationList" />
+            </ScrollViewer>
+        </StackPanel>
+    </Border>
+</Window>

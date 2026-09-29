@@ -3,6 +3,7 @@ using System.Globalization;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media.Animation;
@@ -13,6 +14,7 @@ using WinQuick.App.Hosting;
 using WinQuick.App.Interop;
 using WinQuick.App.Settings;
 using WinQuick.Core.Config;
+using WinQuick.Core.Design;
 using WinQuick.Core.Geometry;
 using WinQuick.Core.Hotkey;
 using Windows.Win32;
@@ -47,6 +49,18 @@ public partial class SettingsPanel : Window
     private HotkeySpec? _pendingHotkey;
     private bool _capturing;
 
+    /// <summary>当前选中的高亮色（#RRGGBB）；null = 默认（沿用设计基线）。</summary>
+    private string? _accent;
+
+    /// <summary>调色盘「最近使用」（新的在前，最多 6 个）。持久化进配置。</summary>
+    private IReadOnlyList<string> _recent = [];
+
+    /// <summary>HSV 视图的当前值（h ∈ [0,360)，s/v ∈ [0,1]）。</summary>
+    private double _hsvH = 210, _hsvS = 0.55, _hsvV = 0.95;
+
+    /// <summary>调色盘上一次被关掉的时刻（防“点按钮关盘被当成又要开”，见 WireAccentFlyout）。</summary>
+    private long _flyoutClosedAt;
+
     /// <summary>
     /// 正在按程序化方式改控件（初始化或恢复默认）。
     /// 期间不能触发"改动即应用"，否则打开面板这一个动作本身就会写一次配置。
@@ -71,7 +85,75 @@ public partial class SettingsPanel : Window
         // 拖过之后不再自动摆位 —— 面板挡住轮盘正是拖动的动机。
         WindowDrag.Attach(this, TitleBar, onMoved: () => PlacedByUser = true);
 
+        NavList.SelectedIndex = 0;
+
+        WireAccentFlyout();
+
         LoadFrom(current, notify: false);
+    }
+
+    /// <summary>侧栏切换分区：右侧只显示当前区，标题同步。</summary>
+    private void OnNavChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (PageHeader is null) return;   // InitializeComponent 期间也会触发一次
+
+        var pages = new UIElement[] { PageHotkey, PageLook, PageBehavior, PageMenu, PageStartup };
+        var index = NavList.SelectedIndex;
+        for (var i = 0; i < pages.Length; i++)
+            pages[i].Visibility = i == index ? Visibility.Visible : Visibility.Collapsed;
+
+        PageHeader.Text = NavList.SelectedItem is ListBoxItem item ? item.Content.ToString() ?? "" : "";
+    }
+
+    /// <summary>热键预设：选中即填入并立即探测注册（成了就应用）；「自定义…」转去录制框。</summary>
+    private void OnPresetChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (PresetBox is null || _loading) return;
+
+        if (PresetBox.SelectedItem is not string choice || choice == CustomPresetItem)
+        {
+            // 自定义：聚焦录制框，用户直接按组合键（现有流程）。
+            HotkeyBox.Focus();
+            SetHotkeyStatus("正在等待按键……请按下想要的组合键。", isError: false);
+            return;
+        }
+
+        if (!HotkeySpec.TryParse(choice, out var spec, out _) || spec is null) return;
+
+        _pendingHotkey = spec;
+        HotkeyBox.Text = spec.ToString();
+        TryProbeAndApply();   // 预设是明确选择，直接走「测试并应用」
+    }
+
+    private const string CustomPresetItem = "自定义…";
+
+    /// <summary>把当前 _pendingHotkey 探测一遍，可用则应用，不可用则把原因写到状态行。</summary>
+    private void TryProbeAndApply()
+    {
+        if (_pendingHotkey is not { } spec) return;
+
+        var (available, errorCode) = _probeHotkey(spec);
+
+        if (available)
+        {
+            SetHotkeyStatus($"可用。正在切换到 {spec}。", isError: false);
+            ApplyAndPersist();
+            return;
+        }
+
+        var reason = errorCode switch
+        {
+            1409 => "已被系统或其他程序占用",
+            87 => "这个组合不合法",
+            _ => $"注册失败（错误码 {errorCode}）",
+        };
+        var suggestion = HotkeySpec.SuggestIfReserved(spec);
+
+        SetHotkeyStatus(
+            $"{spec}：{reason}。" + (suggestion is null
+                ? "换一个组合试试。"
+                : "Win11 上只带 Win 键的组合大多被系统预留 —— " + suggestion),
+            isError: true);
     }
 
     /// <summary>
@@ -162,6 +244,7 @@ public partial class SettingsPanel : Window
             : HotkeySpec.Default;
 
         HotkeyBox.Text = _pendingHotkey.ToString();
+        SyncPresetSelection();
         SetHotkeyStatus("点「测试」试一下这个组合能不能注册。", isError: false);
 
         // 与默认值相同时滑块回到默认位置，并在文案里标明"默认" ——
@@ -169,10 +252,9 @@ public partial class SettingsPanel : Window
         DimSlider.Value = config.Appearance.DimOpacity ?? DefaultDimOpacity;
         UpdateDimLabel(config.Appearance.DimOpacity);
 
-        AccentBox.Text = config.Appearance.AccentColor ?? "";
-
-        OpenDelayBox.Text = config.Behavior.HoverOpenDelayMs?.ToString(CultureInfo.InvariantCulture) ?? "";
-        CloseDelayBox.Text = config.Behavior.HoverCloseDelayMs?.ToString(CultureInfo.InvariantCulture) ?? "";
+        _accent = config.Appearance.AccentColor;
+        _recent = config.Appearance.RecentAccentColors;
+        SyncAccentVisual();
 
         if (AnimationsBox.Items.Count == 0)
         {
@@ -318,6 +400,7 @@ public partial class SettingsPanel : Window
         _capturing = false;
         _pendingHotkey = spec;
         HotkeyBox.Text = spec!.ToString();
+        SyncPresetSelection();
 
         var suggestion = HotkeySpec.SuggestIfReserved(spec);
         SetHotkeyStatus(suggestion ?? "点「测试」试一下能不能注册。", isError: false);
@@ -325,32 +408,27 @@ public partial class SettingsPanel : Window
         // 录制后不自动应用 —— 用户可能只是在试。误改一个正在生效的热键会让工具突然"消失"。
     }
 
-    private void OnTestHotkeyClick(object sender, RoutedEventArgs e)
+    private void OnTestHotkeyClick(object sender, RoutedEventArgs e) => TryProbeAndApply();
+
+    /// <summary>
+    /// 让预设下拉反映当前热键：与某个预设相同就选中它，否则选「自定义…」。
+    /// （在代码里改 HotkeyBox 的地方都要跟一次，不然下拉显示的与实际不符。）
+    /// </summary>
+    private void SyncPresetSelection()
     {
-        if (_pendingHotkey is not { } spec) return;
+        if (PresetBox is null) return;
 
-        var (available, errorCode) = _probeHotkey(spec);
-
-        if (available)
+        if (PresetBox.Items.Count == 0)
         {
-            SetHotkeyStatus($"可用。正在切换到 {spec}。", isError: false);
-            ApplyAndPersist();
-            return;
+            foreach (var preset in HotkeySpec.RecommendedPresets) PresetBox.Items.Add(preset);
+            PresetBox.Items.Add(CustomPresetItem);
         }
 
-        var reason = errorCode switch
-        {
-            1409 => "已被系统或其他程序占用",
-            87 => "这个组合不合法",
-            _ => $"注册失败（错误码 {errorCode}）",
-        };
-        var suggestion = HotkeySpec.SuggestIfReserved(spec);
-
-        SetHotkeyStatus(
-            $"{spec}：{reason}。" + (suggestion is null
-                ? "换一个组合试试。"
-                : "Win11 上只带 Win 键的组合大多被系统预留 —— " + suggestion),
-            isError: true);
+        var current = _pendingHotkey?.ToString();
+        var match = HotkeySpec.RecommendedPresets.FirstOrDefault(p => p == current);
+        _loading = true;
+        PresetBox.SelectedItem = match ?? CustomPresetItem;
+        _loading = false;
     }
 
     private void SetHotkeyStatus(string text, bool isError)
@@ -372,16 +450,214 @@ public partial class SettingsPanel : Window
         ApplyAndPersist();
     }
 
-    private void OnAccentChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
+    // ---------------------------------------------------------------- 高亮色调色盘
+
+    /// <summary>
+    /// 调色盘的交互接线：色格点击、SV/色相拖拽、点外面收起、Esc 先收盘。
+    /// </summary>
+    private void WireAccentFlyout()
     {
-        if (_loading) return;
-        ApplyAndPersist();
+        // 色板 + 最近使用：格子全部在代码里建（XAML 只留容器）。
+        foreach (var hex in ColorMath.RecommendedAccentPalette)
+            FlyGrid.Children.Add(MakeCell(hex));
+        FlyDefaultHost.Content = MakeDefaultCell();
+        FlyDefaultHost2.Content = MakeDefaultCell();
+
+        // 点外面收起由 StaysOpen=False 自带（包括拖标题栏 —— 那也是“盘外”）。
+        // 但要点在**别的程序**上时它收不到鼠标消息，失活时补一刀。
+        Deactivated += (_, _) => CloseAccentFlyout();
+
+        // StaysOpen=False 的经典坑：点色块按钮关盘时，那一下先被当成“盘外点击”把盘关掉，
+        // 紧接着按钮的 Click 又会把盘重新打开 —— 开关就失灵了。
+        // 记下关闭时刻：按钮点击发生在关闭后的一瞬之内就当作“用户是想关”。
+        AccentFlyout.Closed += (_, _) => _flyoutClosedAt = Environment.TickCount64;
+
+        // Esc 先收调色盘，再走原有的关面板路径。
+        PreviewKeyDown += (_, e) =>
+        {
+            if (e.Key == Key.Escape && AccentFlyout.IsOpen)
+            {
+                e.Handled = true;
+                CloseAccentFlyout();
+            }
+        };
+
+        // SV 平面与色相条：按下即捕获指针，移动实时预览，松手才提交（进最近使用并落盘）。
+        SvSquare.MouseLeftButtonDown += (_, e) => { SvSquare.CaptureMouse(); UpdateFromSv(e.GetPosition(SvSquare), preview: true); };
+        SvSquare.MouseMove += (_, e) => { if (SvSquare.IsMouseCaptured) UpdateFromSv(e.GetPosition(SvSquare), preview: true); };
+        SvSquare.MouseLeftButtonUp += (_, _) => { SvSquare.ReleaseMouseCapture(); CommitHsv(); };
+
+        HueBar.MouseLeftButtonDown += (_, e) => { HueBar.CaptureMouse(); UpdateFromHue(e.GetPosition(HueBar), preview: true); };
+        HueBar.MouseMove += (_, e) => { if (HueBar.IsMouseCaptured) UpdateFromHue(e.GetPosition(HueBar), preview: true); };
+        HueBar.MouseLeftButtonUp += (_, _) => { HueBar.ReleaseMouseCapture(); CommitHsv(); };
+
+        // HSV 视图里的 hex 框：输完整才生效（与旧文本框同一条护栏）。
+        FlyHex.TextChanged += (_, _) =>
+        {
+            if (_loading) return;
+            var text = FlyHex.Text.Trim();
+            if (!ColorMath.TryParseHex(text, out var r, out var g, out var b)) return;
+            CommitAccent(ColorMath.ToHex(r, g, b));
+        };
     }
 
-    private void OnDelayChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
+    private Border MakeCell(string hex)
     {
-        if (_loading) return;
-        ApplyAndPersist();
+        var cell = new Border
+        {
+            Width = 24,
+            Height = 24,
+            Margin = new Thickness(2),
+            CornerRadius = new CornerRadius(4),
+            Background = TokenBrushes.Brush(hex),
+            BorderBrush = TokenBrushes.Brush("#FFFFFF", 0.15),
+            BorderThickness = new Thickness(1),
+            Cursor = Cursors.Hand,
+            ToolTip = hex,
+        };
+        cell.MouseLeftButtonDown += (_, _) => CommitAccent(hex);
+        return cell;
+    }
+
+    /// <summary>「默认」格：两色底 + 一道斜杠（斜杠 = 没有自定义色）。点它清掉自定义。</summary>
+    private Border MakeDefaultCell()
+    {
+        var cell = new Border
+        {
+            Width = 22,
+            Height = 22,
+            CornerRadius = new CornerRadius(4),
+            Background = TokenBrushes.Brush("#2A2F3A"),
+            BorderBrush = TokenBrushes.Brush("#FFFFFF", 0.15),
+            BorderThickness = new Thickness(1),
+            Cursor = Cursors.Hand,
+            ToolTip = "默认（清掉自定义色）",
+        };
+        var slash = new System.Windows.Shapes.Rectangle
+        {
+            Width = 26,
+            Height = 2,
+            Fill = TokenBrushes.Brush("#E08A7A"),
+            RenderTransform = new System.Windows.Media.RotateTransform(-32),
+        };
+        cell.Child = slash;
+        cell.MouseLeftButtonDown += (_, _) => CommitAccent(null);
+        return cell;
+    }
+
+    private void OnAccentButtonClick(object sender, RoutedEventArgs e)
+    {
+        // 刚被“盘外点击”关掉的一瞬（点的就是这个按钮）—— 这一下的意图是关，不是再开。
+        if (Environment.TickCount64 - _flyoutClosedAt < 200) return;
+
+        if (AccentFlyout.IsOpen) CloseAccentFlyout();
+        else OpenAccentFlyout();
+    }
+
+    private void OpenAccentFlyout()
+    {
+        FlyHsv.Visibility = Visibility.Collapsed;
+        FlyPalette.Visibility = Visibility.Visible;
+
+        // 最近使用行：有才显示。
+        var hasRecent = _recent.Count > 0;
+        FlyRecentLabel.Visibility = hasRecent ? Visibility.Visible : Visibility.Collapsed;
+        FlyRecent.Visibility = hasRecent ? Visibility.Visible : Visibility.Collapsed;
+        FlyRecent.Children.Clear();
+        foreach (var hex in _recent) FlyRecent.Children.Add(MakeCell(hex));
+
+        AccentFlyout.IsOpen = true;
+    }
+
+    private void CloseAccentFlyout() => AccentFlyout.IsOpen = false;
+
+    private void OnFlyMoreClick(object sender, RoutedEventArgs e)
+    {
+        // 进 HSV 前先把当前颜色换算成 HSV —— 拾色器要「从现在这个颜色」开始，而不是从固定值。
+        if (ColorMath.TryParseHex(_accent, out var r, out var g, out var b))
+            (_hsvH, _hsvS, _hsvV) = ColorMath.RgbToHsv(r, g, b);
+
+        FlyPalette.Visibility = Visibility.Collapsed;
+        FlyHsv.Visibility = Visibility.Visible;
+        SyncHsvVisual();
+    }
+
+    private void OnFlyBackClick(object sender, RoutedEventArgs e)
+    {
+        FlyHsv.Visibility = Visibility.Collapsed;
+        FlyPalette.Visibility = Visibility.Visible;
+    }
+
+    /// <summary>拖拽中的实时预览：改色与视觉，不进最近使用（那是松手的事）。</summary>
+    private void UpdateFromSv(Point p, bool preview)
+    {
+        _ = preview;
+        _hsvS = Math.Clamp(p.X / SvSquare.ActualWidth, 0, 1);
+        _hsvV = Math.Clamp(1 - p.Y / SvSquare.ActualHeight, 0, 1);
+        SyncHsvVisual();
+        LiveAccent(HsvHex());
+    }
+
+    private void UpdateFromHue(Point p, bool preview)
+    {
+        _ = preview;
+        _hsvH = Math.Clamp(p.X / HueBar.ActualWidth, 0, 1) * 360.0;
+        SyncHsvVisual();
+        LiveAccent(HsvHex());
+    }
+
+    private string HsvHex()
+    {
+        var (r, g, b) = ColorMath.HsvToRgb(_hsvH, _hsvS, _hsvV);
+        return ColorMath.ToHex(r, g, b);
+    }
+
+    private void CommitHsv()
+    {
+        var hex = HsvHex();
+        FlyHex.Text = hex;
+        CommitAccent(hex);
+    }
+
+    /// <summary>实时预览：改当前色并应用（落盘有去抖），但不碰最近使用。</summary>
+    private void LiveAccent(string hex)
+    {
+        _accent = hex;
+        SyncAccentVisual();
+        if (!_loading) ApplyAndPersist();
+    }
+
+    /// <summary>提交一次选择（点色格 / 默认 / 拖完松手 / hex 输完整）：进最近使用并应用。</summary>
+    private void CommitAccent(string? hex)
+    {
+        _accent = hex;
+        if (hex is not null) _recent = ColorMath.UpdateRecent(_recent, hex);
+        SyncAccentVisual();
+        if (!_loading) ApplyAndPersist();
+    }
+
+    /// <summary>色块按钮与 hex 回显同步当前 _accent。</summary>
+    private void SyncAccentVisual()
+    {
+        if (AccentSwatch is null) return;   // InitializeComponent 期间
+
+        AccentSwatch.Background = _accent is null ? null : TokenBrushes.Brush(_accent);
+        AccentHexLabel.Text = _accent ?? "默认";
+    }
+
+    /// <summary>HSV 视图的指针与底色同步当前 HSV 值。</summary>
+    private void SyncHsvVisual()
+    {
+        var hueBrush = new System.Windows.Media.SolidColorBrush(
+            System.Windows.Media.Color.FromRgb(
+                (byte)ColorMath.HsvToRgb(_hsvH, 1, 1).R,
+                (byte)ColorMath.HsvToRgb(_hsvH, 1, 1).G,
+                (byte)ColorMath.HsvToRgb(_hsvH, 1, 1).B));
+        SvBase.Fill = hueBrush;
+
+        SvDotTransform.X = _hsvS * SvSquare.Width - 6;
+        SvDotTransform.Y = (1 - _hsvV) * SvSquare.Height - 6;
+        HueThumbTransform.X = _hsvH / 360.0 * HueBar.Width - 3;
     }
 
     private void OnAnimationsChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
@@ -509,20 +785,7 @@ public partial class SettingsPanel : Window
 
     private AppConfig? BuildConfig()
     {
-        var open = ParseDelay(OpenDelayBox.Text);
-        var close = ParseDelay(CloseDelayBox.Text);
-
-        // null 表示"输入还没完成或非法"，此时不应用 —— 见 ApplyAndPersist 的说明。
-        if (open.IsInvalid || close.IsInvalid) return null;
-
-        var accent = AccentBox.Text.Trim();
-        if (accent.Length > 0)
-        {
-            accent = accent.StartsWith('#') ? accent : "#" + accent;
-            // 正在输入中的半截色值（如 "#00"）不该被应用，也不该被当成错误刷屏。
-            if (!LooksLikeCompleteHex(accent)) return null;
-        }
-
+        // 高亮色来自调色盘（_accent 要么是完整 #RRGGBB、要么是 null），没有半截输入态。
         return new AppConfig
         {
             Version = 1,
@@ -532,12 +795,15 @@ public partial class SettingsPanel : Window
             Appearance = new AppearanceConfig
             {
                 DimOpacity = ReadDimOpacity(),
-                AccentColor = accent.Length == 0 ? null : accent,
+                AccentColor = _accent,
+                RecentAccentColors = _recent,
             },
             Behavior = new BehaviorConfig
             {
-                HoverOpenDelayMs = open.Value,
-                HoverCloseDelayMs = close.Value,
+                // 悬停延迟的界面已删（悬停不再展开，这两项没有效果）。
+                // 沿用 _original 的值：老配置里的显式设置原样保留，不因为打开一次设置面板就被清掉。
+                HoverOpenDelayMs = _original.Behavior.HoverOpenDelayMs,
+                HoverCloseDelayMs = _original.Behavior.HoverCloseDelayMs,
                 AnimationsEnabled = AnimationsBox.SelectedIndex switch
                 {
                     1 => true,
@@ -557,24 +823,6 @@ public partial class SettingsPanel : Window
         // 从此设计基线再改也影响不到他。
         Math.Abs(DimSlider.Value - DefaultDimOpacity) < 0.001 ? null : DimSlider.Value;
 
-    private static bool LooksLikeCompleteHex(string text)
-    {
-        var body = text.TrimStart('#');
-        return body.Length == 6 && body.All(Uri.IsHexDigit);
-    }
-
-    private (int? Value, bool IsInvalid) ParseDelay(string text)
-    {
-        // 留空 = 沿用设计基线。
-        if (string.IsNullOrWhiteSpace(text)) return (null, false);
-
-        if (int.TryParse(text.Trim(), out var value)) return (value, false);
-
-        // 半截输入（比如刚开始输入、或删除到只剩符号）：不应用也不报错。
-        // 报错会在用户打字的过程中不停闪红字。
-        return (null, true);
-    }
-
     // ---------------------------------------------------------------- 测试接缝
     // 供 --settings-probe 使用。刻意做小：只暴露"设几个值"和"执行一次应用"。
 
@@ -584,15 +832,38 @@ public partial class SettingsPanel : Window
         HotkeyBox.Text = spec.ToString();
     }
 
-    internal void SetDelaysForText(string open, string close)
+    /// <summary>探针用：直接选一个预设下拉项（走真实的 OnPresetChanged 路径）。</summary>
+    internal void SelectPresetForTest(string preset)
     {
-        OpenDelayBox.Text = open;
-        CloseDelayBox.Text = close;
+        _loading = false;
+        PresetBox.SelectedItem = preset;
     }
 
+    /// <summary>探针用：当前预设下拉选中的项。</summary>
+    internal string? SelectedPresetForTest => PresetBox.SelectedItem as string;
     internal void SetDimOpacityForTest(double value) => DimSlider.Value = value;
 
-    internal void SetAccentForTest(string? value) => AccentBox.Text = value ?? "";
+    /// <summary>
+    /// 接缝：直接设置当前高亮色。完整 #RRGGBB（# 可省）才接受 —— 半截/非法值不动状态，
+    /// 与调色盘「非法值进不来」的语义一致（空串 = 清成默认）。
+    /// </summary>
+    internal void SetAccentForTest(string? value)
+    {
+        var text = value?.Trim();
+        if (string.IsNullOrEmpty(text)) { _accent = null; SyncAccentVisual(); return; }
+
+        var normalized = text.StartsWith('#') ? text : "#" + text;
+        if (!ColorMath.TryParseHex(normalized, out _, out _, out _)) return;
+
+        _accent = normalized.ToUpperInvariant();
+        SyncAccentVisual();
+    }
+
+    /// <summary>接缝：走真实的提交路径（进最近使用并应用）。</summary>
+    internal void CommitAccentForTest(string hex) => CommitAccent(hex);
+
+    /// <summary>接缝：当前最近使用列表。</summary>
+    internal IReadOnlyList<string> RecentAccentColorsForTest => _recent;
 
     internal void InvokeApplyForTest() => ApplyAndPersist();
 

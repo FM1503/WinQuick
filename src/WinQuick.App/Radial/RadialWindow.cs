@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
@@ -58,7 +58,13 @@ public sealed class RadialWindow : Window
 
     /// <summary>当前这份菜单。就地换树时要用它作为"菜单没变、只切编辑态"的那一份。</summary>
     private MenuSpec _menu;
-    private readonly SubmenuHoverMachine _hoverMachine;
+
+    /// <summary>
+    /// 当前下钻到哪一级。环 1 画它的父层、环 2 画当前层 ——
+    /// 「同时只看到两级」这件事全部由它决定（见 <see cref="LevelPath"/>）。
+    /// </summary>
+    private LevelPath _path = LevelPath.AtRoot;
+
     private readonly DispatcherTimer _pointerPoll;
     private Point? _lastPointer;
     private bool _stylesApplied;
@@ -83,6 +89,7 @@ public sealed class RadialWindow : Window
         Height = _tokens.Radius.WindowSize;
 
         _menu = menu;
+        _path = LevelPath.AtRoot;
         _view = RadialRingView.Build(menu, editMode: _editMode);
         Content = _view.Root;
 
@@ -95,11 +102,11 @@ public sealed class RadialWindow : Window
         _view.Root.RenderTransformOrigin = new Point(0.5, 0.5);
         _view.Root.RenderTransform = _transform;
 
-        _hoverMachine = new SubmenuHoverMachine(_tokens.Interaction);
-
-        // 状态机必须被**反复**喂入当前指针位置，而不是只在指针移动时喂。
-        // 原因是「等待展开延迟」这件事需要靠时间推进来触发：指针停住不动时，
-        // 若只在移动时才检查，子菜单就永远不会展开。（这条已用单测锁住。）
+        // 指针轮询只做两件事：长按计时、悬停高亮同步。
+        //
+        // **子菜单的悬停展开已经退休**（用户要求"全部改成点击后再展开"）：
+        // 原来的 200/350ms 延迟状态机与斜向缓冲整套都删掉了 ——
+        // 悬停不再改变任何层级，只决定"哪一项被高亮"。
         _pointerPoll = new DispatcherTimer(DispatcherPriority.Input)
         {
             Interval = TimeSpan.FromMilliseconds(25),
@@ -132,11 +139,15 @@ public sealed class RadialWindow : Window
     public event EventHandler? FocusLost;
 
     /// <summary>
-    /// 某个叶子项被点击选中。
-    /// <paramref name="parentIndex"/> 是第一层扇区索引；
-    /// <paramref name="childIndex"/> 为 -1 表示选中的是第一层本身，否则是子弧里的子项。
+    /// 某个叶子项被点击选中。参数是这一项在菜单树里的**完整路径**
+    /// （第一层下标在前，最后一个是它自己在那一层里的下标）。
+    ///
+    /// 为什么不是当初那对（父索引, 子索引）：轮盘现在能一直往下钻，
+    /// 两级的下标对不足以定位一项 —— 旧实现里"自己还有子项"的第二层项点下去
+    /// 会被解析成 `Items[父].Children[子]`，它的 Action 是 null，于是报「还没有配置动作」。
+    /// 交给整条路径之后可以解析到任意深度。
     /// </summary>
-    public event EventHandler<(int ParentIndex, int ChildIndex)>? ItemActivated;
+    public event EventHandler<IReadOnlyList<int>>? ItemActivated;
 
     /// <summary>
     /// 点在环里的「＋」上，要求往那一级加一项。
@@ -270,6 +281,43 @@ public sealed class RadialWindow : Window
     /// </summary>
     public void ApplyMenu(MenuSpec menu, bool? editMode = null)
     {
+        // 换菜单一律回第一层：内容变过之后旧路径的下标可能已经移位。
+        _path = LevelPath.AtRoot;
+        ApplyMenuCore(menu, editMode, animateChildArc: false, levelShiftFrom: null, reopenChildArc: true);
+    }
+
+    /// <summary>
+    /// 换一层（点击导航：展开 / 下钻 / 换分支 / 返回）。
+    ///
+    /// 走的是与换菜单同一条重建路径（复用画布、窗口不动），差别只有两点：
+    /// 子弧按新路径展开时**带动画**；下钻时把旧环 2 的槽位交给
+    /// <see cref="RadialRingView.PlayLevelShiftIn"/> 播"整层搬到环 1"。
+    /// </summary>
+    private void NavigateTo(LevelPath next, bool animate = true)
+    {
+        var from = _path;
+
+        // 重建之前先把旧环 2 的槽位取走 —— 下钻时它是环 1 那一层的起点。
+        var oldChildSpans = animate ? _view.ChildSpans : [];
+
+        var shift = animate && next.Depth == from.Depth + 1 && oldChildSpans.Length > 0;
+
+        _path = next;
+        ApplyMenuCore(_menu, editMode: null, animateChildArc: animate,
+            levelShiftFrom: shift ? oldChildSpans : null, reopenChildArc: false);
+    }
+
+    /// <param name="reopenChildArc">
+    /// 换树之后要不要按"重建前展开的是谁"重新展开子弧。
+    ///
+    /// 换菜单/切编辑态要走这条（项数没变时把用户正在看的子环接着显示）；
+    /// **导航绝不能走** —— 路径已经说清了该显示哪一层，再按旧索引展开会把
+    /// 「返回第一层」当场弹回第一层展开态（这条是 --level-probe 抓出来的）。
+    /// </param>
+    private void ApplyMenuCore(
+        MenuSpec menu, bool? editMode, bool animateChildArc, IReadOnlyList<SectorSpan>? levelShiftFrom,
+        bool reopenChildArc)
+    {
         var previousItemCount = _view.MenuItemCount;
         var previousOpenParent = _view.ChildArcParent;
 
@@ -279,17 +327,13 @@ public sealed class RadialWindow : Window
         // **丢树之前必须先把旧树上的逐帧回调摘掉。**
         // CompositionTarget.Rendering 是静态事件，残留的订阅会让整个旧视觉树
         // 既不被回收、又每帧都在跑 —— 而换菜单恰恰发生在用户正在操作轮盘的时候，
-        // 形变/子弧动画很可能正在播。这条由 --add-sector-probe 的回调计数核对锁住。
-        // **丢树之前必须先把旧树上的逐帧回调摘掉。**
-        // CompositionTarget.Rendering 是静态事件，残留的订阅会让整个旧视觉树
-        // 既不被回收、又每帧都在跑 —— 而换菜单恰恰发生在用户正在操作轮盘的时候，
         // 形变/子弧动画很可能正在播。这条由 --add-sector-probe 的回调计数核对锁住
         // （把这一行删掉，那条核对就会红）。
         _view.ResetInteraction();
 
         // 复用当前画布：换掉 Window.Content 会让整棵内容失效、走一次窗口级布局，
         // 在分层窗口上表现为闪一下（改一次菜单就闪一次）。
-        var fresh = RadialRingView.Build(menu, editMode: _editMode, reuse: Content as Canvas, form: _form);
+        var fresh = RadialRingView.Build(menu, editMode: _editMode, reuse: Content as Canvas, form: _form, path: _path);
 
         // 先把动画状态归零再挂新树：退场动画的 HoldEnd 值会留在 _scale 上，
         // 不清掉的话新内容会从"上次退场结束时的缩放"开始。
@@ -309,16 +353,35 @@ public sealed class RadialWindow : Window
         Content = _view.Root;
         _view.SetAccentOverride(_accentHex);
 
-        // 状态机里存的是旧索引，换树后一律重置 —— 索引可能已经移位。
-        _hoverMachine.Reset();
         _lastPointer = null;
 
-        if (previousOpenParent >= 0
+        // 子弧按路径展开：路径深于 0 就画当前层。
+        if (_path.Depth >= 1)
+        {
+            ExpandChildArcForPath(immediate: !animateChildArc);
+        }
+        else if (reopenChildArc
+            && previousOpenParent >= 0
             && previousItemCount == _view.MenuItemCount
             && _view.RootItemHasChildren(previousOpenParent))
         {
+            // 增删子项这类**不改变项数**的变动后重新展开：用户正在看的就是它。
             ReopenChildArc(previousOpenParent);
         }
+
+        // 位移最后播：它要写几何，而几何要等子树建好。
+        if (levelShiftFrom is { Count: > 0 }) _view.PlayLevelShiftIn(levelShiftFrom);
+    }
+
+    /// <summary>按当前路径展开子弧。子项列表由路径解析出来 —— 视图不再自己去翻一级的 Children。</summary>
+    private void ExpandChildArcForPath(bool immediate)
+    {
+        if (_path.Depth < 1) return;
+
+        var parent = _path.Ring2Parent(_menu);
+        if (parent is null || !parent.HasChildren) return;
+
+        _view.ExpandChildArc(_path.ParentIndexInRing1, parent.Children, immediate);
     }
 
     /// <summary>
@@ -405,9 +468,18 @@ public sealed class RadialWindow : Window
         _view.SetAccentOverride(hex);
     }
 
-    /// <summary>实时更新悬停延迟。</summary>
-    public void ApplyHoverDelays(int? openMs, int? closeMs) =>
-        _hoverMachine.UpdateDelays(openMs, closeMs);
+    /// <summary>
+    /// 实时更新悬停延迟。
+    ///
+    /// **现在什么也不做**：悬停展开已退休（用户要求全部改成点击展开），
+    /// 那两个延迟不再影响任何行为。设置面板与 config.json 里的两项暂时留着，
+    /// 等用户决定是否连同 UI 一起撤掉。
+    /// </summary>
+    public void ApplyHoverDelays(int? openMs, int? closeMs)
+    {
+        _ = openMs;
+        _ = closeMs;
+    }
 
     /// <summary>
     /// 实时更新动画开关。null = 跟随系统「在 Windows 中显示动画」的无障碍设置。
@@ -426,22 +498,27 @@ public sealed class RadialWindow : Window
     internal int VisualChildCount => _view.VisualChildCount;
 
     /// <summary>
-    /// 立刻重新展开某个父项的子弧（无动画），并把状态机同步过去。
+    /// 立刻重新展开某个父项的子弧（无动画）。
     ///
     /// 用在"往子环里加了一项、菜单重建之后"：不这么做的话用户加完一项，
-    /// 子环是收起的，他会以为"加进去的东西不见了"，得重新悬停一次才能确认。
+    /// 子弧是收起的，他会以为"加进去的东西不见了"，得重新点一次才能确认。
     /// </summary>
     public void ReopenChildArc(int parentIndex)
     {
         if (!_view.RootItemHasChildren(parentIndex)) return;
 
-        _hoverMachine.OpenImmediately(parentIndex);
-        _view.ExpandChildArc(parentIndex, immediate: true);
+        _path = LevelPath.AtRoot.SwitchBranch(parentIndex);
+        ExpandChildArcForPath(immediate: true);
         _view.SetHover(parentIndex);
     }
 
-    /// <summary>诊断用：跳过悬停延迟直接展开子弧。</summary>
-    internal void ExpandChildArc(int parentIndex) => _view.ExpandChildArc(parentIndex);
+    /// <summary>诊断用：展开某一项的子弧（等价于"点了一下它"）。探针走这条路径。</summary>
+    internal void ExpandChildArc(int parentIndex)
+    {
+        if (!_view.RootItemHasChildren(parentIndex)) return;
+        NavigateTo(_path.SwitchBranch(parentIndex), animate: false);
+        _view.SetHover(parentIndex);
+    }
 
     /// <summary>诊断用：根环「＋」的索引。</summary>
     internal int AddSectorIndex => _view.AddSectorIndex;
@@ -628,12 +705,42 @@ public sealed class RadialWindow : Window
         return hit;
     }
 
-    internal void CollapseChildArc() => _view.CollapseChildArc();
+    /// <summary>诊断用：收起子弧 = 回第一层（同时只显示两级，收起就是退到第一层）。</summary>
+    internal void CollapseChildArc() => NavigateTo(LevelPath.AtRoot, animate: false);
 
-    /// <summary>开始在可见期间轮询指针，以推进悬停延迟。</summary>
+    /// <summary>诊断用：当前的层级路径（下钻链）。</summary>
+    internal IReadOnlyList<int> LevelStepsForProbe => _path.Steps;
+
+    /// <summary>诊断用：当前显示到第几层（0 = 第一层）。</summary>
+    internal int LevelDepthForProbe => _path.Depth;
+
+    /// <summary>诊断用：环 2 的父项在环 1 里的下标。</summary>
+    internal int ChildArcParentForProbe => _path.ParentIndexInRing1;
+
+    /// <summary>诊断用：环 1 当前各项的标签（按顺序）。</summary>
+    internal IReadOnlyList<string> Ring1LabelsForProbe => _view.Ring1Labels;
+
+    /// <summary>诊断用：环 1 里第 index 项是否有子项。</summary>
+    internal bool Ring1ItemHasChildrenForProbe(int index) => _view.RootItemHasChildren(index);
+
+    /// <summary>诊断用：环 2 当前各项的标签（按顺序）。</summary>
+    internal IReadOnlyList<string> Ring2LabelsForProbe => _view.ChildLabelsOf(_path.ParentIndexInRing1);
+
+    /// <summary>诊断用：环 2 里第 index 项自己还有子项吗。</summary>
+    internal bool ChildIndexHasChildrenForProbe(int index) => _view.ChildIndexHasChildren(index);
+
+    /// <summary>诊断用：层级位移（扇面展开）是否正在播。</summary>
+    internal bool IsLevelShiftingForProbe => _view.IsLevelShifting;
+
+    /// <summary>诊断用：层级位移的逐帧回调数（非 0 = 动画未结束或回调泄漏）。</summary>
+    internal int LevelShiftHookCountForProbe => LevelShiftAnimator.ActiveHookCount;
+
+    /// <summary>诊断用：右半「上一层」标签的透明度（灰态 ≈ 0.22，亮态 ≈ 0.55）。</summary>
+    internal double CenterBackAlphaForProbe => _view.CenterBackAlphaForProbe;
+
+    /// <summary>开始在可见期间轮询指针（长按计时 + 悬停高亮）。</summary>
     public void StartInteraction()
     {
-        _hoverMachine.Reset();
         _lastPointer = null;
         _pointerPoll.Start();
     }
@@ -690,7 +797,6 @@ public sealed class RadialWindow : Window
     public void StopInteraction()
     {
         _pointerPoll.Stop();
-        _hoverMachine.Reset();
         _lastPointer = null;
     }
 
@@ -892,97 +998,34 @@ public sealed class RadialWindow : Window
 
     private void OnMouseLeave(object sender, MouseEventArgs e)
     {
-        // 指针离开窗口，等价于落在环外 —— 让状态机去安排收起。
+        // 指针离开窗口，等价于落在环外：清掉高亮即可。
+        // （以前这里要"安排一次子菜单收起"，悬停展开退休后没有这件事了。）
         _lastPointer = null;
-        _hoverMachine.OnPointer(new HoverProbe(HitZone.Outside, -1, false, NowMs()));
-        ApplyHoverAction(HoverAction.ScheduleClose);
+        ApplyHighlight(-1, -1);
     }
 
     private static long NowMs() => Environment.TickCount64;
 
     /// <summary>
-    /// 把当前指针位置喂给状态机并执行它要求的动作。
-    /// 由 MouseMove 与轮询计时器共同调用 —— 轮询那一路是"指针不动也要推进延迟"的实现。
+    /// 悬停高亮同步。指针不动时也由轮询反复调用，所以只做"改属性"这一件事。
+    ///
+    /// **悬停不再展开子菜单**（用户要求：悬停即展开会降低选扇区的效率，全部改成点击展开），
+    /// 所以这里没有任何状态机、没有延迟、也不改层级。
     /// </summary>
     private void EvaluateHover()
     {
-        // 拖拽中不推进悬停状态机：否则指针扫过别的扇区会一路展开子菜单，
-        // 而用户正在做的事是"把这一项拖到那边去"。
-        if (_view.IsDragging)
-        {
-            ApplyHighlight(-1, -1);
-            return;
-        }
-
-        // **按住期间也冻结悬停。** 按下之后用户不是在用悬停导航，而是在点击或长按，
-        // 这两种意图都不该让盘面在指下变动。
-        //
-        // 这一条是被用户报的问题逼出来的：子环里按住不动时，指针落在子项上，
-        // 状态机认为"你离开父项了"，350ms 后把子弧收掉 —— 于是 1 秒长按触发时
-        // 子环已经没了，拖拽要么拖不动、要么拖到了别的东西上。
-        if (_pressed is not null)
-        {
-            ApplyHighlight(-1, -1);
-            return;
-        }
-
-        // 编辑面板开着时不推进悬停状态机。
-        // 面板通常压在某个扇区上，指针在那里会被判成"悬停在那个扇区"——
-        // 于是面板开着的时候子弧会自己展开、收起，用户正在改的这一项还会高亮闪动。
-        if (_view.IsPanelOpen)
-        {
-            ApplyHighlight(-1, -1);
-            return;
-        }
-
-        if (_lastPointer is not { } local)
+        // 拖拽中、按住期间、面板开着时都不改高亮：
+        // 这三种情况下指针底下的东西不是"用户想选的项"（正在拖它、正在按它、面板压着它）。
+        if (_view.IsDragging || _pressed is not null || _view.IsPanelOpen || _lastPointer is not { } local)
         {
             ApplyHighlight(-1, -1);
             return;
         }
 
         var hit = _view.HitTest(local);
-
-        var probe = new HoverProbe(
-            Zone: hit.Zone,
-            Index: hit.Index,
-            ItemHasChildren: hit.Zone == HitZone.Sector && _view.RootItemHasChildren(hit.Index),
-            NowMs: NowMs());
-
-        var action = _hoverMachine.OnPointer(probe);
-
-        // 收起延迟到期这一条没有指针事件可依附，只能在这里按时间判断。
-        if (action == HoverAction.None && _hoverMachine.CloseDelayElapsed(NowMs()))
-            action = _hoverMachine.OnCloseTimerElapsed(NowMs());
-
-        ApplyHoverAction(action);
-
         ApplyHighlight(
             hit.Zone == HitZone.Sector ? hit.Index : -1,
             hit.Zone == HitZone.ChildSector ? hit.Index : -1);
-    }
-
-    private void ApplyHoverAction(HoverAction action)
-    {
-        switch (action)
-        {
-            case HoverAction.OpenNow:
-                if (_hoverMachine.OpenParent >= 0)
-                    _view.ExpandChildArc(_hoverMachine.OpenParent);
-                break;
-
-            case HoverAction.CloseNow:
-                _view.CollapseChildArc();
-                break;
-
-            // ScheduleOpen / ScheduleClose 不需要额外动作：
-            // 轮询计时器会持续喂入指针位置，延迟到期时自然会转成 OpenNow / CloseNow。
-            case HoverAction.ScheduleOpen:
-            case HoverAction.ScheduleClose:
-            case HoverAction.None:
-            default:
-                break;
-        }
     }
 
     private void ApplyHighlight(int rootIndex, int childIndex)
@@ -1226,10 +1269,18 @@ public sealed class RadialWindow : Window
                     // 子环的「＋」也先出面板 —— 两个「＋」行为不一致正是用户困惑的来源：
                     // 点了一个直接进文件浏览器，就完全看不到"新建分组"（它在另一个「＋」上）。
                     _view.ShowAddChoice(hit.Index, isChild: true);
-                else if (!_editMode)
-                    // 子项是叶子：执行它。父索引与子索引一起报上去，由上层解析成具体动作。
-                    // **编辑态下不执行**：编辑时误触启动了程序，代价比"多点一次"大得多。
-                    ItemActivated?.Invoke(this, (_view.ChildArcParent, hit.Index));
+                else if (_editMode)
+                    // 编辑态下子环里的点击不做事：编辑支持的是**两级以内**
+                    //（第一层 + 它的子项），再往下钻会让"加/改名/重排"落到哪一层变得含糊。
+                    // 这与旧实现一致（旧实现里子项的点击在编辑态下也是被忽略的）。
+                    break;
+                else if (_view.ChildIndexHasChildren(hit.Index))
+                    // **点击环 2 的分组扇区 = 进下一层**：旧的环 2 整层搬到环 1 的位置。
+                    // 这就是"同时只看到两级"往前走的方式。
+                    NavigateTo(_path.Descend(hit.Index));
+                else
+                    // 子项是叶子：执行它。报上去的是**完整路径**，上层据此解析出具体动作。
+                    ItemActivated?.Invoke(this, _path.StepsToRing2(hit.Index));
                 break;
 
             case HitZone.Sector:
@@ -1241,38 +1292,26 @@ public sealed class RadialWindow : Window
                 }
                 else if (_view.RootItemHasChildren(hit.Index))
                 {
-                    // 点击有子项的扇区 = 跳过悬停延迟立即展开。
-                    // **编辑态下也照常展开** —— 要重排子环里的项，就得先进得去。
-                    _hoverMachine.OpenImmediately(hit.Index);
-                    _view.ExpandChildArc(hit.Index);
+                    // 点击有子项的扇区 = 展开它（**深度不变、只换分支**）：
+                    // 环 1 还是这一层，环 2 换成被点那一项的子项。
+                    // 编辑态下也照常展开 —— 要重排子环里的项，就得先进得去。
+                    NavigateTo(_path.SwitchBranch(hit.Index));
                     _view.SetHover(hit.Index);
                 }
                 else if (!_editMode)
                 {
-                    ItemActivated?.Invoke(this, (hit.Index, -1));
+                    ItemActivated?.Invoke(this, _path.StepsToRing1(hit.Index));
                 }
                 break;
 
             case HitZone.DeadZone:
-                // 中心 = 「返回上一层」。有子弧展开时先收子弧，否则取消整棵菜单。
-                // 这与饼菜单的既定语义一致（Don Hopkins 的规范里中心就是取消，
-                // Kurtenbach 的标记菜单里指向子菜单中心则是返回上一级）。
+                // 中心分成两半：**左半 = 返回第一层，右半 = 返回上一层**。
+                // 分区不破坏命中模型：死区本来就是"不选中任何项"，
+                // 两半各自的动作只是在这块空白上补两种语义。
                 //
-                // 编辑态下中心是「完成」：先退出编辑态，**不关覆盖层** ——
-                // 与 Esc 一样逐层退出，不做"一次点掉两层"。
-                if (_editMode && !_view.IsChildArcVisible)
-                {
-                    SetEditMode(false);
-                }
-                else if (_view.IsChildArcVisible)
-                {
-                    _hoverMachine.Reset();
-                    _view.CollapseChildArc();
-                }
-                else
-                {
-                    DismissRequested?.Invoke(this, EventArgs.Empty);
-                }
+                // 关闭不在中心了 —— 它仍是"点环外空白"与 Esc（Esc 是分层退出：
+                // 有层级时先退层，第一层再按一次才关闭）。
+                HandleDeadZoneClick(hit.AngleDeg);
                 break;
 
             case HitZone.ChildArcGap:
@@ -1299,6 +1338,31 @@ public sealed class RadialWindow : Window
     }
 
     /// <summary>
+    /// 死区（中心）的分派：**左半 = Esc（关闭整棵轮盘），右半 = 返回上一层**。
+    ///
+    /// 左半在**任何深度**都直接关闭（等同点环外）—— 否则它在深层里的作用
+    /// 和右半完全重复（这是与 Esc 键的唯一差别：Esc 键仍逐层退出）。
+    /// 编辑态下左半是「退出编辑态」，不关覆盖层（与 Esc 一样分层退出）。
+    /// 右半在第一层时不可用（界面上画灰、点了不动）。
+    /// </summary>
+    private void HandleDeadZoneClick(double angleDeg)
+    {
+        if (CenterZones.IsEscHalf(angleDeg))
+        {
+            if (_editMode)
+            {
+                SetEditMode(false);
+                return;
+            }
+
+            DismissRequested?.Invoke(this, EventArgs.Empty);
+            return;
+        }
+
+        if (CenterZones.IsBackAvailable(_path.Depth)) NavigateTo(_path.Back());
+    }
+
+    /// <summary>
     /// Esc 的处理。抽成方法是为了让探针能走同一条路径 ——
     /// 密钥事件没法从探针里可靠地合成（要靠 SendInput，还得保证前台窗口是对的），
     /// 但"先收面板、再返回上一层、最后才关闭"这个优先级顺序恰恰是最容易写反的地方。
@@ -1319,11 +1383,11 @@ public sealed class RadialWindow : Window
             return;
         }
 
-        // 没有子弧时才关闭整棵菜单。
-        if (_view.IsChildArcVisible)
+        // 有层级时先退一层；只在第一层时才关闭整棵菜单。
+        // 这就是"Esc 逐层退出"：三层时按两次回第一层，第三次才关。
+        if (_path.Depth > 0)
         {
-            _hoverMachine.Reset();
-            _view.CollapseChildArc();
+            NavigateTo(_path.Back());
             return;
         }
 

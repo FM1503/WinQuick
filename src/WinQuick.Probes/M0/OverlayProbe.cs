@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using WinQuick.App.Diagnostics;
 using WinQuick.App.Hosting;
 using WinQuick.App.Interop;
@@ -362,7 +362,8 @@ public static class OverlayProbe
         var tokens = TokenStore.Current;
         var monitor = MonitorLayout.AtCursor();
         var hitIndex = -1;
-        overlay.ItemActivated += (_, selection) => hitIndex = selection.ChildIndex >= 0 ? selection.ChildIndex : selection.ParentIndex;
+        // 报上来的是完整路径；这里只关心"点中的是第 0 个扇区"，所以取最后一段。
+        overlay.ItemActivated += (_, steps) => hitIndex = steps.Count > 0 ? steps[^1] : -1;
 
         PInvoke.GetCursorPos(out var savedCursor);
         var radial = (HWND)overlay.RadialHandle;

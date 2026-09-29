@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace WinQuick.Core.Config;
@@ -86,6 +86,10 @@ public sealed record AppConfig
         if (Appearance.AccentColor is { } accent && !LooksLikeHexColor(accent))
             problems.Add($"appearance.accentColor “{accent}” 不是 #RRGGBB 格式");
 
+        foreach (var recent in Appearance.RecentAccentColors)
+            if (!LooksLikeHexColor(recent))
+                problems.Add($"appearance.recentAccentColors 里的 “{recent}” 不是 #RRGGBB 格式");
+
         return problems;
     }
 
@@ -106,6 +110,13 @@ public sealed record AppearanceConfig
 
     /// <summary>悬停高亮色（#RRGGBB）。null = 用设计值。</summary>
     public string? AccentColor { get; init; }
+
+    /// <summary>
+    /// 高亮色调色盘「最近使用」的颜色（#RRGGBB，新的在前，最多 6 个）。
+    /// 由设置面板的调色盘在提交选择时维护 —— 放进配置而不是界面状态，
+    /// 下次打开面板还能一键回选。
+    /// </summary>
+    public IReadOnlyList<string> RecentAccentColors { get; init; } = [];
 
     /// <summary>
     /// 当前皮肤 id（见 design/skins.json）。null/空 = 默认皮肤（就是基线本身）。

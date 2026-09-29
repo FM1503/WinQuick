@@ -567,7 +567,7 @@ public static class FlashProbe
 
                     // Pick 会阻塞 UI 线程（模态），所以派发出去 —— 采样在别的线程上，不受影响。
                     // 显式丢弃返回值：这里就是要"不等它"，等它就等于把采样也堵在对话框上。
-                    _ = ui.BeginInvoke(new Action(() => overlay.PickExecutableForMenu()));
+                    _ = ui.BeginInvoke(new Action(() => overlay.PickFileDialogForProbe()));
                     await Task.CompletedTask;
                 }, DialogAfterTriggerMs);
 

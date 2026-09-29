@@ -38,6 +38,13 @@ public sealed partial class RadialRingView
     private readonly List<UIElement> _childExtraVisuals = [];
 
     private SectorSpan[] _childSpans = [];
+
+    /// <summary>
+    /// 当前子弧里各项（与 <see cref="_childSpans"/> 同序）。
+    /// 留着它是为了回答"这一项自己还有子项吗" —— 点击分派据此决定
+    /// "执行它"还是"再进一层"。视图不再自己去翻一级的 Children（下钻后那是错的那一层）。
+    /// </summary>
+    private IReadOnlyList<MenuItemSpec> _childItems = [];
     private SectorSpan _childArcSpan;
     private int _childArcParent = -1;
     private int _childAddSectorIndex = -1;
@@ -61,12 +68,14 @@ public sealed partial class RadialRingView
 
     /// <summary>
     /// 展开某个父扇区的子弧。已有子弧会立刻被替换（同时只显示一个子弧）。
+    ///
+    /// **子项列表由调用方按层级路径给出**（不再自己去翻一级的 `Children`）：
+    /// 下钻之后环 1 是父层、子弧的父项也就可能是深层里的某一项，
+    /// 视图没有"路径"这个概念之外的办法知道该取谁的子项。
     /// </summary>
-    public void ExpandChildArc(int parentIndex, bool immediate = false)
+    public void ExpandChildArc(int parentIndex, IReadOnlyList<MenuItemSpec> children, bool immediate = false)
     {
-        if (parentIndex < 0 || parentIndex >= _menu.Items.Count) return;
-
-        var children = _menu.Items[parentIndex].Children;
+        if (parentIndex < 0 || parentIndex >= _spans.Length) return;
         if (children.Count == 0) return;
 
         if (_childArcParent == parentIndex && !_childArcRemoving)
@@ -82,6 +91,7 @@ public sealed partial class RadialRingView
         RemoveChildVisuals();
         _childArcRemoving = false;
         _childArcParent = parentIndex;
+        _childItems = children;
         _hoveredChild = -1;
 
         var tokens = TokenStore.Current;
@@ -500,6 +510,7 @@ public sealed partial class RadialRingView
         _childLabels.Clear();
         _childChildMarkers.Clear();
         _childSpans = [];
+        _childItems = [];
         _childEditOutline = null;
     }
 

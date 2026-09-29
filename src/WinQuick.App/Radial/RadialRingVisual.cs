@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Shapes;
@@ -7,6 +7,7 @@ using WinQuick.App.Interop;
 using WinQuick.Core.Config;
 using WinQuick.Core.Design;
 using WinQuick.Core.Geometry;
+using WinQuick.Core.Interaction;
 using WinQuick.Core.Motion;
 using ShapePath = System.Windows.Shapes.Path;
 
@@ -67,7 +68,25 @@ public sealed partial class RadialRingView
     private Shape? _editRing;
 
     /// <summary>
+    /// <summary>菜单定义（层级路径要拿它取每一层的项）。</summary>
     private readonly MenuSpec _menu;
+
+    /// <summary>
+    /// 当前显示到哪一级。**环 1 画的不是固定的一级**，而是这条路径的父层 ——
+    /// 「旧的环 2 搬到环 1」这句话在视图层就是"环 1 的项来自 <see cref="LevelPath.Ring1Level"/> 层"。
+    /// </summary>
+    private readonly LevelPath _path;
+
+    /// <summary>环 1 当前要画的项（<see cref="_path"/> 决定，构建时取一次）。</summary>
+    private readonly IReadOnlyList<MenuItemSpec> _ring1Items;
+
+    /// <summary>
+    /// 环 1 里"没有图标"的项画出来的占位图（圆圈 + 首字，每项两个元素）。
+    /// 它们由 AddPlaceholder 直接加进画布、不在扇区/图标数组里，所以必须单独登记：
+    /// 层级位移时只搬登记过的元素的话，这些项会留在原地不动（只有边框在变形）。
+    /// </summary>
+    private readonly List<UIElement> _ring1Placeholders;
+
     private int _hover = -1;
 
     /// <summary>
@@ -99,10 +118,13 @@ public sealed partial class RadialRingView
         Canvas root, DesignTokens tokens, Point center, SectorSpan[] spans,
         ShapePath[] sectors, PathGeometry[] baseGeometry,
         SectorLabel[] labels, Image[] icons, ShapePath?[] childMarkers,
-        MenuSpec menu)
+        MenuSpec menu, LevelPath path, List<UIElement> ring1Placeholders)
     {
         Root = root;
         _menu = menu;
+        _path = path;
+        _ring1Items = path.Ring1Items(menu);
+        _ring1Placeholders = ring1Placeholders;
         _tokens = tokens;
         _center = center;
         _spans = spans;
@@ -133,10 +155,35 @@ public sealed partial class RadialRingView
     /// 它必须**始终**可见：曾经有一版会在悬停到被截断的项时把它换成完整名字，
     /// 那是错的 —— Esc 是界面上唯一的取消提示，不该因为某个项名字长就消失。
     /// </summary>
-    internal bool EscHintVisible => _escHint.Visibility == Visibility.Visible;
+    internal bool EscHintVisible =>
+        _escHint.Visibility == Visibility.Visible
+        || _centerLabels.Any(l => l.Visibility == Visibility.Visible);
+
+    /// <summary>
+    /// 诊断用：右半「上一层」标签的透明度（0–1；-1 = 没有这个标签）。
+    /// 锁两件事：第一层时它必须明显比左半暗（灰态），
+    /// 以及**换肤就地重刷之后灰不丢**（第一版就在那里把两个标签统一刷成亮色）。
+    /// </summary>
+    internal double CenterBackAlphaForProbe =>
+        _centerBackLabel?.Foreground is SolidColorBrush b ? b.Color.A / 255.0 : -1;
 
     /// <summary>中心的 "Esc" 提示。它任何时候都不该被隐藏或替换。</summary>
     private TextBlock _escHint = null!;
+
+    /// <summary>中心两半的文字（左 Esc、右 上一层）。编辑态下为空。</summary>
+    private List<TextBlock> _centerLabels = [];
+
+    /// <summary>右半「上一层」的标签 —— 它有灰态，换肤时要按角色重刷（见 TryApplySkinInPlace）。</summary>
+    private TextBlock? _centerBackLabel;
+
+    /// <summary>右半当前是否可用（不可用 = 画灰）。换肤重刷时要按它决定透明度。</summary>
+    private bool _centerBackAvailable;
+
+    /// <summary>中缝分隔线 —— 换肤时要重刷它的颜色。</summary>
+    private Line? _centerDivider;
+
+    /// <summary>灰态文字的透明度系数（乘在 hintAlpha 上）。</summary>
+    private const double DimmedHintFactor = 0.4;
 
     /// <summary>诊断用：某个标签的排版快照。</summary>
     internal (double Left, double FontSize, string Weight, bool Wrapping, double Width)
@@ -325,7 +372,18 @@ public sealed partial class RadialRingView
         }
         if (_editRing is not null)
             _editRing.Stroke = TokenBrushes.Brush(colors.HoverStroke, 0.5);
+
+        // 中心的三处文字/线条：编辑态那一个词、左右两半的标签（左 Esc、右 上一层）、中缝。
+        // 它们用的是 Hint 色，换肤要跟着变 —— 但**右半的灰态必须保留**：
+        // 第一版在这里把两个标签统一刷成亮色，用户存的皮肤在启动时走一次就地换肤，
+        // 「上一层」的灰就被冲掉了（表现为"第一层时右边没置灰"）。所以按角色各自重刷。
         _escHint.Foreground = TokenBrushes.Brush(colors.Hint, colors.HintAlpha);
+        if (_centerBackLabel is not null)
+            _centerBackLabel.Foreground = TokenBrushes.Brush(colors.Hint,
+                _centerBackAvailable ? colors.HintAlpha : colors.HintAlpha * DimmedHintFactor);
+        if (_centerDivider is not null)
+            _centerDivider.Stroke = TokenBrushes.Brush(
+                colors.DeadZoneStroke, colors.DeadZoneStrokeAlpha);
 
         // 悬停态的颜色也要按新规格重上一遍（走"强制重算"那条路：索引没变时 SetHover 会提前返回）。
         var previous = _hover;
@@ -376,12 +434,17 @@ public sealed partial class RadialRingView
     /// </param>
     public static RadialRingView Build(
         MenuSpec menu, double? sizeOverride = null, bool editMode = false, Canvas? reuse = null,
-        RingForm form = RingForm.Pie)
+        RingForm form = RingForm.Pie, LevelPath? path = null)
     {
         var tokens = TokenStore.Current;
         var radius = tokens.Radius;
         var size = sizeOverride ?? radius.WindowSize;
         var center = new Point(size / 2, size / 2);
+        var level = path ?? LevelPath.AtRoot;
+
+        // 环 1 画的是**路径决定的父层**：深度 0 时就是一级，更深时是上一层
+        //（下钻时"旧的环 2 整层搬到环 1"就落在这一行）。
+        var ring1Items = level.Ring1Items(menu);
 
         // 形态决定单元的外形与占位：花瓣内侧退一点、刻度盘外缘收一点给刻度让位。
         // 命中测试仍然用 RadialLayout 的角度区间 —— 四种形态共用同一套区间。
@@ -403,7 +466,7 @@ public sealed partial class RadialRingView
         //
         // 为什么是"排在末尾"而不是"固定在某个角度"：角度分配只有一套规则（均匀分布），
         // 引入一个固定位置的特殊扇区就等于有了两套角度映射，用户更难预判。
-        var itemCount = menu.Items.Count;
+        var itemCount = ring1Items.Count;
         var addIndex = editMode && itemCount < RadialLayout.MaxSectors ? itemCount : -1;
         var count = addIndex >= 0 ? itemCount + 1 : itemCount;
 
@@ -414,6 +477,7 @@ public sealed partial class RadialRingView
         var labels = new SectorLabel[count];
         var icons = new Image[count];
         var childMarkers = new ShapePath?[count];
+        var ring1Placeholders = new List<UIElement>();
 
         var colors = tokens.Color;
         var fill = TokenBrushes.Brush(colors.SectorFill, colors.SectorFillAlpha);
@@ -482,8 +546,9 @@ public sealed partial class RadialRingView
                 continue;
             }
 
-            var item = menu.Items[i];
-            icons[i] = AddIcon(root, center, radius.IconRadius, span.CenterDeg, item, radius.IconSize);
+            var item = ring1Items[i];
+            icons[i] = AddIcon(root, center, radius.IconRadius, span.CenterDeg, item, radius.IconSize,
+                ring1Placeholders);
             labels[i] = new SectorLabel(
                 root, center, radius.LabelRadius, span.CenterDeg, item.Label,
                 tokens.Typography.LabelFontSize,
@@ -525,21 +590,28 @@ public sealed partial class RadialRingView
             root.Children.Add(editRing);
         }
 
-        // 中心死区：语义是「取消」。用一块内凹的圆暗示它不可点选。
+        // 中心死区：分成两半 —— **左半 = Esc（关闭），右半 = 返回上一层**
+        //（用户指定的分工；样式是每半一行字，见 AddCenterParts）。
+        //
+        // 底下那个内凹的圆照旧画着：它既是"这里不是可选项"的视觉暗示，
+        // 也是皮肤就地切换时要改画刷的那个元素（_deadZone）。
         var deadZone = AddEllipse(root, center, radius.DeadZone - 4,
             TokenBrushes.Brush(colors.DeadZoneFill),
             TokenBrushes.Brush(colors.DeadZoneStroke, colors.DeadZoneStrokeAlpha), 1);
-        // 编辑态下中心显示「完成」：那里的语义是"退出当前状态"。
-        // 日常是 Esc（退出轮盘），编辑态是完成（退出编辑）—— 同一个位置、同一类含义。
-        TextBlock escHint = AddText(root, center, 0, 0, editMode ? "完成" : "Esc",
-            TokenBrushes.Brush(colors.Hint, colors.HintAlpha), tokens.Typography.HintFontSize);
+
+        var centerParts = AddCenterParts(root, center, radius, tokens, level.Depth, editMode);
 
         var view = new RadialRingView(
-            root, tokens, center, spans, sectors, baseGeometry, labels, icons, childMarkers, menu)
+            root, tokens, center, spans, sectors, baseGeometry, labels, icons, childMarkers,
+            menu, level, ring1Placeholders)
         {
             AddSectorIndex = addIndex,
             EditMode = editMode,
-            _escHint = escHint,
+            _escHint = centerParts.Hint,
+            _centerLabels = centerParts.ZoneLabels,
+            _centerBackLabel = centerParts.Back,
+            _centerBackAvailable = !editMode && CenterZones.IsBackAvailable(level.Depth),
+            _centerDivider = centerParts.Divider,
             _deadZone = deadZone,
             _editRing = editRing,
             _form = form,
@@ -636,6 +708,9 @@ public sealed partial class RadialRingView
     {
         // 拖拽预览也要收掉：残留的目标格子标记会留在视觉树上。
         EndDrag();
+        // 层级位移的逐帧回调也要停：它挂在静态事件 CompositionTarget.Rendering 上，
+        // 留着这个旧树既不被回收、又每帧都在改几何。
+        ResetLevelShift();
         _bulge.Reset();
         CollapseChildArcImmediate();
         _hover = -1;
@@ -663,25 +738,38 @@ public sealed partial class RadialRingView
     /// <summary>这一份视图是否处于编辑态（决定「＋」扇区画不画）。</summary>
     public bool EditMode { get; private init; }
 
-    /// <summary>菜单里的项数。重建时用它判断索引有没有整体移位。</summary>
-    public int MenuItemCount => _menu.Items.Count;
+    /// <summary>环 1 里的项数（= 父层这一层有几项）。重建时用它判断索引有没有整体移位。</summary>
+    public int MenuItemCount => _ring1Items.Count;
 
-    /// <summary>第一层某项是否有子菜单。状态机需要它来决定"悬停是否应展开"。</summary>
+    /// <summary>当前显示到哪一级。</summary>
+    public LevelPath Path => _path;
+
+    /// <summary>环 1 某项的标签（按顺序）。探针用它核对"环 1 是不是旧的环 2"。</summary>
+    public IReadOnlyList<string> Ring1Labels => _ring1Items.Select(i => i.Label).ToList();
+
+    /// <summary>环 1 某项是否有子菜单。点击是否展开/下钻看它。</summary>
     public bool RootItemHasChildren(int index) =>
-        index >= 0 && index < _menu.Items.Count && _menu.Items[index].HasChildren;
+        index >= 0 && index < _ring1Items.Count && _ring1Items[index].HasChildren;
 
-    /// <summary>第一层某项的完整标签（未截断）。</summary>
+    /// <summary>环 1 某项的完整标签（未截断）。</summary>
     public string RootItemLabel(int index) =>
-        index >= 0 && index < _menu.Items.Count ? _menu.Items[index].Label : "";
+        index >= 0 && index < _ring1Items.Count ? _ring1Items[index].Label : "";
 
-    /// <summary>某个父扇区下各子项的标签。</summary>
+    /// <summary>环 1 里某个扇区下各子项的标签。</summary>
     public IReadOnlyList<string> ChildLabelsOf(int parentIndex) =>
-        parentIndex >= 0 && parentIndex < _menu.Items.Count
-            ? _menu.Items[parentIndex].Children.Select(c => c.Label).ToList()
+        parentIndex >= 0 && parentIndex < _ring1Items.Count
+            ? _ring1Items[parentIndex].Children.Select(c => c.Label).ToList()
             : [];
 
     /// <summary>子弧当前是否可见（含正在展开/收起的中间态）。</summary>
     public bool IsChildArcVisible => _childArcParent >= 0;
+
+    /// <summary>子弧里各项的角度跨度（层级位移要从这些槽位出发，把整层搬到环 1）。</summary>
+    internal SectorSpan[] ChildSpans => _childSpans;
+
+    /// <summary>子弧里第 index 项自己还有子项吗（点击时决定"执行"还是"再进一层"）。</summary>
+    public bool ChildIndexHasChildren(int index) =>
+        index >= 0 && index < _childItems.Count && _childItems[index].HasChildren;
 
     /// <summary>当前显示的是哪个父扇区的子弧，-1 表示没有。</summary>
     public int ChildArcParent => _childArcParent;
@@ -712,8 +800,8 @@ public sealed partial class RadialRingView
     public string CurrentSelectionLabel =>
         _hoveredChild >= 0 && _hoveredChild < _childLabels.Count
             ? _childLabels[_hoveredChild].Text
-            : _hover >= 0 && _hover < _labels.Length
-                ? _menu.Items[_hover].Label
+            : _hover >= 0 && _hover < _labels.Length && _hover < _ring1Items.Count
+                ? _ring1Items[_hover].Label
                 : "";
 
     /// <summary>
@@ -801,7 +889,8 @@ public sealed partial class RadialRingView
     }
 
     private static Image AddIcon(
-        Canvas root, Point center, double radius, double angleDeg, MenuItemSpec item, double iconSize)
+        Canvas root, Point center, double radius, double angleDeg, MenuItemSpec item, double iconSize,
+        List<UIElement>? placeholderCollector = null)
     {
         var image = new Image
         {
@@ -819,7 +908,7 @@ public sealed partial class RadialRingView
 
         var source = ShellIcons.GetScaled(item.IconPath, IconDevicePixels(iconSize));
         if (source is not null) image.Source = source;
-        else AddPlaceholder(root, center, radius, angleDeg, item.Label, iconSize);
+        else AddPlaceholder(root, center, radius, angleDeg, item.Label, iconSize, placeholderCollector);
 
         var offset = Vec2.FromPolar(radius, angleDeg);
         Canvas.SetLeft(image, center.X + offset.X - iconSize / 2);
@@ -956,6 +1045,78 @@ public sealed partial class RadialRingView
         Canvas.SetTop(ellipse, center.Y - radius);
         root.Children.Add(ellipse);
         return ellipse;
+    }
+
+    /// <summary>
+    /// 中心区的两半与提示文字：**左半「Esc」一行、右半「上一层」一行**，中间一条竖中缝。
+    /// 右半在第一层时画灰（那时没有"上一层"可回）。
+    ///
+    /// 编辑态不画两半，只在中心放「完成」一个词 —— 点中心 = 退出编辑态（与旧行为一致，
+    /// 编辑时中心不承担导航）。
+    ///
+    /// **间距的教训**：死区半径是 56（整圆 112 宽），第一版把标签放在 ±15 ——
+    /// 只用了可用宽度的一半多一点，两行字几乎贴着中缝（用户反馈"靠得太近"）。
+    /// 现在标签中心放在 ±0.47×半径，各自靠向自己那一半的圆心。
+    /// </summary>
+    private static (TextBlock Hint, TextBlock? Back, Line? Divider, List<TextBlock> ZoneLabels)
+        AddCenterParts(Canvas root, Point center, RadiusTokens radius, DesignTokens tokens,
+            int depth, bool editMode)
+    {
+        var fontSize = tokens.Typography.HintFontSize;
+
+        if (editMode)
+        {
+            var editHint = AddText(root, center, 0, 0, "完成",
+                TokenBrushes.Brush(tokens.Color.Hint, tokens.Color.HintAlpha), fontSize);
+            return (editHint, null, null, []);
+        }
+
+        var available = TokenBrushes.Brush(tokens.Color.Hint, tokens.Color.HintAlpha);
+        var backAvailable = CenterZones.IsBackAvailable(depth);
+        var backBrush = TokenBrushes.Brush(tokens.Color.Hint,
+            backAvailable ? tokens.Color.HintAlpha : tokens.Color.HintAlpha * DimmedHintFactor);
+
+        // 中缝：一条细线把两半分开（装饰，不参与命中 —— 两半的判定在 CenterZones，按角度算）。
+        var divider = new Line
+        {
+            X1 = center.X,
+            Y1 = center.Y - radius.DeadZone * 0.55,
+            X2 = center.X,
+            Y2 = center.Y + radius.DeadZone * 0.55,
+            Stroke = TokenBrushes.Brush(tokens.Color.DeadZoneStroke, tokens.Color.DeadZoneStrokeAlpha),
+            StrokeThickness = 1,
+            IsHitTestVisible = false,
+        };
+        root.Children.Add(divider);
+
+        // 左半 Esc / 右半 上一层：各一行，中心放在 ±0.47×死区半径 —— 各自那半的中间，
+        // 两个标签之间隔着整条中缝加两侧留白。
+        var esc = CenterText(root, center.X - radius.DeadZone * 0.47, center.Y, "Esc",
+            available, fontSize)[0];
+        var back = CenterText(root, center.X + radius.DeadZone * 0.47, center.Y, "上一层",
+            backBrush, fontSize * 0.85)[0];
+
+        return (esc, back, divider, [esc, back]);
+    }
+
+    /// <summary>在指定位置放一行字（居中）。文字不参与命中测试 —— 点它等于点中心。</summary>
+    private static List<TextBlock> CenterText(
+        Canvas root, double x, double y, string line, Brush brush, double fontSize)
+    {
+        var text = new TextBlock
+        {
+            Text = line,
+            FontSize = fontSize,
+            Foreground = brush,
+            IsHitTestVisible = false,
+            TextAlignment = TextAlignment.Center,
+        };
+        text.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+
+        Canvas.SetLeft(text, x - text.DesiredSize.Width / 2);
+        Canvas.SetTop(text, y - text.DesiredSize.Height / 2);
+        root.Children.Add(text);
+        return [text];
     }
 
     private static TextBlock AddText(

@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
@@ -224,7 +224,19 @@ public sealed class OverlayController : IDisposable
     /// 提高置顶重申频率（对话框不会自动变成 topmost，不重申就会被遮罩盖住一闪），
     /// 以及屏蔽"失去焦点就关闭"（对话框夺走前台焦点，否则会顺手把覆盖层关掉）。
     /// </summary>
-    public string? PickExecutableForMenu()
+    /// <summary>
+    /// 弹出「添加到菜单」的选择界面，返回要加进去的菜单项（用户取消时为 null）。
+    ///
+    /// 为什么不再只弹文件选择框：用户问"回收站怎么加"，而回收站这类**虚拟文件夹没有路径**，
+    /// 文件框根本选不中（当时的答案只能是"手写 menus.json"）。现在给的是一个小选择窗：
+    /// 系统位置（回收站/此电脑/控制面板…，按本机实际能解析的筛过）+「浏览文件…」那条老路。
+    ///
+    /// 它用 <see cref="Window.ShowDialog"/> 阻塞到这里关闭 —— 与原来那个文件对话框同一套
+    /// 同步语义，所以调用方（常驻）的流程一行不用改。**必须传 owner**：有所有者的对话框
+    /// 才跟着轮盘一起处于置顶之列，而 z 序重申仍靠那对 modal 钩子把覆盖层留在"对话框期间
+    /// 不失焦就关闭"的豁免状态里。
+    /// </summary>
+    public MenuItemSpec? PickMenuItemForAdd()
     {
         if (_disposed) return null;
 
@@ -232,7 +244,74 @@ public sealed class OverlayController : IDisposable
         SetTopmostInterval(FastTopmostReassertInterval);
         try
         {
-            return ProgramPicker.Pick(_radial);
+            MenuItemSpec? chosen = null;
+            SystemLocationPicker picker;
+            try
+            {
+                picker = new SystemLocationPicker(
+                    onChosen: (label, action) => chosen = new MenuItemSpec
+                    {
+                        Label = label,
+                        // 图标来源：虚拟文件夹用它的 shell 解析名（实测能取到图标），文件/文件夹用路径。
+                        IconPath = action.Target,
+                        Action = action,
+                    },
+                    modalOpening: () => _modalDialogDepth++,
+                    modalClosed: () => _modalDialogDepth--)
+                {
+                    Owner = _radial,
+                };
+            }
+            catch (Exception ex)
+            {
+                // 新界面初始化失败不该把整个程序带崩：这一次"什么都没加"，并留下日志。
+                // 这类失败真发生过（面板把 RenderTransform 挂在 Window 上会抛，
+                // 表现是"点设置没反应"），所以这条兜底是必要的。
+                CrashLog.Write("打开「添加到菜单」界面失败", ex);
+                return null;
+            }
+
+            // 摆位复用面板那一套：**两遍**。
+            // 第一遍先给个位置（布局完成前 ActualHeight 不可靠，靠 MaxHeight 估），
+            // 让窗口出现时就大致在正确的地方；建句柄是必须的 —— 没句柄时 SetWindowPos 无处可去。
+            _ = new WindowInteropHelper(picker).EnsureHandle();
+            PositionPanel(picker, picker.PlacedByUser);
+
+            // 入场与第二遍摆位都排在"第一帧渲染完成"之后 ——
+            // 少了 PrepareEntrance，它会以终态闪一帧再缩放（面板那套讲究，有实测依据）。
+            picker.PrepareEntrance();
+            picker.ContentRendered += (_, _) =>
+            {
+                PositionPanel(picker, picker.PlacedByUser);
+                picker.PlayEntrance();
+            };
+
+            picker.ShowDialog();
+            return chosen;
+        }
+        finally
+        {
+            _modalDialogDepth--;
+            SetTopmostInterval(TopmostReassertInterval);
+        }
+    }
+
+    /// <summary>
+    /// 诊断用：**直接弹系统文件对话框**（原来「＋」的那条路）。
+    ///
+    /// 为什么还要留着它：`--flash-probe` 与 `--zorder-probe` 核对的是
+    /// "模态系统对话框期间的置顶与闪烁"，而那条路现在只是选择界面里的一个按钮。
+    /// 探针要测的仍是系统对话框本身，所以给它一个直接入口，别让它去点 UI。
+    /// </summary>
+    internal string? PickFileDialogForProbe()
+    {
+        _modalDialogDepth++;
+        SetTopmostInterval(FastTopmostReassertInterval);
+        try
+        {
+            return ProgramPicker.Pick(_radial,
+                modalOpening: () => _modalDialogDepth++,
+                modalClosed: () => _modalDialogDepth--);
         }
         finally
         {
@@ -319,8 +398,32 @@ public sealed class OverlayController : IDisposable
     /// <summary>诊断用：视觉树上的直接子元素数量。</summary>
     internal int VisualChildCount => _radial.VisualChildCount;
 
-    /// <summary>诊断用：跳过悬停延迟直接展开子弧。</summary>
+    /// <summary>诊断用：展开某一项的子弧（等价于点它一下）。</summary>
     internal void ExpandChildArcForProbe(int parentIndex) => _radial.ExpandChildArc(parentIndex);
+
+    /// <summary>诊断用：当前显示到第几层（0 = 第一层）。</summary>
+    internal int LevelDepthForProbe => _radial.LevelDepthForProbe;
+
+    /// <summary>诊断用：当前的下钻链。</summary>
+    internal IReadOnlyList<int> LevelStepsForProbe => _radial.LevelStepsForProbe;
+
+    /// <summary>诊断用：环 2 的父项在环 1 里的下标（-1 = 环 2 为空）。</summary>
+    internal int ChildArcParentForProbe => _radial.ChildArcParentForProbe;
+
+    /// <summary>诊断用：环 1 当前各项的标签（按顺序）。</summary>
+    internal IReadOnlyList<string> Ring1LabelsForProbe => _radial.Ring1LabelsForProbe;
+
+    /// <summary>诊断用：环 2 当前各项的标签（按顺序）。</summary>
+    internal IReadOnlyList<string> Ring2LabelsForProbe => _radial.Ring2LabelsForProbe;
+
+    /// <summary>诊断用：环 2 里第 index 项自己还有子项吗。</summary>
+    internal bool ChildIndexHasChildrenForProbe(int index) => _radial.ChildIndexHasChildrenForProbe(index);
+
+    /// <summary>诊断用：层级位移（扇面展开）是否正在播。</summary>
+    internal bool IsLevelShiftingForProbe => _radial.IsLevelShiftingForProbe;
+
+    /// <summary>诊断用：层级位移的逐帧回调数（非 0 说明动画还没结束或回调泄漏）。</summary>
+    internal int LevelShiftHookCountForProbe => _radial.LevelShiftHookCountForProbe;
 
     /// <summary>诊断用：根环「＋」的索引。</summary>
     internal int AddSectorIndexForProbe => _radial.AddSectorIndex;
@@ -366,6 +469,9 @@ public sealed class OverlayController : IDisposable
 
     /// <summary>诊断用：中心的 "Esc" 提示是否可见。</summary>
     internal bool EscHintVisibleForProbe => _radial.EscHintVisible;
+
+    /// <summary>诊断用：右半「上一层」标签的透明度（灰态 ≈ 0.22，亮态 ≈ 0.55）。</summary>
+    internal double CenterBackAlphaForProbe => _radial.CenterBackAlphaForProbe;
 
     /// <summary>诊断用：被截断的标签数。</summary>
     internal int ElidedLabelCountForProbe => _radial.ElidedLabelCount;
@@ -485,9 +591,13 @@ public sealed class OverlayController : IDisposable
     internal void CollapseChildArcForProbe() => _radial.CollapseChildArc();
 
     /// <summary>
-    /// 某个叶子项被点击。<c>ChildIndex</c> 为 -1 表示第一层的项，否则是子弧里的子项。
+    /// 某个叶子项被点击。参数是这一项在菜单树里的**完整路径**
+    /// （第一层下标在前，最后一个是它自己在那一层里的下标）。
+    ///
+    /// 从"（父索引, 子索引）那一对"改成整条路径，是因为轮盘现在能一直往下钻：
+    /// 两级的下标对定位不到第三层及更深的项（旧实现里那种项点下去会报「还没有配置动作」）。
     /// </summary>
-    public event EventHandler<(int ParentIndex, int ChildIndex)>? ItemActivated;
+    public event EventHandler<IReadOnlyList<int>>? ItemActivated;
 
     /// <summary>
     /// 用户点了环里的「＋」，要求往那一级加一项。

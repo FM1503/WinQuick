@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Text.Json;
@@ -350,7 +350,11 @@ public sealed class ConfigStore : IDisposable
                 "dimOpacity": {{Dec(config.Appearance.DimOpacity)}},
 
                 // 悬停高亮色，#RRGGBB。
-                "accentColor": {{Str(config.Appearance.AccentColor)}}
+                "accentColor": {{Str(config.Appearance.AccentColor)}},
+
+                // 调色盘「最近使用」的颜色（新的在前，最多 6 个）。
+                "recentAccentColors": [{{string.Join(",",
+                    config.Appearance.RecentAccentColors.Select(c => Str(c)))}}]
               },
 
               "behavior": {

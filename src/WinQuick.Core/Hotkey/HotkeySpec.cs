@@ -1,4 +1,4 @@
-namespace WinQuick.Core.Hotkey;
+﻿namespace WinQuick.Core.Hotkey;
 
 [Flags]
 public enum HotkeyModifiers
@@ -36,6 +36,23 @@ public sealed record HotkeySpec(HotkeyModifiers Modifiers, uint VirtualKey, stri
     /// <summary>默认热键。Ctrl+Win+W 在目标机器上实测可注册（见 docs/M0-findings.md）。</summary>
     public static HotkeySpec Default { get; } =
         new(HotkeyModifiers.Control | HotkeyModifiers.Win, 0x57, "W");
+
+    /// <summary>
+    /// 设置界面「预设」下拉给出的推荐组合。入选标准：带修饰键、避开系统与常见软件的占用。
+    /// 排除过的：纯 Win+*（Win11 shell 预留）、Ctrl+Space（中文输入法中英切换）、
+    /// Alt+Tab / Alt+F4（系统）、不带修饰键的裸键（<see cref="TryParse"/> 直接拒绝）。
+    ///
+    /// **Ctrl+Shift+Z 是用户点名要的**：不少编辑器把它当「重做」，全局热键会吞掉这个组合 ——
+    /// 哪天被抱怨「编辑器里重做失灵」，先看这里。
+    /// </summary>
+    public static readonly string[] RecommendedPresets =
+    [
+        "Ctrl+Win+W",
+        "Ctrl+Alt+Q",
+        "Ctrl+Alt+Space",
+        "Ctrl+Alt+Z",
+        "Ctrl+Shift+Z",
+    ];
 
     public static bool TryParse(string? text, out HotkeySpec? spec, out string? error)
     {

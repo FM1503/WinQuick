@@ -1,0 +1,530 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>WinQuick · 设置面板密度 + 热键预设（原型）</title>
+<style>
+  :root { --bg:#0d1117; --fg:#e6edf6; --muted:#9aa3b2; --line:#ffffff1a;
+          --accent:#8ab4ff; --ok:#7fd18f; --warn:#e2c56a; --bad:#e08a7a;
+          --surface:#1b212e; --field:#0e1420; --stroke:#3a4356; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:13px/1.6 "Segoe UI","Microsoft YaHei",system-ui,sans-serif; }
+  header { padding:16px 20px 4px; }
+  h1 { margin:0 0 6px; font-size:17px; font-weight:600; }
+  p { margin:4px 0; }
+  code { background:#ffffff0f; color:#cfe0ff; padding:1px 5px; border-radius:4px; font-size:12px; }
+  .muted { color:var(--muted); }
+  .note { border-left:3px solid var(--accent); background:#8ab4ff10; padding:7px 11px;
+          margin:8px 0; border-radius:0 6px 6px 0; font-size:12.5px; }
+  button, select, input { font:inherit; }
+  button { background:#ffffff0d; color:var(--fg); border:1px solid var(--line);
+           border-radius:4px; padding:4px 10px; cursor:pointer; }
+  button:hover { background:#ffffff1a; }
+  .hint { color:#7b8496; font-size:12px; }
+
+  /* 左列候选 + 右列预览（§3.5 的固定布局） */
+  #app { display:flex; gap:18px; align-items:flex-start; padding:12px 20px 26px; }
+  #list { width:344px; flex:0 0 auto; }
+  .card { display:flex; gap:9px; border:1px solid var(--line); border-radius:10px;
+          padding:8px 9px; margin-bottom:7px; background:#ffffff05; cursor:pointer;
+          transition:border-color .12s, background .12s; }
+  .card:hover { border-color:#8ab4ff66; background:#8ab4ff0d; }
+  .card.on { border-color:var(--accent); background:#8ab4ff18; }
+  .card .name { font-weight:600; font-size:13.5px; }
+  .card .line { color:var(--muted); font-size:12px; }
+  .card .src { color:#7b8496; font-size:11.5px; margin-top:2px; }
+  .cost { font-size:11.5px; }
+  .cost.low { color:var(--ok); } .cost.mid { color:var(--warn); } .cost.high { color:var(--bad); }
+
+  /* 预览舞台：面板按真实宽度复刻 */
+  #stage { flex:0 0 auto; }
+  #panelWrap { position:relative; }
+  .panel { background:var(--surface); border:1px solid var(--stroke); border-radius:8px;
+           opacity:.97; overflow:hidden; }
+  .panel .inner { padding:14px 18px 16px; }
+  .titlebar { display:flex; justify-content:space-between; align-items:center; margin-bottom:2px; }
+  .titlebar .t { font-size:17px; font-weight:600; }
+  .xbtn { border:none; background:transparent; padding:2px 9px; font-size:14px; }
+
+  /* ① 现状的复刻样式 */
+  .cur-section { color:var(--accent); font-weight:600; margin:14px 0 6px; font-size:13px; }
+  .cur-row { display:flex; align-items:center; gap:12px; margin-top:10px; }
+  .cur-row .lab { flex:0 0 auto; }
+  .cur-field { background:var(--field); border:1px solid var(--stroke); border-radius:4px;
+               padding:4px 6px; color:var(--fg); }
+  .cur-hint { color:var(--muted); font-size:11.5px; margin-top:3px; line-height:1.55; }
+  .cur-check { margin-top:5px; }
+
+  /* ②③④ 的设置卡样式（SettingsCard 风） */
+  .grp { border:1px solid var(--stroke); border-radius:8px; margin-top:12px; overflow:hidden; }
+  .grp > .gtitle { padding:8px 14px 0; color:var(--accent); font-weight:600; font-size:13px; }
+  .grp > .gdesc { padding:2px 14px 6px; color:var(--muted); font-size:11.5px; }
+  .srow { display:flex; align-items:center; gap:12px; padding:9px 14px; }
+  .srow + .srow { border-top:1px solid #ffffff0d; }
+  .srow .sl { flex:1 1 auto; min-width:0; }
+  .srow .st { font-weight:600; font-size:13px; }
+  .srow .sd { color:var(--muted); font-size:11.5px; margin-top:1px; line-height:1.5; }
+  .srow .sc { flex:0 0 auto; display:flex; align-items:center; gap:8px; }
+  .srow .sc .cur-field { min-width:64px; text-align:center; }
+  .srow.check { cursor:pointer; }
+  .srow.check:hover { background:#ffffff07; }
+  .srow .box { width:15px; height:15px; border:1px solid var(--stroke); border-radius:3px;
+               flex:0 0 auto; display:grid; place-items:center; font-size:11px; color:#0d1117; }
+  .srow .box.on::after { content:"✓"; }
+
+  /* ③ 的折叠 */
+  .fold { border-top:1px solid #ffffff0d; }
+  .fold > .fhead { display:flex; align-items:center; gap:8px; padding:8px 14px; cursor:pointer;
+                   color:var(--muted); font-size:12.5px; }
+  .fold > .fhead:hover { background:#ffffff07; color:var(--fg); }
+  .fold > .fhead .chev { transition:transform .15s; }
+  .fold.open > .fhead .chev { transform:rotate(90deg); }
+  .fold > .fbody { display:none; padding:0 14px 10px; }
+  .fold.open > .fbody { display:block; }
+
+  /* ④ 的侧栏 */
+  .panel.wide { display:flex; }
+  .panel.wide .side { flex:0 0 132px; border-right:1px solid var(--stroke); padding:10px 0; }
+  .panel.wide .side .si { padding:7px 14px; cursor:pointer; color:var(--muted); font-size:13px; }
+  .panel.wide .side .si:hover { color:var(--fg); background:#ffffff07; }
+  .panel.wide .side .si.on { color:var(--fg); background:#ffffff10; font-weight:600;
+                             border-right:2px solid var(--accent); margin-right:-1px; }
+  .panel.wide .main { flex:1 1 auto; min-width:0; }
+
+  #status { margin-top:8px; color:var(--accent); font-size:12.5px; min-height:20px; }
+  #metrics { margin-top:10px; font-size:12px; color:var(--muted); }
+  #selfcheck { font-size:12.5px; margin-top:12px; }
+  #selfcheck .ok { color:var(--ok); } #selfcheck .bad { color:var(--bad); }
+  table.grid { border-collapse:collapse; width:100%; max-width:1200px; font-size:12.5px;
+               margin:6px 0 20px; }
+  table.grid th, table.grid td { border:1px solid var(--line); padding:6px 8px; text-align:left; }
+  table.grid th { color:var(--muted); }
+  #app2 { padding:0 20px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>WinQuick · 设置面板：密度四档 + 热键预设下拉（原型）</h1>
+  <p class="muted">复刻真实参数：面板宽 <b>404</b>（④ 侧栏档 640）、正文 <b>13px</b>、小字 <b>11.5px</b>、
+     圆角 8、内边距 18/14。① 是现状的逐行复刻（对照用）；②③④ 都已把<b>过期的内容</b>清掉
+     （悬停展开/收起延迟两项上周已无任何效果、菜单说明还是「把鼠标移上去」的悬停时代说法）。
+     热键<b>预设下拉</b>四个候选在每一档里都能实操。</p>
+</header>
+
+<div style="padding:0 20px">
+  <div class="note">
+    <b>为什么这么密（现状诊断）</b>：① 分区标题与正文<b>同字号</b>（只差颜色），
+    没有层级；② 几乎每个控件下面都垫一条 11.5px 小字，「菜单」区连着四条；
+    ③ 一列到底、没有分组容器，视线没有停靠点。②③④ 的共同出处是微软官方的
+    <b>SettingsCard / SettingsCardGroup</b> 规范（Windows 11 设置页的同款做法）：
+    每个设置一张卡（标题+一句说明在左、控件在右），相关卡片收进圆角分组容器，
+    组内间距 6px；「说明多但不常看」的内容用 Expander 折叠。
+  </div>
+</div>
+
+<div id="app">
+  <aside id="list"></aside>
+  <div id="stage">
+    <div id="panelWrap"></div>
+    <div id="status">就绪</div>
+    <div id="metrics"></div>
+    <div id="selfcheck">自检中…</div>
+  </div>
+</div>
+
+<div id="app2">
+  <h2 style="font-size:14px;margin:6px 0 2px">热键预设清单（四档通用；「自定义…」走现在的录制框）</h2>
+  <table class="grid" id="hk"></table>
+</div>
+
+<script>
+// ============================================================================
+// 真实内容：从 SettingsPanel.xaml 抄的行与文案（① 要逐行复刻现状，
+// ②③④ 用同一批内容重排并清掉过期项）。控件值用占位默认值。
+// ============================================================================
+const PRESETS = [
+  { id: "Ctrl+Win+W",     note: "当前默认。目标机实测可注册（docs/M0-findings.md）。Ctrl+Win 组合通常能绕开 Win11 对纯 Win 组合的预留。" },
+  { id: "Ctrl+Alt+Q",     note: "Ctrl+Alt+字母 是 Windows 老牌全局热键区，无系统占用；Q 在左手区，单手可达。" },
+  { id: "Ctrl+Alt+Space", note: "空格键最大最好按。注意 Ctrl+Space 是中文输入法切换 —— 加了 Alt 之后不冲突（这是选它而不是 Ctrl+Space 的原因）。" },
+  { id: "Ctrl+Alt+Z",     note: "左手区收尾位，无已知系统占用；截图/启动器类工具常用这一带。" },
+];
+const CUSTOM = "自定义…";
+
+// 一份共享的内容模型：key 唯一，②③④ 用它渲染卡片
+const SECTIONS = [
+  { key:"hotkey", title:"热键", desc:"唤出轮盘的组合键", rows:[
+    { t:"全局热键", d:"选一个预设，或选「自定义…」后直接按下组合键", kind:"hotkey" },
+  ]},
+  { key:"look", title:"外观", desc:"材质与遮罩，改动立刻在轮盘上可见", rows:[
+    { t:"遮罩深浅", d:"唤出时压暗背景的程度；40% 是默认值", kind:"slider", val:"40%" },
+    { t:"悬停高亮色", d:"#RRGGBB；留空用默认色", kind:"accent", val:"" },
+    { t:"皮肤与形态", d:"换皮肤同时改材质与动效；形态换单元外形", kind:"button", val:"打开…" },
+  ]},
+  { key:"behavior", title:"行为", desc:"", rows:[
+    { t:"动画", d:"跟随系统「显示动画」设置，或强制开/关", kind:"combo", val:"跟随系统" },
+    { t:"失去焦点时关闭", d:"点别的窗口时轮盘自动收起", kind:"check", on:true },
+  ]},
+  { key:"menu", title:"菜单", desc:"加项/建分组都在轮盘上操作", rows:[
+    { t:"怎么加项", d:"编辑态下点外圈末尾的「＋」选程序；子环里的「＋」加进该子菜单", kind:"text" },
+    { t:"怎么建分组", d:"点「＋」后选「新建分组…」；点开分组还能继续往下建", kind:"text" },
+    { t:"改名 / 移除", d:"在扇区上点右键", kind:"text" },
+    { t:"menus.json", d:"手动批量编辑配置文件；改坏了不影响已生效的那份", kind:"button", val:"打开" },
+  ]},
+  { key:"startup", title:"启动", desc:"", rows:[
+    { t:"开机自启", d:"", kind:"check", on:true },
+    { t:"文件右键菜单", d:"Win11 在「显示更多选项」里（或 Shift+F10）", kind:"check", on:false },
+  ]},
+];
+
+// ① 现状的原文（含已过期的两栏延迟 + 四条菜单说明）—— 逐行复刻，作对照
+function renderCurrent() {
+  return `
+  <div class="panel" style="width:404px">
+    <div class="inner">
+      <div class="titlebar"><span class="t">设置</span><button class="xbtn">✕</button></div>
+      <div class="cur-section">热键</div>
+      ${hotkeyRow()}
+      <div class="cur-hint">点这里然后按下想要的组合键</div>
+      <div class="cur-section">外观</div>
+      <div class="cur-row"><span class="lab">遮罩深浅</span><input style="flex:1" type="range"><span style="width:52px;text-align:right">42%</span></div>
+      <div class="cur-hint">拖动即可看到遮罩变化。40% 是默认值；与默认值相同时不会在配置里留下记录。</div>
+      <div class="cur-row"><span class="lab">悬停高亮色</span><input class="cur-field" style="flex:1;margin-left:12px"></div>
+      <div class="cur-hint">留空表示用默认色。#RRGGBB，例如 #0078D4。改完鼠标划过扇区就能看到效果。</div>
+      <div class="cur-row"><button>皮肤与形态…</button></div>
+      <div class="cur-hint">换皮肤会同时改变材质与动效；形态换的是单元外形。改动立刻在旁边的轮盘上生效。</div>
+      <div class="cur-section">行为</div>
+      <div class="cur-row"><span class="lab">展开延迟</span><input class="cur-field" style="width:70px"><span>ms</span></div>
+      <div class="cur-row"><span class="lab">收起延迟</span><input class="cur-field" style="width:70px"><span>ms</span></div>
+      <div class="cur-hint">留空表示用默认值（展开 200、收起 350）。收起必须大于展开，否则指针掠过扇区边缘时子菜单会闪。悬停有子菜单的扇区即可验证。</div>
+      <div class="cur-row"><span class="lab">动画</span><select style="margin-left:12px"><option>跟随系统</option></select></div>
+      <label class="cur-check"><input type="checkbox" checked> 失去焦点时关闭覆盖层</label>
+      <div class="cur-section">菜单</div>
+      <div class="cur-hint">加一项：点旁边轮盘上外圈末尾那个「＋」，选中程序即加入。</div>
+      <div class="cur-hint">建分组（像「开发工具」那种带子菜单的）：点「＋」后选「新建分组…」，起个名字、再选第一个程序。之后把鼠标移到该分组上，在它的子环里点「＋」继续加。</div>
+      <div class="cur-hint">改名或移除：在轮盘的扇区上点右键。子环里的「＋」会把程序加进该子菜单。</div>
+      <div class="cur-hint">改动立刻生效，覆盖层不会关闭 —— 加完就能看见新扇区长出来。</div>
+      <div class="cur-row"><button>打开 menus.json</button></div>
+      <div class="cur-hint">手动编辑配置文件。适合一次改很多项；改坏了不会影响已经生效的那一份。</div>
+      <div class="cur-section">启动</div>
+      <label class="cur-check"><input type="checkbox" checked> 开机自启</label>
+      <label class="cur-check"><input type="checkbox"> 在文件右键菜单中显示「WinQuick → 添加」</label>
+      <div class="cur-hint">Win11 上它出现在右键菜单的「显示更多选项」里（或按 Shift+F10）。</div>
+      <div class="cur-row" style="justify-content:space-between;margin-top:16px">
+        <button>打开配置文件夹</button><button>恢复默认</button>
+      </div>
+      <div class="cur-hint" style="min-height:34px">改动即时生效并自动保存。</div>
+    </div>
+  </div>`;
+}
+
+// 热键行：预设下拉 + 录制框 + 测试（四档共用；① 里不带预设下拉 = 现状）
+function hotkeyRow(withPreset) {
+  const preset = withPreset
+    ? `<select class="cur-field hk-preset" style="min-width:118px">
+         ${PRESETS.map(p => `<option value="${p.id}">${p.id}</option>`).join("")}
+         <option value="__custom">${CUSTOM}</option>
+       </select>`
+    : "";
+  return `<div class="cur-row" style="margin-top:4px;gap:8px">
+      ${preset}
+      <input class="cur-field hk-box" style="flex:1;min-width:0;text-align:center;font-size:15px" value="Ctrl+Win+W" readonly>
+      <button>测试</button>
+    </div>`;
+}
+
+// 一张设置卡
+function card(row) {
+  let control;
+  switch (row.kind) {
+    case "hotkey": control = hotkeyRow(true); break;
+    case "slider": control = `<span style="min-width:44px;text-align:right">${row.val}</span>`; break;
+    case "accent": control = `<input class="cur-field hk-accent" style="width:86px" placeholder="#RRGGBB">`; break;
+    case "button": control = `<button>${row.val}</button>`; break;
+    case "combo":  control = `<select class="cur-field"><option>${row.val}</option></select>`; break;
+    case "check":  control = `<span class="box ${row.on ? "on" : ""}"></span>`; break;
+    default:       control = "";
+  }
+  const desc = row.kind === "text" ? `<div class="sd">${row.d}</div>` : "";
+  if (row.kind === "check")
+    return `<div class="srow check"><span class="box ${row.on ? "on" : ""}"></span>
+      <span class="sl"><span class="st">${row.t}</span>${row.d ? `<div class="sd">${row.d}</div>` : ""}</span></div>`;
+  if (row.kind === "hotkey")
+    return `<div class="srow" style="display:block">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:7px">
+        <span class="st">${row.t}</span></div>${control}
+      <div class="sd">${row.d}</div></div>`;
+  return `<div class="srow"><span class="sl"><span class="st">${row.t}</span>${desc}</span>
+      <span class="sc">${control}</span></div>`;
+}
+
+// ② 设置卡：分组容器 + 组内 6px 间距
+function renderCards() {
+  return `<div class="panel" style="width:404px"><div class="inner">
+    <div class="titlebar"><span class="t">设置</span><button class="xbtn">✕</button></div>
+    ${SECTIONS.map(sec => `
+      <div class="grp">
+        <div class="gtitle">${sec.title}</div>
+        ${sec.desc ? `<div class="gdesc">${sec.desc}</div>` : ""}
+        ${sec.rows.map(card).join("")}
+      </div>`).join("")}
+    <div class="cur-row" style="justify-content:space-between;margin-top:14px">
+      <button>打开配置文件夹</button><button>恢复默认</button>
+    </div>
+    <div class="cur-hint" style="min-height:30px">改动即时生效并自动保存。</div>
+  </div></div>`;
+}
+
+// ③ 卡片 + 折叠：说明性内容（菜单怎么用）默认收起；每卡说明保留一行
+function renderFold() {
+  const menuIdx = SECTIONS.findIndex(s => s.key === "menu");
+  const secs = SECTIONS.map((sec, i) => {
+    if (i !== menuIdx)
+      return `<div class="grp"><div class="gtitle">${sec.title}</div>
+        ${sec.desc ? `<div class="gdesc">${sec.desc}</div>` : ""}${sec.rows.map(card).join("")}</div>`;
+    // 菜单区：说明收进折叠（默认收起），只留 menus.json 一张卡在外
+    return `<div class="grp"><div class="gtitle">${sec.title}</div>
+      <div class="gdesc">${sec.desc}</div>
+      ${card(sec.rows[3])}
+      <div class="fold"><div class="fhead"><span class="chev">▸</span>怎么加项 / 建分组 / 改名</div>
+        <div class="fbody">
+          ${sec.rows.slice(0, 3).map(r => `<div class="cur-hint" style="margin:4px 0">● ${r.t} —— ${r.d}</div>`).join("")}
+        </div></div>
+    </div>`;
+  }).join("");
+  return `<div class="panel" style="width:404px"><div class="inner">
+    <div class="titlebar"><span class="t">设置</span><button class="xbtn">✕</button></div>
+    ${secs}
+    <div class="cur-row" style="justify-content:space-between;margin-top:14px">
+      <button>打开配置文件夹</button><button>恢复默认</button>
+    </div>
+    <div class="cur-hint" style="min-height:30px">改动即时生效并自动保存。</div>
+  </div></div>`;
+}
+
+// ④ 侧栏分页：左栏选区，右侧只显示当前区
+function renderSide() {
+  const [hk, look, behavior, menu, startup] = SECTIONS;
+  const page = (sec) => `<div class="grp" style="margin-top:8px">
+      <div class="gtitle">${sec.title}</div>
+      ${sec.desc ? `<div class="gdesc">${sec.desc}</div>` : ""}${sec.rows.map(card).join("")}</div>`;
+  return `<div class="panel wide" style="width:640px">
+    <div class="side">
+      ${SECTIONS.map((s, i) => `<div class="si ${i === 0 ? "on" : ""}" data-page="${i}">${s.title}</div>`).join("")}
+    </div>
+    <div class="main"><div class="inner" style="padding:12px 16px 14px">
+      <div class="titlebar"><span class="t">设置</span><button class="xbtn">✕</button></div>
+      ${SECTIONS.map((s, i) => `<div class="page" data-page="${i}" ${i ? "hidden" : ""}>
+        ${page(s)}
+        ${i === SECTIONS.length - 1
+          ? `<div class="cur-row" style="justify-content:space-between;margin-top:14px">
+               <button>打开配置文件夹</button><button>恢复默认</button></div>
+             <div class="cur-hint" style="min-height:30px">改动即时生效并自动保存。</div>` : ""}
+      </div>`).join("")}
+    </div></div>
+  </div>`;
+}
+
+// ============================================================================
+// 候选定义
+// ============================================================================
+const CANDS = [
+  { id:"current", name:"① 现状（对照）", level:"mid",
+    line:"逐行复刻当前面板 —— 用来和下面三档背靠背比",
+    src:"对照档；死掉的悬停延迟两项与悬停时代的文案原样保留（这就是要改的东西）",
+    render: renderCurrent },
+  { id:"cards", name:"② 设置卡（推荐）", level:"mid",
+    line:"每个设置一张卡：标题+一句说明在左、控件在右；相关卡收进圆角分组，组间 12px、卡间 0+分隔线",
+    src:"出处：微软 Community Toolkit 的 SettingsCard / SettingsCardGroup（Windows 11 设置页同款）",
+    render: renderCards },
+  { id:"fold", name:"③ 设置卡 + 折叠高级", level:"mid",
+    line:"同 ②，另把「怎么加项/建分组」这类一次性说明收进默认收起的折叠条 —— 默认可见文字最少",
+    src:"出处：同 ② + SettingsExpander（官方给「说明多但不常看」的设置用的折叠模式）",
+    render: renderFold },
+  { id:"side", name:"④ 侧栏分区", level:"high",
+    line:"面板加宽到 640，左栏五个分区，右侧只显示当前区 —— 每屏内容量最少，代价是面板宽了近六成",
+    src:"出处：macOS 系统设置 / Win11 设置首页的「分类 + 详情」结构",
+    render: renderSide },
+];
+
+// ============================================================================
+// 界面与交互
+// ============================================================================
+let current = CANDS[1];
+const $ = (sel) => document.querySelector(sel);
+
+function buildList() {
+  $("#list").innerHTML = CANDS.map(c => `
+    <div class="card" data-c="${c.id}">
+      ${thumb(c.id)}
+      <div>
+        <div class="name">${c.name}</div>
+        <div class="line">${c.line}</div>
+        <div class="cost ${c.level}">改动量：${c.level === "low" ? "小" : c.level === "mid" ? "中（重排 XAML + 删过期项）" : "大（面板要加宽）"}</div>
+        <div class="src">${c.src}</div>
+      </div>
+    </div>`).join("");
+  document.querySelectorAll(".card").forEach(el =>
+    el.addEventListener("click", () => select(el.dataset.c)));
+}
+
+function thumb(id) {
+  const rows = id === "side"
+    ? `<rect x="6" y="14" width="16" height="32" rx="3" fill="#8ab4ff33"/>
+       <rect x="26" y="14" width="30" height="10" rx="2" fill="#ffffff2a"/>`
+    : Array.from({ length: id === "current" ? 9 : 5 }, (_, i) =>
+        `<rect x="6" y="${12 + i * 6}" width="${id === "fold" && i > 2 ? 26 : 38}" height="4" rx="2" fill="${i === 0 || (id !== "current" && i === 2) ? "#8ab4ff66" : "#ffffff26"}"/>`).join("")
+      + (id === "fold" ? `<path d="M 8 34 l 3 -3 l 3 3" stroke="#8ab4ff" fill="none"/>` : "");
+  return `<svg width="60" height="60" viewBox="0 0 60 60" style="flex:0 0 auto">
+    <rect x="4" y="6" width="52" height="48" rx="6" fill="none" stroke="#ffffff30"/>${rows}</svg>`;
+}
+
+function select(id) {
+  current = CANDS.find(c => c.id === id);
+  document.querySelectorAll(".card").forEach(el =>
+    el.classList.toggle("on", el.dataset.c === id));
+  $("#panelWrap").innerHTML = current.render();
+  wirePreview();
+  setStatus(`候选：${current.name}`);
+  measure();
+}
+
+function wirePreview() {
+  // 预设下拉：选中即填进录制框；「自定义…」清空并聚焦（真实实现里就是现在的录制流程）
+  document.querySelectorAll(".hk-preset").forEach(sel =>
+    sel.addEventListener("change", () => {
+      const box = sel.parentElement.querySelector(".hk-box");
+      if (sel.value === "__custom") { box.value = ""; box.placeholder = "按下组合键…"; setStatus("自定义：点录制框后直接按组合键（现有流程）"); }
+      else { box.value = sel.value; box.placeholder = ""; setStatus(`热键预设：${sel.value}`); }
+      measure();
+    }));
+  // 折叠条
+  document.querySelectorAll(".fold > .fhead").forEach(h =>
+    h.addEventListener("click", () => { h.parentElement.classList.toggle("open"); measure(); }));
+  // 侧栏分页
+  document.querySelectorAll(".panel.wide .si").forEach(si =>
+    si.addEventListener("click", () => {
+      document.querySelectorAll(".panel.wide .si").forEach(x => x.classList.remove("on"));
+      si.classList.add("on");
+      document.querySelectorAll(".panel.wide .page").forEach(p =>
+        p.hidden = p.dataset.page !== si.dataset.page);
+      measure();
+    }));
+}
+
+function setStatus(t) { $("#status").textContent = t; }
+
+// 密度指标：默认状态下可见的小字字数、可见行数、面板高度
+function measure() {
+  const p = $("#panelWrap .panel");
+  if (!p) return;
+  const hints = [...p.querySelectorAll(".cur-hint, .sd, .gdesc")]
+    .filter(el => el.offsetParent !== null || getComputedStyle(el).display !== "none");
+  const chars = hints.reduce((n, el) => n + el.textContent.trim().length, 0);
+  const rows = p.querySelectorAll(".srow, .cur-row, .cur-check").length;
+  $("#metrics").innerHTML =
+    `本档实测：面板 <b>${Math.round(p.getBoundingClientRect().width)}×${Math.round(p.getBoundingClientRect().height)}</b>`
+    + `　可见说明小字 <b>${chars}</b> 字　设置行 <b>${rows}</b> 行`
+    + `　（① 的数字就是现状基线，②③④ 都应显著低于它）`;
+}
+
+// ============================================================================
+// 页内自检（能失败）
+// ============================================================================
+function selfCheck() {
+  const out = [];
+  const saved = current.id;
+
+  // ① 四档都能渲染出面板
+  const notes = [];
+  let ok = true;
+  for (const c of CANDS) {
+    select(c.id);
+    const p = $("#panelWrap .panel");
+    const good = p && p.getBoundingClientRect().height > 200;
+    notes.push(`${c.id}:${good ? Math.round(p.getBoundingClientRect().height) + "px" : "失败"}`);
+    if (!good) ok = false;
+  }
+  out.push(["四档都能渲染", ok, notes.join("　")]);
+
+  // ② ②③④ 不再包含已失效的悬停延迟两项（① 保留作对照）
+  const stale = [];
+  for (const c of CANDS.slice(1)) {
+    select(c.id);
+    const text = $("#panelWrap").textContent;
+    stale.push(`${c.id}:${text.includes("展开延迟") ? "仍含过期项" : "已清"}`);
+  }
+  out.push(["②③④ 清掉了失效的悬停延迟设置", stale.every(s => s.endsWith("已清")), stale.join("　")]);
+
+  // ③ 预设下拉存在且选项齐全；选择会写入录制框
+  select("cards");
+  const sel = $(".hk-preset");
+  const box = $(".hk-box");
+  const presetOk = sel && PRESETS.every(p => [...sel.options].some(o => o.value === p.id))
+    && [...sel.options].some(o => o.value === "__custom");
+  const before = box.value;
+  sel.value = "Ctrl+Alt+Q";
+  sel.dispatchEvent(new Event("change"));
+  const fillOk = box.value === "Ctrl+Alt+Q";
+  out.push(["热键预设下拉：四预设 + 自定义，选择即生效", presetOk && fillOk,
+    `选项 ${sel.options.length} 个；选择后录制框 ${before} → ${box.value}`]);
+
+  // ④ 预设清单不含保留/冲突组合
+  const bad = PRESETS.filter(p =>
+    p.id.startsWith("Win+") || p.id === "Ctrl+Space" || p.id === "Alt+Tab" || !p.id.includes("+"));
+  out.push(["预设不含系统保留或裸键组合", bad.length === 0,
+    bad.length ? `问题项：${bad.map(b => b.id).join("、")}` : `${PRESETS.length} 个预设全部带修饰键且避开输入法/系统组合`]);
+
+  // ⑤ 密度确实下降（②③ 默认状态的小字字数 < ① 的一半）
+  select("current");
+  const base = countHintChars();
+  const dens = [];
+  for (const c of CANDS.slice(1, 3)) { select(c.id); dens.push(`${c.id}:${countHintChars()} 字`); }
+  out.push(["②③ 的可见说明字数显著少于现状", dens.every(d => parseInt(d.split(":")[1]) < base / 2),
+    `现状 ${base} 字 → ${dens.join("　")}`]);
+
+  // ⑥ 侧栏档：五个分区都能切到内容
+  select("side");
+  const pages = document.querySelectorAll(".panel.wide .page");
+  const switchOk = pages.length === 5 && [...pages].every(p => p.querySelectorAll(".srow, .cur-row").length >= 1);
+  out.push(["④ 侧栏五个分区都有内容", switchOk, `${pages.length} 页`]);
+
+  select(saved === "current" ? "cards" : saved);
+  const pass = out.filter(r => r[1]).length;
+  $("#selfcheck").innerHTML = `<b>页内自检：${pass}/${out.length} 通过</b>`
+    + out.map(r => `<div class="${r[1] ? "ok" : "bad"}">${r[1] ? "✓" : "✗"} ${r[0]}　`
+      + `<span class="hint">${r[2]}</span></div>`).join("");
+}
+function countHintChars() {
+  // offsetParent 为 null 的元素是 display:none（折叠收起 / 分页隐藏）—— 不算可见文字
+  return [...document.querySelectorAll("#panelWrap .cur-hint, #panelWrap .sd, #panelWrap .gdesc")]
+    .filter(el => el.offsetParent !== null)
+    .reduce((n, el) => n + el.textContent.trim().length, 0);
+}
+
+// 热键预设表
+function buildHkTable() {
+  $("#hk").innerHTML = `<tr><th>预设</th><th>理由 / 排除依据</th></tr>`
+    + PRESETS.map(p => `<tr><td><b>${p.id}</b></td><td>${p.note}</td></tr>`).join("")
+    + `<tr><td>${CUSTOM}</td><td>走现有的「点录制框后按组合键」流程；预设只是少打字的捷径，不替代自定义。</td></tr>`
+    + `<tr><td colspan="2" class="muted">排除：纯 Win+*（Win11 shell 预留，程序会警告）、Ctrl+Space（中文输入法中英切换）、Alt+Tab / Alt+F4（系统）、不带修饰键的裸键（程序校验直接拒绝）。</td></tr>`;
+}
+
+window.addEventListener("error", (e) => {
+  const b = $("#selfcheck");
+  if (b) b.innerHTML = `<span class="bad">页面脚本出错：${e.message}</span>`;
+});
+
+try {
+  buildList();
+  buildHkTable();
+  select("cards");
+  selfCheck();
+  setStatus("就绪 —— 左列换档；预览里的下拉/折叠/侧栏都能点");
+} catch (err) {
+  $("#selfcheck").innerHTML = `<span class="bad">初始化失败：${err.message}</span>`;
+}
+</script>
+</body>
+</html>

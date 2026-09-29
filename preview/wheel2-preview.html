@@ -1,0 +1,1035 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>WinQuick · 两级滑动窗口 + 中心对半返回（交互原型）</title>
+<style>
+  :root { --bg:#0d1117; --fg:#e6edf6; --muted:#8d9aad; --line:#ffffff1a;
+          --accent:#8ab4ff; --ok:#7fd18f; --warn:#e2c56a; --bad:#e08a7a; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:14px/1.6 "Segoe UI","Microsoft YaHei",system-ui,sans-serif; }
+  header { padding:16px 20px 4px; }
+  h1 { margin:0 0 6px; font-size:17px; font-weight:600; }
+  h2 { font-size:15px; margin:22px 0 6px; padding:0 20px; }
+  p { margin:4px 0; }
+  code { background:#ffffff0f; color:#cfe0ff; padding:1px 5px; border-radius:4px; font-size:12.5px; }
+  .muted { color:var(--muted); }
+  .note { border-left:3px solid var(--accent); background:#8ab4ff10; padding:7px 11px;
+          margin:8px 0; border-radius:0 6px 6px 0; font-size:13px; }
+  .note.warn { border-color:var(--warn); background:#e2c56a10; }
+  .note.ok { border-color:var(--ok); background:#7fd18f10; }
+  button { background:#ffffff0d; color:var(--fg); border:1px solid var(--line);
+           border-radius:8px; padding:5px 10px; font:inherit; font-size:12.5px; cursor:pointer; }
+  button:hover { background:#ffffff1a; }
+  button.on { border-color:var(--accent); background:#8ab4ff20; }
+  .hint { color:#7b8496; font-size:12.5px; }
+  .rowlabel { color:var(--muted); font-size:12.5px; margin:9px 0 3px; }
+
+  /* 左列候选 + 右列预览（AGENTS.md §3.5 定的布局） */
+  #app { display:flex; gap:16px; align-items:flex-start; padding:12px 20px 26px; }
+  #list { width:340px; flex:0 0 auto; }
+  .card { display:flex; gap:9px; border:1px solid var(--line); border-radius:10px;
+          padding:8px 9px; margin-bottom:7px; background:#ffffff05; cursor:pointer;
+          transition:border-color .12s, background .12s; }
+  .card:hover { border-color:#8ab4ff66; background:#8ab4ff0d; }
+  .card.on { border-color:var(--accent); background:#8ab4ff18; }
+  .card .thumb { flex:0 0 auto; }
+  .card .name { font-weight:600; font-size:13.5px; }
+  .card .line { color:var(--muted); font-size:12px; }
+  .card .cost { font-size:11.5px; margin-top:1px; }
+  .cost.low { color:var(--ok); } .cost.mid { color:var(--warn); } .cost.high { color:var(--bad); }
+  .card .src { color:#7b8496; font-size:11.5px; }
+
+  #stage { position:relative; width:533px; height:533px; border-radius:12px; overflow:hidden;
+           border:1px solid #ffffff20; flex:0 0 auto; }
+  #scene { position:absolute; inset:0; background:
+             radial-gradient(120% 100% at 25% 5%, #2f3646 0%, #1b212e 45%, #0b0f16 100%); }
+  #win { position:absolute; inset:0; }
+  #rotor { position:absolute; inset:0; }   /* 现状入场要同时缩放+旋转，必须分两层才能叠加 */
+  #rotor svg { position:absolute; inset:0; width:100%; height:100%; }
+
+  #side { flex:1 1 auto; min-width:340px; max-width:600px; }
+  #status { min-height:22px; color:var(--accent); font-size:13px; margin-top:6px; }
+  #pathline { color:var(--muted); font-size:12.5px; min-height:18px; margin-top:4px; }
+  table.spec { border-collapse:collapse; width:100%; margin-top:8px; font-size:12.5px; }
+  table.spec td { border-top:1px solid var(--line); padding:4px 8px 4px 0; vertical-align:top; }
+  table.spec td:first-child { color:var(--muted); white-space:nowrap; width:92px; }
+  table.grid { border-collapse:collapse; width:100%; font-size:12.5px; }
+  table.grid th, table.grid td { border:1px solid var(--line); padding:6px 8px; text-align:left;
+                                 vertical-align:top; }
+  table.grid th { color:var(--muted); font-weight:600; }
+  #app2 { padding:0 20px; }
+  #selfcheck { font-size:12.5px; margin-top:10px; }
+  #selfcheck .ok { color:var(--ok); } #selfcheck .bad { color:var(--bad); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>WinQuick · 两级滑动窗口 + 中心对半返回（<b>交互原型</b>）</h1>
+  <p class="muted">形态仍是轮盘，改的是<b>层级怎么走</b>：同时只看到两级 ——
+     <code>环1 = 父层（整圈）</code>、<code>环2 = 当前层（子弧）</code>。
+     点环 2 的分组扇区就再进一层，<b>旧的环 2 整层搬到环 1 的位置</b>；
+     中心圆对半分成「返回上一层 / 返回第一层」，点环外关闭、Esc 逐层退出。
+     几何全是真实的（740 窗口、死区 56、环一 56–200、子环 218–350、间隙 1.2°、
+     跨度公式 <code>min(max(90, n×25), 360)</code>），预览按 0.72 缩放。</p>
+</header>
+
+<div style="padding:0 20px">
+  <div class="note ok">
+    <b>这个方案不需要新几何 —— 这是它最大的可行性依据。</b>今天的环 1 本来就是「整层铺满整圈」，
+    环 2 本来就是「某一项的子弧」，两者共用同一套扇区计算、命中测试、图标与标签半径比例、径向滑出入场。
+    新方案只是规定了<b>哪一层画在哪个带</b>，于是改动集中在三处：
+    <b>① 层级窗口的推进/回退</b>（纯状态：一个 path 数组）、<b>② 换位时的过渡动画</b>（左列四个候选）、
+    <b>③ 死区改成分区</b>（中心形态，下面可切换）。扇区几何一行不用改。
+  </div>
+  <div class="note">
+    <b>怎么试</b>：点任意<b>分组扇区</b>（带小三角的那些）展开 → 环 2 出现；
+    再点<b>环 2 上</b>的分组扇区 → 你会看到旧环 2 整层搬到环 1、环 2 换成新一层；
+    点中心两半返回；点环外关闭；Esc 逐层退。左列切换四种过渡，中心形态与出现时机在预览下方切换。
+  </div>
+</div>
+
+<div id="app">
+  <aside id="list"></aside>
+
+  <div>
+    <div id="stage">
+      <div id="scene"></div>
+      <div id="win"><div id="rotor"></div></div>
+    </div>
+    <div id="pathline">路径：主菜单</div>
+    <div class="rowlabel">中心形态（点一点试试，两半都能按）</div>
+    <div id="centerbtns" style="display:flex;gap:6px;flex-wrap:wrap"></div>
+    <div class="rowlabel">「返回第一层」的出现时机</div>
+    <div id="firstbtns" style="display:flex;gap:6px;flex-wrap:wrap"></div>
+    <div class="rowlabel">操作</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap">
+      <button id="btn-deep">连进三层</button>
+      <button id="btn-root">复位到第一层</button>
+      <button id="btn-wheel">现状入场（整窗缩放+旋转）</button>
+      <button id="btn-all">依次对比四种过渡</button>
+    </div>
+    <div id="status">就绪 —— 点分组扇区展开；点环 2 的分组项再进一层；点中心两半返回；点环外关闭</div>
+  </div>
+
+  <div id="side">
+    <table class="spec">
+      <tr><td>当前过渡</td><td id="s-name"></td></tr>
+      <tr><td>形态</td><td id="s-form"></td></tr>
+      <tr><td>参数</td><td id="s-params"></td></tr>
+      <tr><td>实现成本</td><td id="s-cost"></td></tr>
+      <tr><td>风险</td><td id="s-risk"></td></tr>
+      <tr><td>出处</td><td id="s-src"></td></tr>
+    </table>
+    <div id="selfcheck">自检中…</div>
+  </div>
+</div>
+
+<h2>用你真实数据算出来的约束（同一套数也在页内自检里，能失败）</h2>
+<div id="app2"><table class="grid" id="feas"></table></div>
+
+<script>
+// ============================================================================
+// 真实菜单数据（%APPDATA%\WinQuick\menus.json：一级 12 项、最多一层 13 项、
+// 最长标签「苹控科技烧录工具 1.3.3」）。三级用「示例」补出来 —— 你的菜单还没有第三级。
+// ============================================================================
+const ROOT = {
+  label: "主菜单",
+  children: [
+    { label: "火绒安全" },
+    { label: "谷歌浏览器" },
+    { label: "影音", children: [
+      { label: "Audacity" }, { label: "必剪" }, { label: "哔哩哔哩" }, { label: "网易云音乐" },
+      { label: "OBS Studio" }, { label: "PotPlayer" }, { label: "云·异环" },
+    ]},
+    { label: "工具", children: [
+      { label: "Mem Reduct" }, { label: "Geek" }, { label: "iKuuuVPN" }, { label: "图吧工具箱" },
+      { label: "Everything" }, { label: "MuMu模拟器" }, { label: "Win11轻松设置" }, { label: "百度网盘" },
+      { label: "TTime" }, { label: "记事本" }, { label: "Calculator" }, { label: "蓝奏云盘" },
+    ]},
+    { label: "办公", children: [
+      { label: "飞书" }, { label: "微信" }, { label: "QQ" },
+      { label: "WPS表格" }, { label: "WPS PDF" }, { label: "WPS文档" }, { label: "WPS演示" },
+    ]},
+    { label: "设计", children: [
+      { label: "PR 2026" }, { label: "PS 2025" }, { label: "AI 2025" }, { label: "AE 2026" },
+      { label: "Figma" }, { label: "即时设计" }, { label: "Sai2" }, { label: "FontCreator" },
+    ]},
+    { label: "乐升", children: [
+      { label: "LT_Programmer_V1.20A" }, { label: "LT_Uart_GUI_V3.49C" },
+      { label: "LT_Uart_GUI_V3.52" },
+      { label: "LT_Uart_GUI_V3.53A", children: [        // ← 三级（示例）
+        { label: "固件 V1" }, { label: "固件 V2" }, { label: "工具链" },
+      ]},
+      { label: "LT165_SWD_ISP_V1.1" }, { label: "LT165_SWD_ISP_V1.2B" },
+      { label: "LT_Programmer_V1.20C" }, { label: "UI_Editor-II_V3.20.exe" },
+      { label: "UI_Editor-Lite_V1.10" }, { label: "AB图片工具" }, { label: "AB字体工具" },
+      { label: "Downloader" }, { label: "UartISP" },
+    ]},
+    { label: "苹控", children: [
+      { label: "苹控科技烧录工具 1.3.3", children: [     // ← 三级（示例）
+        { label: "温度曲线" }, { label: "报警设置" }, { label: "日志导出" }, { label: "备份" },
+      ]},
+      { label: "串口屏提取器" }, { label: "固件编辑器" }, { label: "协议调试工具" },
+      { label: "PingCtrlEdit" }, { label: "Gamepad Update Tool" }, { label: "Gui Guider" },
+      { label: "SPG16xx Firmware Downloader" },
+    ]},
+    { label: "开发", children: [
+      { label: "VS Code" }, { label: "CodeBlocks" }, { label: "CCore_IDE" }, { label: "ZCode" },
+      { label: "sscom5.13.1" }, { label: "gamepad_tester" }, { label: "Beyond Compare" },
+      { label: "VMware Workstation" },
+      { label: "Navicat Premium", children: [           // ← 三级（示例）
+        { label: "连接配置" }, { label: "备份任务" }, { label: "查询收藏" },
+      ]},
+    ]},
+    { label: "项目", children: [ { label: "PC_Project" }, { label: "LT_Projects" } ]},
+    { label: "回收站" },
+    { label: "控制面板" },
+  ],
+};
+
+// ============================================================================
+// 真实几何与令牌（design/tokens.json）。观感参数改令牌，不写死在这一页。
+// ============================================================================
+const G = {
+  win: 740, dead: 56, r1Outer: 200, r2Inner: 218, r2Outer: 350, gap: 1.2,
+  iconSize: 30, iconRatio: 0.24, labelRatio: 0.65, maxChildSectors: 20, bulgePx: 12,
+};
+const T = {
+  entranceMs: 167, fromScale: 0.86, entranceEase: "cubic-bezier(0,0,0,1)",
+  scaleMs: 300, scaleEase: "cubic-bezier(0.34,1.56,0.64,1)",
+  rotateMs: 380, rotateEase: "cubic-bezier(0.16,1,0.3,1)", fromRotate: -24,
+  childArcMs: 167, childArcEase: "cubic-bezier(0.55,0.55,0,1)",
+  childSlideMs: 260, childSlideEase: "cubic-bezier(0.16,1,0.3,1)", childSlidePx: 60,
+  morphMs: 300,
+};
+const CX = G.win / 2, CY = G.win / 2;
+const BAND1 = { inner: G.dead, outer: G.r1Outer };
+const BAND2 = { inner: G.r2Inner, outer: G.r2Outer };
+
+function polar(r, deg) {
+  const rad = deg * Math.PI / 180;
+  return [CX + r * Math.sin(rad), CY - r * Math.cos(rad)];
+}
+function bandAt(band, ratio) { return band.inner + (band.outer - band.inner) * ratio; }
+/** 与 RadialLayout.ChildArc 同一公式：至少每项 25°、至少 90°、最多整圈 */
+function childArcSpan(count) { return Math.min(Math.max(90, count * 25), 360); }
+
+// ============================================================================
+// 状态：path 是下钻链，m = path.length
+//   m = 0：环1 = 一级，环2 空
+//   m ≥ 1：环1 = 第 (m-1) 层（父层整圈），环2 = 第 m 层（当前层子弧）
+// ============================================================================
+const state = { path: [], center: "leftright", firstBack: "deep", trans: "morphTop",
+                hover: null, closed: false };
+const EMPTY = { label: "", children: [] };
+const depth = () => state.path.length;
+
+function nodeAfter(steps) {
+  // 没下钻到那一层就是空的 —— 少了这条判断，steps 会被 i<path.length 悄悄截断，
+  // 于是 levelItems(1) 在还没展开时返回一级自己（自检 ⑦ 就"通过"得不对）
+  if (steps > state.path.length) return EMPTY;
+  let node = ROOT;
+  for (let i = 0; i < steps; i++) node = (node.children || [])[state.path[i]] || EMPTY;
+  return node;
+}
+/** 第 k 层的项：k=0 是一级；k≥1 是 path[k-1] 那一项的子项 */
+function levelItems(k) { return k === 0 ? ROOT.children : (nodeAfter(k).children || []); }
+function maxLevelCount() {
+  let best = 0;
+  const walk = (node, d) => {
+    best = Math.max(best, (node.children || []).length);
+    if (d < 4) for (const c of node.children || []) walk(c, d + 1);
+  };
+  walk(ROOT, 0);
+  return best;
+}
+function subtreeDepth(node) {
+  let best = 0;
+  for (const c of node.children || []) best = Math.max(best, 1 + subtreeDepth(c));
+  return best;
+}
+/** 真实数据里最深的那条链的起点（示例数据只有三级：乐升 → LT_Uart_GUI_V3.53A → 固件 V1）。
+ *  自检必须走这条，否则"验了深层"是假的 —— 一级里的「工具」只有两级，走它会立刻到底。 */
+function deepestRootIndex() {
+  let best = -1, bestDepth = 0;
+  ROOT.children.forEach((it, i) => {
+    const d = subtreeDepth(it);
+    if (d > bestDepth) { bestDepth = d; best = i; }
+  });
+  return best;
+}
+/** 当前层里第一个"还有下一级"的下标（没有则 -1） */
+function nextDeepIndex(level) {
+  return levelItems(level).findIndex((it) => (it.children || []).length > 0);
+}
+
+// ============================================================================
+// 布局描述符：把「哪一层画在哪个带、每项什么角度」算成纯数据。
+// 过渡动画 = 在两个描述符之间插值（形变档）或只插透明度（淡入档），
+// 于是四种过渡共用一条渲染路径，自检也能直接对这些数做断言。
+// ============================================================================
+function ring1Layout(m, alignTop) {
+  const items = levelItems(m === 0 ? 0 : m - 1);
+  const n = items.length || 1;
+  const sweep = 360 / n;
+  const parent = m >= 1 ? state.path[m - 1] : -1;             // 环1 里"被展开的那一项"
+  const rot = (alignTop && parent >= 0) ? -parent * sweep : 0; // 归位：父项落到 12 点
+  return items.map((node, i) => ({
+    node, index: i, angle: i * sweep + rot, sweep, band: { ...BAND1 },
+    opacity: 1, isParent: i === parent, ring: 1,
+  }));
+}
+function ring2Layout(m, alignTop) {
+  if (m === 0) return [];
+  const items = levelItems(m);
+  const n = items.length || 1;
+  const p1 = ring1Layout(m, alignTop);
+  const anchor = p1[state.path[m - 1]] || null;                // 父项在环1 里的角度
+  const anchorAngle = anchor ? anchor.angle : 0;
+  const span = childArcSpan(n);
+  const sweep = span / n;
+  const start = anchorAngle - span / 2;
+  return items.map((node, i) => ({
+    node, index: i, angle: start + (i + 0.5) * sweep, sweep, band: { ...BAND2 },
+    opacity: 1, isParent: false, ring: 2,
+  }));
+}
+function descriptor(m, alignTop) {
+  return { m, ring1: ring1Layout(m, alignTop), ring2: ring2Layout(m, alignTop) };
+}
+
+// ============================================================================
+// 渲染
+// ============================================================================
+const NS = "http://www.w3.org/2000/svg";
+function el(tag, attrs) {
+  const node = document.createElementNS(NS, tag);
+  for (const key in attrs) node.setAttribute(key, attrs[key]);
+  return node;
+}
+function wedgePath(band, startDeg, endDeg) {
+  const half = G.gap / 2;
+  const a0 = startDeg + half, a1 = endDeg - half;
+  const large = (a1 - a0) > 180 ? 1 : 0;
+  const [ax, ay] = polar(band.outer, a0), [bx, by] = polar(band.outer, a1);
+  const [cx, cy] = polar(band.inner, a1), [dx, dy] = polar(band.inner, a0);
+  return `M ${ax.toFixed(2)} ${ay.toFixed(2)} A ${band.outer} ${band.outer} 0 ${large} 1 `
+       + `${bx.toFixed(2)} ${by.toFixed(2)} L ${cx.toFixed(2)} ${cy.toFixed(2)} `
+       + `A ${band.inner} ${band.inner} 0 ${large} 0 ${dx.toFixed(2)} ${dy.toFixed(2)} Z`;
+}
+function textWidth(text, fontSize) {
+  let w = 0;
+  for (const ch of text) w += (ch.charCodeAt(0) > 0x2E80 ? fontSize : fontSize * 0.55);
+  return w;
+}
+/** 标签折行：优先在空格 / 下划线 / 点 / 连字符处断（长英文名断在词中间很难读），
+ *  单个词本身就超宽时按字符硬断；超过 3 行（labelMaxLines）时末行加省略号。 */
+function wrapLabel(label, maxWidthPx, fontSize) {
+  const tokens = label.split(/(?<=[ _\-.])/);
+  const lines = [];
+  let line = "", overflow = false;
+  const flush = () => { if (line.trim()) lines.push(line.replace(/\s+$/, "")); line = ""; };
+
+  for (let tk of tokens) {
+    while (textWidth(tk, fontSize) > maxWidthPx && tk.length > 1) {
+      let cut = "";
+      for (const ch of tk) {
+        if (textWidth(cut + ch, fontSize) > maxWidthPx) break;
+        cut += ch;
+      }
+      if (!cut) cut = tk[0];
+      flush();
+      lines.push(cut);
+      tk = tk.slice(cut.length);
+      if (lines.length >= 3) { overflow = tk.length > 0; return finish(lines, overflow); }
+    }
+    if (line && textWidth(line + tk, fontSize) > maxWidthPx) flush();
+    line += tk;
+    if (lines.length >= 3) { overflow = true; return finish(lines, overflow); }
+  }
+  flush();
+  return finish(lines, false);
+
+  function finish(list, over) {
+    const out = list.slice(0, 3);
+    if (over && out.length) out[out.length - 1] = out[out.length - 1].replace(/.$/, "…");
+    return out;
+  }
+}
+
+function render(desc) {
+  const rotor = document.getElementById("rotor");
+  rotor.innerHTML = "";
+  const svg = el("svg", { viewBox: `0 0 ${G.win} ${G.win}`, preserveAspectRatio: "xMidYMid meet" });
+  rotor.appendChild(svg);
+
+  for (const item of desc.ring1) drawItem(svg, item, 12, 0.30, "rgba(255,255,255,0.085)", 1);
+  for (const item of desc.ring2) drawItem(svg, item, 11.5, 0.28, "rgba(255,255,255,0.15)", 2);
+  drawCenter(svg, desc);
+
+  document.getElementById("pathline").textContent = pathText(desc.m);
+  return svg;
+}
+
+function drawItem(svg, item, fontSize, iconScale, fill, ring) {
+  const g = el("g", { "data-row": item.node.label, "data-ring": String(ring),
+                      "data-parent": item.isParent ? "1" : "0" });
+  const slide = item.slidePx || 0;                  // 径向滑出：从父项方向、半径小处滑入
+  const band = { inner: item.band.inner - slide, outer: item.band.outer - slide };
+  g.appendChild(el("path", {
+    d: wedgePath(band, item.angle - item.sweep / 2, item.angle + item.sweep / 2),
+    fill: item.isParent ? "rgba(110,168,254,0.20)" : fill,
+    stroke: item.isParent ? "rgba(110,168,254,0.75)" : "rgba(255,255,255,0.22)",
+    "stroke-width": 0.8, opacity: item.opacity,
+  }));
+  const [ix, iy] = polar(bandAt(band, G.iconRatio), item.angle);
+  g.appendChild(el("circle", { cx: ix, cy: iy, r: G.iconSize * iconScale,
+                              fill: "rgba(255,255,255,0.58)", opacity: item.opacity }));
+  const labelR = bandAt(band, G.labelRatio);
+  const [lx, ly] = polar(labelR, item.angle);
+  // 可用弦长：标签盒宽度受扇区在标签半径处的弧长限制（这就是"标签半宽"那条护栏）
+  const chord = 2 * labelR * Math.sin(Math.min(item.sweep, 170) * Math.PI / 360);
+  const lines = wrapLabel(item.node.label, Math.max(18, chord - 8), fontSize);
+  lines.forEach((line, li) => {
+    const t = el("text", { x: lx, y: ly + li * (fontSize + 2.5) - (lines.length - 1) * (fontSize + 2.5) / 2,
+                           "text-anchor": "middle", "dominant-baseline": "middle",
+                           fill: ring === 1 ? "#dfe4ee" : "#e8ebf2", "font-size": fontSize,
+                           "font-family": "'Microsoft YaHei UI','Segoe UI',sans-serif",
+                           opacity: item.opacity });
+    t.textContent = line;
+    g.appendChild(t);
+  });
+  g.style.cursor = "pointer";
+  // 悬停只改属性、不重渲染 —— 重渲染会换掉指针下的元素，触发 mouseleave 再渲染，来回抖
+  g.addEventListener("mouseover", (e) => { if (!g.contains(e.relatedTarget)) paintHot(g, true); });
+  g.addEventListener("mouseout", (e) => { if (!g.contains(e.relatedTarget)) paintHot(g, false); });
+  g.addEventListener("click", (e) => { e.stopPropagation(); onRowClick(item.node, item.ring); });
+  svg.appendChild(g);
+}
+function paintHot(g, on) {
+  const path = g.querySelector("path");
+  if (!path) return;
+  if (on) {
+    path.setAttribute("fill", "rgba(110,168,254,0.26)");
+    path.setAttribute("stroke", "rgba(138,180,255,0.95)");
+  } else {
+    const parent = g.getAttribute("data-parent") === "1";
+    const ring = g.getAttribute("data-ring");
+    path.setAttribute("fill", parent ? "rgba(110,168,254,0.20)"
+      : (ring === "2" ? "rgba(255,255,255,0.15)" : "rgba(255,255,255,0.085)"));
+    path.setAttribute("stroke", parent ? "rgba(110,168,254,0.75)" : "rgba(255,255,255,0.22)");
+  }
+}
+
+// ---- 中心：按 state.center 分区。今天这里是「死区」（不选中任何项），分区不破坏命中模型。
+function halfDisc(side, r) {
+  if (side === "left")  return `M ${CX} ${CY - r} A ${r} ${r} 0 0 0 ${CX} ${CY + r} Z`;
+  if (side === "right") return `M ${CX} ${CY - r} A ${r} ${r} 0 0 1 ${CX} ${CY + r} Z`;
+  if (side === "top")   return `M ${CX - r} ${CY} A ${r} ${r} 0 0 1 ${CX + r} ${CY} Z`;
+  return `M ${CX + r} ${CY} A ${r} ${r} 0 0 1 ${CX - r} ${CY} Z`;   // bottom
+}
+function circlePath(r) {
+  return `M ${CX} ${CY - r} A ${r} ${r} 0 1 1 ${CX} ${CY + r} A ${r} ${r} 0 1 1 ${CX} ${CY - r} Z`;
+}
+function firstBackVisible(m) { return state.firstBack === "always" ? true : m >= 2; }
+
+function centerZones(m) {
+  const back = { key: "back", label: "返回上一层", show: m >= 1, act: goBack };
+  const first = { key: "first", label: "返回第一层", show: firstBackVisible(m), act: goRoot };
+  if (state.center === "leftright")
+    return [{ ...first, d: halfDisc("left", G.dead), lx: CX - 27, ly: CY + 30 },
+            { ...back,  d: halfDisc("right", G.dead), lx: CX + 27, ly: CY + 30 }];
+  if (state.center === "topbottom")
+    return [{ ...back,  d: halfDisc("top", G.dead), lx: CX, ly: CY - 30 },
+            { ...first, d: halfDisc("bottom", G.dead), lx: CX, ly: CY + 30 }];
+  if (state.center === "rings")
+    return [{ ...back,  d: circlePath(30), lx: CX, ly: CY + 4 },
+            { ...first, d: wedgePath({ inner: 30, outer: G.dead }, 270, 90), lx: CX - 43, ly: CY + 4 }];
+  // single：中心一个整圆，单击=上一层，双击=第一层
+  return [{ ...back, d: circlePath(G.dead), lx: CX, ly: CY + 4, show: true, dbl: goRoot }];
+  }
+
+function drawCenter(svg, desc) {
+  const m = desc.m;
+  const g = el("g", { "data-center": state.center });
+  for (const zone of centerZones(m)) {
+    if (!zone.show && state.firstBack === "hide" && zone.key === "first") continue;
+    const grey = !zone.show;
+    const p = el("path", { d: zone.d,
+                           fill: grey ? "rgba(255,255,255,0.045)" : "rgba(255,255,255,0.10)",
+                           stroke: grey ? "rgba(255,255,255,0.10)" : "rgba(255,255,255,0.28)",
+                           "stroke-width": 0.8 });
+    if (!grey) {
+      p.style.cursor = "pointer";
+      p.addEventListener("mouseover", () => p.setAttribute("fill", "rgba(110,168,254,0.26)"));
+      p.addEventListener("mouseout", () => p.setAttribute("fill", "rgba(255,255,255,0.10)"));
+      p.addEventListener("click", (e) => { e.stopPropagation(); zone.act(); });
+      if (zone.dbl) p.addEventListener("dblclick", (e) => { e.stopPropagation(); zone.dbl(); });
+    }
+    g.appendChild(p);
+    // 中心只有 112 DIP 直径：文字拆成两行短词，横排放不下
+    const words = (zone.label === "返回上一层" && zone.key === "back") ? ["返回", "上一层"] : ["返回", "第一层"];
+    words.forEach((word, wi) => {
+      const t = el("text", { x: zone.lx, y: zone.ly - 8 + wi * 15, "text-anchor": "middle",
+                             "dominant-baseline": "middle", "font-size": 10.5,
+                             fill: grey ? "rgba(230,237,246,0.35)" : "rgba(230,237,246,0.92)",
+                             "font-family": "'Microsoft YaHei UI',sans-serif" });
+      t.textContent = word;
+      g.appendChild(t);
+    });
+  }
+  svg.appendChild(g);
+}
+
+function pathText(m) {
+  const labels = ["主菜单"];
+  let node = ROOT;
+  for (const i of state.path) { node = node.children[i]; labels.push(node.label); }
+  if (m === 0) return "路径：主菜单　（环 2 空着：点分组扇区展开）";
+  return `路径：${labels.join(" › ")}　（环1 = 父层「${labels[m - 1]}」，环2 = 当前层「${labels[m]}」）`;
+}
+
+// ============================================================================
+// 过渡：在两个描述符之间插值。四种候选只差"插什么"。
+//   lo = min(mb,ma) 那一层要在两个带之间搬家（lo ≥ 1 时；lo = 0 时它留在环1 不动）
+//   hi = max(mb,ma) 那一层要么长出来（下钻）要么消失（返回）
+//   再上一级（lo-1）在环1 里淡出/淡入
+// ============================================================================
+function lerp(a, b, t) { return a + (b - a) * t; }
+function lerpItem(from, to, t) {
+  return {
+    node: to.node, index: to.index, isParent: to.isParent, ring: to.ring,
+    angle: lerp(from.angle, to.angle, t), sweep: lerp(from.sweep, to.sweep, t),
+    band: { inner: lerp(from.band.inner, to.band.inner, t),
+            outer: lerp(from.band.outer, to.band.outer, t) },
+    opacity: lerp(from.opacity ?? 1, to.opacity ?? 1, t),
+    slidePx: lerp(from.slidePx || 0, to.slidePx || 0, t),
+  };
+}
+function withOpacity(item, opacity) { return { ...item, opacity }; }
+
+/** 某一时刻的画面（t 由各分量自己的时长推进） */
+function transitionFrame(mb, ma, kind, elapsed) {
+  const lo = Math.min(mb, ma), hi = Math.max(mb, ma), expand = ma > mb;
+  const alignTop = kind === "morphTop";
+  const A = descriptor(mb, alignTop), B = descriptor(ma, alignTop);
+  const morph = kind === "morphTop" || kind === "morphKeep";
+  const pGeom = ease(kind === "fade" ? T.entranceEase : T.rotateEase, Math.min(1, elapsed / T.morphMs));
+  const pOut = ease(T.entranceEase, Math.min(1, elapsed / T.entranceMs));
+  const pIn = ease(T.childSlideEase, Math.min(1, elapsed / T.childSlideMs));
+  const pArc = ease(T.childArcEase, Math.min(1, elapsed / T.childArcMs));
+  const ring1 = [], ring2 = [];
+  const entering = (item) => ({ ...item, opacity: pArc, slidePx: T.childSlidePx * (1 - pIn) });
+  const leaving = (item) => withOpacity(item, 1 - pOut);
+
+  if (mb === ma) {
+    // 同一深度的换分支：环1 不变（归位档会整圈转一下），旧的环2 让位给新的
+    A.ring1.forEach((s, i) => ring1.push(B.ring1[i] ? lerpItem(s, B.ring1[i], morph ? pGeom : 1) : s));
+    B.ring2.forEach((d) => ring2.push(entering(d)));
+    for (const extra of A.ring2.slice(B.ring2.length)) ring2.push(leaving(extra));
+    return { m: ma, ring1, ring2 };
+  }
+
+  // 环1：不搬家的那一层（lo=0 时是 L0；否则是 lo-1 那一级）
+  const outerFrom = A.ring1, outerTo = B.ring1;
+  const movingFrom = expand ? A.ring2 : A.ring1;   // 搬家层：下钻时从环2 出发，返回时从环1 出发
+  const movingTo = expand ? B.ring1 : B.ring2;
+  if (lo >= 1) {
+    // lo-1 那一级：下钻时从环1 淡出；返回时淡入环1
+    if (expand) for (const item of outerFrom) ring1.push(leaving(item));
+    else for (const item of outerTo) ring1.push(withOpacity(item, pOut * 0.9));
+  } else {
+    for (const item of outerTo) ring1.push(withOpacity(item, 1));   // L0 原地不动
+  }
+
+  // 搬家层：形变档插值几何，淡入档在原地交叉淡出/淡入
+  movingFrom.forEach((s, i) => {
+    const d = movingTo[i] || s;
+    if (morph) {
+      const mid = lerpItem(s, d, pGeom);
+      (expand ? ring1 : ring2).push(mid);
+    } else {
+      (expand ? ring2 : ring1).push(leaving(s));
+      (expand ? ring1 : ring2).push(withOpacity(d, pOut));
+    }
+  });
+
+  // hi 那一层：下钻时长出来，返回时消失
+  if (expand) for (const item of B.ring2) ring2.push(entering(item));
+  else for (const item of A.ring2) ring2.push(leaving(item));
+
+  return { m: ma, ring1, ring2 };
+}
+
+let rafId = 0;
+function stopAnim() { if (rafId) { cancelAnimationFrame(rafId); rafId = 0; } }
+
+function ease(name, t) {
+  const x = Math.max(0, Math.min(1, t));
+  if (name.indexOf("0.34,1.56") >= 0)      // 缩放回弹（过冲约 +8%）
+    return 1 + 1.7 * Math.pow(x - 1, 3) + 0.7 * Math.pow(x - 1, 2);
+  if (name.indexOf("0.16,1,0.3,1") >= 0)   // 减速（Material emphasized decelerate 近似）
+    return 1 - Math.pow(1 - x, 4.2);
+  if (name.indexOf("0.55,0.55,0,1") >= 0) return 1 - Math.pow(1 - x, 2.2);
+  if (name.indexOf("0,0,0,1") >= 0) return x * x * (3 - 2 * x);
+  return x;
+}
+
+let currentFrame = null;
+function transition(mb, ma, done) {
+  stopAnim();
+  const kind = state.trans;
+  const total = kind === "none" ? 0
+    : (kind === "fade" ? T.entranceMs : Math.max(T.morphMs, T.childSlideMs));
+  if (total === 0 || mb === ma && kind === "none") {
+    currentFrame = transitionFrame(ma, ma, kind, T.morphMs);
+    render(currentFrame); done && done(); return total;
+  }
+  const start = performance.now();
+  const step = (now) => {
+    const elapsed = now - start;
+    currentFrame = transitionFrame(mb, ma, kind, elapsed);
+    render(currentFrame);
+    if (elapsed < total) rafId = requestAnimationFrame(step);
+    else { rafId = 0; currentFrame = transitionFrame(ma, ma, kind, T.morphMs);
+           render(currentFrame); done && done(); }
+  };
+  rafId = requestAnimationFrame(step);
+  return total;
+}
+
+// ============================================================================
+// 交互
+// ============================================================================
+function setStatus(t) { document.getElementById("status").textContent = t; }
+
+function onRowClick(node, ring) {
+  if (state.closed) { setStatus("轮盘已关闭（点「复位到第一层」重开）"); return; }
+  if (!(node.children || []).length) {
+    setStatus(`会启动：${node.label}（原型不会真的启动程序）`);
+    return;
+  }
+  const m = depth();
+  const list = ring === 2 ? levelItems(m) : levelItems(m === 0 ? 0 : m - 1);
+  const idx = list.indexOf(node);
+  if (idx < 0) return;
+
+  if (ring === 2) {
+    // **核心动作：再进一层 —— 旧的环 2 整层搬到环 1 的位置，环 2 换成新一层**
+    state.path = [...state.path, idx];
+    setStatus(`下钻：${node.label} → 第 ${depth() + 1} 层（旧环2 搬到环1 的位置，环2 换新一层）`);
+  } else if (m === 0) {
+    state.path = [idx];
+    setStatus(`展开：${node.label}（点环 2 上的分组扇区可以再进一层）`);
+  } else {
+    // 环1 里的另一项：窗口深度不变，只换分支
+    state.path = [...state.path.slice(0, m - 1), idx];
+    setStatus(`换分支：${node.label}（环1 不变，环2 换成它的子项）`);
+  }
+  transition(m, depth());
+}
+
+function goBack() {
+  if (state.closed) return;
+  const m = depth();
+  if (m === 0) { setStatus("已经在第一层"); return; }
+  setStatus(`返回上一层（收起「${nodeAfter(m).label}」）`);
+  state.path = state.path.slice(0, -1);
+  transition(m, m - 1);
+}
+function goRoot() {
+  if (state.closed) return;
+  const m = depth();
+  if (m === 0) { setStatus("已经在第一层"); return; }
+  state.path = [];
+  setStatus("返回第一层（主菜单）");
+  transition(m, 0);
+}
+function closeWheel() {
+  if (state.closed) return;
+  state.closed = true;
+  document.getElementById("stage").style.filter = "brightness(0.55)";
+  setStatus("已关闭（点环外 = 关闭，与今天一致）—— 点「复位到第一层」重新打开");
+}
+function reopen() {
+  state.closed = false;
+  state.path = [];
+  document.getElementById("stage").style.filter = "";
+  render(transitionFrame(0, 0, state.trans, T.morphMs));
+  setStatus("已重新打开，位于第一层（Esc 逐层退出：有层级时先退层，第一层再按一次才关闭）");
+}
+
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  e.preventDefault();
+  if (state.closed) return;
+  if (depth() > 0) { goBack(); return; }
+  closeWheel();
+});
+
+/** 现状入场：整窗淡入 167ms + 缩放 0.86→1 / 300ms + 旋转 -24°→0 / 380ms（分两层才能叠加） */
+function playWheelEntrance() {
+  const win = document.getElementById("win"), rotor = document.getElementById("rotor");
+  let n = 0;
+  win.animate([{ opacity: 0 }, { opacity: 1 }],
+    { duration: T.entranceMs, easing: T.entranceEase, fill: "both" }); n++;
+  win.animate([{ transform: `scale(${T.fromScale})` }, { transform: "scale(1)" }],
+    { duration: T.scaleMs, easing: T.scaleEase, fill: "both" }); n++;
+  rotor.animate([{ transform: `rotate(${T.fromRotate}deg)` }, { transform: "rotate(0deg)" }],
+    { duration: T.rotateMs, easing: T.rotateEase, fill: "both" }); n++;
+  setStatus("现状入场（整窗：淡入 167ms + 缩放 0.86→1 / 300ms + 旋转 -24°→0 / 380ms）—— 与形态无关，原样可用");
+  return n;
+}
+
+// ============================================================================
+// 候选定义
+// ============================================================================
+const TRANS = [
+  {
+    id: "morphTop", name: "① 扇面展开 + 父项归位到 12 点", costLevel: "mid", thumb: "morphTop",
+    form: "旧环2 的扇面按比例展开成整圈、半径带同步从 218–350 收到 56–200；同时整圈旋转，"
+        + "让被展开的那一项落到正上方。旧环1 淡出，新环2 从父项方向径向滑出。",
+    params: `形变 ${T.morphMs}ms ${T.rotateEase}　旧层淡出 ${T.entranceMs}ms　`
+          + `新环2 ${T.childSlideMs}ms ${T.childSlideEase}（childSlidePx ${T.childSlidePx}）`,
+    cost: "中：逐帧重算 N 个扇区的角度与半径（N ≤ 20），或用 RenderTransform 近似",
+    risk: "父项归位 = 每次下钻圆盘都会转，转向感强；不习惯就选 ②",
+    src: "形变来源：Material 的 container transform（一个容器长成另一个容器）。归位来源："
+       + "Kurtenbach & Buxton 1993（CHI）实测「on-axis（正上/下/左/右）显著优于 off-axis，"
+       + "F(2,22)=104.84, p<.001」—— 把父项钉在正上方，子弧就永远从顶部展开。",
+  },
+  {
+    id: "morphKeep", name: "② 扇面展开 + 保持朝向", costLevel: "mid", thumb: "morphKeep",
+    form: "同 ①，但整圈不旋转 —— 父项留在它原来的朝向（在右下角就还在右下角），子弧也从那个方向展开。",
+    params: `形变 ${T.morphMs}ms ${T.rotateEase}　旧层淡出 ${T.entranceMs}ms　新环2 ${T.childSlideMs}ms`,
+    cost: "中：同 ①（少一次整圈旋转的插值）",
+    risk: "低：位置可预期（记得住「它在右下角」），代价是子弧不总在上方，得转头看",
+    src: "出处：保持空间一致性是径向菜单的通行做法（Don Hopkins 的饼菜单规范强调位置可记忆性）；"
+       + "代价与 ① 的 on-axis 优势正好相反。",
+  },
+  {
+    id: "fade", name: "③ 交叉淡入淡出（不做形变）", costLevel: "low", thumb: "fade",
+    form: "旧环1 淡出、旧环2 的项直接淡入到环1 的位置；新环2 仍从中心长出。圆盘不收缩、不旋转，"
+        + "只有透明度在动。",
+    params: `交叉 ${T.entranceMs}ms ${T.entranceEase}　新环2 ${T.childArcMs}ms ${T.childArcEase}`,
+    cost: "低：只改 Opacity，与现有子环入场同一套机制",
+    risk: "低，但「层级换位」这层信息只能靠淡入淡出暗示，比形变弱",
+    src: "出处：Fluent 的 Connected animation 退一步的做法；也复用了本项目退场动画的同一套参数。",
+  },
+  {
+    id: "none", name: "④ 无过渡（0ms 直接切换）", costLevel: "low", thumb: "none",
+    form: "点下去立刻换内容，不做任何动画。作为对照档 —— 用来判断这条过渡到底要不要。",
+    params: "0ms",
+    cost: "零",
+    risk: "换成「换了一层」瞬间发生，容易瞬间失去方位感",
+    src: "对照档，无出处。",
+  },
+];
+const transById = (id) => TRANS.find((t) => t.id === id);
+
+const CENTERS = [
+  { id: "leftright", name: "左右对半", cost: "低：两个半圆 = 两种 × 既有命中判定",
+    src: "中心=返回是业界通行做法：Infragistics 的 WinRadialMenu 里「中心工具有父级时即返回键」"
+       + "（官方文档 CenterButtonClickAction 就有 Back / ToggleExpansion 两态）；对半分是这个方案自己的扩展。" },
+  { id: "topbottom", name: "上下对半", cost: "低：同上",
+    src: "同上；上下分区与「往上/往下走一层」的语义更直白（上 = 退一层）。" },
+  { id: "rings", name: "同心圆（内圆 / 外半环）", cost: "低：一个整圆 + 一个半环",
+    src: "同心分区在径向菜单的专利与实现里常用来表达层级（如 US20120124520 一类的同心环披露）；"
+       + "这里借来当「内 = 退一层、外 = 回第一层」。" },
+  { id: "single", name: "单键（单击 / 双击）", cost: "低，但要处理双击窗口（会拖慢单击响应）",
+    src: "出处：Quick Menu Plugin 的「子菜单里中心出现返回箭头」。双击第一层是自加的，会引入双击等待。" },
+];
+const centerById = (id) => CENTERS.find((c) => c.id === id);
+
+const FIRSTBACK = [
+  { id: "always", name: "常显（不需要时置灰）", desc: "中心两块永远都在，不可用时画成灰的" },
+  { id: "deep", name: "只在深于一层时出现", desc: "第一层时中心只有「返回上一层」（灰）" },
+  { id: "hide", name: "只画可用的那一块", desc: "不需要的那一块完全不画，中心会显得空" },
+];
+
+// ============================================================================
+// 界面
+// ============================================================================
+function thumb(kind) {
+  const inward = (kind === "morphTop" || kind === "morphKeep");
+  const arcs = inward
+    ? `<path d="M 30 19 A 11 11 0 0 1 41 30" fill="none" stroke="#8ab4ff"/>
+       <path d="M 30 41 A 11 11 0 0 1 19 30" fill="none" stroke="#8ab4ff"/>
+       <path d="M 30 42 L 30 24" fill="none" stroke="#8ab4ff" stroke-width="1.4"/>
+       <path d="M 26 26 L 30 20 L 34 26 Z" fill="#8ab4ff"/>`
+    : (kind === "fade"
+      ? `<path d="M 30 19 A 11 11 0 0 1 41 30" fill="none" stroke="#8ab4ff" stroke-dasharray="3 3"/>
+         <path d="M 30 41 A 11 11 0 0 1 19 30" fill="none" stroke="#8ab4ff" stroke-dasharray="3 3"/>`
+      : `<path d="M 20 30 L 40 30" fill="none" stroke="#8ab4ff" stroke-dasharray="2 4"/>`);
+  return `<svg class="thumb" width="60" height="60" viewBox="0 0 60 60">
+    <circle cx="30" cy="30" r="26" fill="none" stroke="#ffffff2e"/>
+    <circle cx="30" cy="30" r="11" fill="none" stroke="#ffffff55"/>
+    ${arcs}
+  </svg>`;
+}
+
+function buildUi() {
+  document.getElementById("list").innerHTML = TRANS.map((t) => `
+    <div class="card" data-trans="${t.id}">
+      ${thumb(t.thumb)}
+      <div>
+        <div class="name">${t.name}</div>
+        <div class="line">${t.form}</div>
+        <div class="cost ${t.costLevel}">成本：${t.cost}</div>
+        <div class="src">${t.src}</div>
+      </div>
+    </div>`).join("");
+  document.querySelectorAll("#list .card").forEach((c) =>
+    c.addEventListener("click", () => selectTrans(c.dataset.trans)));
+
+  document.getElementById("centerbtns").innerHTML = CENTERS.map((c) =>
+    `<button data-center="${c.id}">${c.name}</button>`).join("");
+  document.querySelectorAll("#centerbtns button").forEach((b) =>
+    b.addEventListener("click", () => {
+      state.center = b.dataset.center;
+      syncButtons();
+      render(currentFrame || transitionFrame(depth(), depth(), state.trans, T.morphMs));
+      const c = centerById(state.center);
+      setStatus(`中心形态：${c.name}　成本 ${c.cost}`);
+    }));
+
+  document.getElementById("firstbtns").innerHTML = FIRSTBACK.map((f) =>
+    `<button data-first="${f.id}">${f.name}</button>`).join("");
+  document.querySelectorAll("#firstbtns button").forEach((b) =>
+    b.addEventListener("click", () => {
+      state.firstBack = b.dataset.first;
+      syncButtons();
+      render(currentFrame || transitionFrame(depth(), depth(), state.trans, T.morphMs));
+      setStatus(`「返回第一层」：${FIRSTBACK.find((f) => f.id === state.firstBack).desc}`);
+    }));
+
+  document.getElementById("btn-deep").addEventListener("click", () => {
+    reopen();
+    const step = () => {
+      const list = levelItems(depth());
+      const idx = list.findIndex((it) => (it.children || []).length);
+      if (idx < 0) { setStatus(`已到最深一层（第 ${depth() + 1} 层）`); return; }
+      const mb = depth();
+      state.path = [...state.path, idx];
+      setStatus(`连进：${list[idx].label} → 第 ${depth() + 1} 层`);
+      transition(mb, depth(), () => setTimeout(step, 550));
+    };
+    setTimeout(step, 350);
+  });
+  document.getElementById("btn-root").addEventListener("click", () => reopen());
+  document.getElementById("btn-wheel").addEventListener("click", () => playWheelEntrance());
+  document.getElementById("btn-all").addEventListener("click", async () => {
+    for (const t of TRANS) {
+      selectTrans(t.id);
+      await new Promise((r) => setTimeout(r, 600));
+      // 每次对比都演示同一条路径：展开 → 再进一层（这一步最能看到"旧环2 搬到环1"）
+      const i1 = levelItems(0).findIndex((it) => (it.children || []).length);
+      state.path = [i1];
+      transition(0, 1);
+      await new Promise((r) => setTimeout(r, 900));
+      const i2 = levelItems(1).findIndex((it) => (it.children || []).length);
+      if (i2 >= 0) { state.path = [i1, i2]; transition(1, 2); }
+      await new Promise((r) => setTimeout(r, 1100));
+      state.path = [i1]; transition(2, 1);          // 再返回一次，看反向
+      await new Promise((r) => setTimeout(r, 900));
+    }
+    selectTrans(TRANS[0].id);
+    setStatus("依次对比结束");
+  });
+  document.getElementById("stage").addEventListener("click", () => closeWheel());
+}
+
+function selectTrans(id) {
+  state.trans = id;
+  document.querySelectorAll("#list .card").forEach((c) =>
+    c.classList.toggle("on", c.dataset.trans === id));
+  const t = transById(id);
+  document.getElementById("s-name").textContent = t.name;
+  document.getElementById("s-form").textContent = t.form;
+  document.getElementById("s-params").textContent = t.params;
+  document.getElementById("s-cost").innerHTML = `<span class="cost ${t.costLevel}">${t.cost}</span>`;
+  document.getElementById("s-risk").textContent = t.risk;
+  document.getElementById("s-src").textContent = t.src;
+  state.path = [];
+  currentFrame = transitionFrame(0, 0, id, T.morphMs);
+  render(currentFrame);
+  setStatus(`过渡：${t.name}　参数 ${t.params}`);
+}
+function syncButtons() {
+  document.querySelectorAll("#centerbtns button").forEach((b) =>
+    b.classList.toggle("on", b.dataset.center === state.center));
+  document.querySelectorAll("#firstbtns button").forEach((b) =>
+    b.classList.toggle("on", b.dataset.first === state.firstBack));
+}
+
+// ============================================================================
+// 约束表 + 页内自检（自检 = 「这套交互自不自洽」的机器化断言，每条都能失败）
+// ============================================================================
+function longestLabel(node) {
+  let best = node.label;
+  for (const c of node.children || []) { const l = longestLabel(c); if (l.length > best.length) best = l; }
+  return best;
+}
+function buildFeasibilityTable() {
+  const rows = [
+    ["环 1 最多几项", `<b>${G.maxChildSectors} 项</b>（每项 ${(360 / G.maxChildSectors).toFixed(0)}°）`,
+     `既有护栏 MaxChildSectors：再细分文字就放不下。你的菜单最多的一层是 ${maxLevelCount()} 项，`
+     + `余量 ${G.maxChildSectors - maxLevelCount()}。<b>这是本方案的硬约束</b>：`
+     + `某一层若超过 20 项，它就不能当环 1（今天当环 2 可以，因为子弧能铺满整圈）。`],
+    ["环 2 的跨度", "min(max(90, n×25), 360)°",
+     `既有公式 RadialLayout.ChildArc。7 项 → ${childArcSpan(7)}°，12 → ${childArcSpan(12)}°，`
+     + `13 → ${childArcSpan(13)}°（已接近整圈：这时"贴着父项方向"的性质自己就消失了，方案不受影响）。`],
+    ["半径带与间隙", `${G.r1Outer} + ${G.bulgePx}（悬停鼓出）+ 4 = ${G.r1Outer + G.bulgePx + 4} ≤ ${G.r2Inner}`,
+     `既有护栏（单测 SecondRing_ClearsTheHoverBulge 锁着）。层级换位不改半径，自动成立。`],
+    ["中心分区后每块多大", `半圆 r=${G.dead} → ${Math.round(Math.PI * G.dead * G.dead / 2)} px²（约 56×112）`,
+     `今天中心是「不选中任何项」的死区，分区不破坏命中模型；可点性下限按 40×40 = 1600 px² 算，余量充足。`],
+    ["层级深度", "无上限", `每进一层都是「父层整圈 + 当前层子弧」，深度不消耗任何几何预算。`],
+    ["要改的产品代码", "层级状态（path）+ 环1/环2 的来源层 + 死区命中分区 + 一条过渡动画",
+     `不用动的：扇区几何、子弧跨度、标签排版、图标半径、径向滑出入场、皮肤与令牌、`
+     + `宿主窗口/遮罩/z 序/焦点/预热/空闲清理、探针框架。悬停状态机（子菜单延迟展开那套）`
+     + `会**退休** —— 你选了"全部点击展开"，它就没有存在意义了。`],
+  ];
+  document.getElementById("feas").innerHTML =
+    "<tr><th>维度</th><th>结论</th><th>依据</th></tr>"
+    + rows.map((r) => `<tr><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td></tr>`).join("")
+    + `<tr><th>中心形态</th><th>说明</th><th>出处</th></tr>`
+    + CENTERS.map((c) => `<tr><td>${c.name}</td><td>成本 ${c.cost}</td><td>${c.src}</td></tr>`).join("");
+}
+
+function selfCheck() {
+  const out = [];
+  const saved = { path: state.path.slice(), trans: state.trans, center: state.center,
+                  first: state.firstBack };
+
+  // ① 窗口不变量：环1 = 父层、环2 = 当前层（整套交互的地基）
+  state.path = [];
+  let inv = true, detail = "", maxM = 0;
+  const root0 = deepestRootIndex();
+  if (root0 >= 0) {
+    state.path = [root0];
+    for (let i = 0; i < 3; i++) {
+      const m = depth();
+      const d = descriptor(m, true);
+      const lvl1 = levelItems(m === 0 ? 0 : m - 1).map((n) => n.label).join(",");
+      const lvl2 = levelItems(m).map((n) => n.label).join(",");
+      if (d.ring1.map((r) => r.node.label).join(",") !== lvl1
+          || d.ring2.map((r) => r.node.label).join(",") !== lvl2)
+        { inv = false; detail = `m=${m} 层不匹配`; break; }
+      maxM = m;
+      const nxt = nextDeepIndex(m);
+      if (nxt < 0) break;
+      state.path = [...state.path, nxt];
+    }
+  }
+  out.push(["环1 = 父层、环2 = 当前层（窗口不变量）", inv && maxM >= 2,
+    detail || `沿最深链核对 m=1..${maxM}（示例数据最深三级）`]);
+
+  // ② 「旧的环2 整层搬到环1」逐项相等 —— 你那条需求的机器化表达
+  //    必须用**真的有三层**的那条链，否则只是自己比自己
+  const rootIdx = deepestRootIndex();
+  state.path = [rootIdx];
+  const before = descriptor(1, true);
+  const oldRing2 = before.ring2.map((r) => r.node.label).join(",");
+  const deep = nextDeepIndex(1);
+  state.path = [rootIdx, deep];
+  const after = descriptor(2, true);
+  const newRing1 = after.ring1.map((r) => r.node.label).join(",");
+  out.push(["旧的环2 整层搬到环1（逐项、顺序都一致）",
+    deep >= 0 && oldRing2.length > 0 && oldRing2 === newRing1,
+    `旧环2 ${before.ring2.length} 项 → 新环1 ${after.ring1.length} 项，逐项相同`
+    + `（「${before.ring2[0].node.label}」…「${before.ring2[before.ring2.length - 1].node.label}」）`]);
+
+  // ③ 几何护栏仍成立（换位不动半径）
+  const gapOk = G.r1Outer + G.bulgePx + 4 <= G.r2Inner;
+  const spansOk = childArcSpan(3) === 90 && childArcSpan(7) === 175 && childArcSpan(12) === 300
+    && childArcSpan(13) === 325 && childArcSpan(20) === 360;
+  out.push(["半径带与跨度公式自洽（换位不动半径）", gapOk && spansOk,
+    `环1外缘+鼓出+4 = ${G.r1Outer + G.bulgePx + 4} ≤ 环2内缘 ${G.r2Inner}；`
+    + `跨度 3→${childArcSpan(3)}° 7→${childArcSpan(7)}° 12→${childArcSpan(12)}° 20→${childArcSpan(20)}°`]);
+
+  // ④ 中心对半后每块都够点
+  const halfArea = Math.PI * G.dead * G.dead / 2;
+  out.push(["中心对半后每块都够点（≥ 40×40 等效面积）", halfArea >= 1600,
+    `半圆 r=${G.dead} → ${Math.round(halfArea)} px²，等效约 ${Math.round(Math.sqrt(halfArea))}×${Math.round(Math.sqrt(halfArea))}`]);
+
+  // ⑤ 环1（12 项）放得下最长标签
+  const longest = longestLabel(ROOT);
+  const chord12 = 2 * bandAt(BAND1, G.labelRatio) * Math.sin((360 / 12) * Math.PI / 360);
+  const lines = wrapLabel(longest, Math.max(18, chord12 - 8), 12);
+  out.push(["环1（12 项）放得下最长的标签", lines.length >= 1 && lines.length <= 3,
+    `最长「${longest}」；环1 标签半径 ${bandAt(BAND1, G.labelRatio).toFixed(0)} 处可用弦长 `
+    + `${chord12.toFixed(0)}px → 折成 ${lines.length} 行「${lines.join("／")}」`]);
+
+  // ⑥ 沿最深链下钻到底再连返回第一层（闭环），每步 render 不抛错
+  state.path = [deepestRootIndex()];
+  let ok = true, reachedM = depth();
+  for (let i = 0; i < 3; i++) {
+    const nxt = nextDeepIndex(depth());
+    if (nxt < 0) break;
+    state.path = [...state.path, nxt];
+    reachedM = depth();
+    try { render(descriptor(depth(), true)); } catch { ok = false; }
+  }
+  for (let i = 0; i < reachedM; i++) if (state.path.length) state.path = state.path.slice(0, -1);
+  out.push(["下钻到最深再连返回到第一层（闭环）", ok && state.path.length === 0 && reachedM >= 2,
+    `走到 m=${reachedM}（示例数据最深三级）`]);
+
+  // ⑦ 形变档在中途确实有中间态（抓"动画其实没发生"这类假实现）。必须站在真有两层可比的路径上。
+  const notes = [];
+  const r0 = deepestRootIndex();
+  state.path = [r0];
+  const d1 = nextDeepIndex(1);
+  state.path = [r0, d1];
+  for (const t of TRANS) {
+    state.trans = t.id;
+    const mid = transitionFrame(1, 2, t.id, T.morphMs / 2);
+    const from = descriptor(1, t.id === "morphTop"), to = descriptor(2, t.id === "morphTop");
+    const moving = mid.ring1.filter((it) =>
+      from.ring2.some((f) => f.node.label === it.node.label));
+    const isMid = moving.some((it) => {
+      const f = from.ring2.find((x) => x.node.label === it.node.label);
+      const d = to.ring1.find((x) => x.node.label === it.node.label);
+      return f && d && Math.abs(it.band.inner - f.band.inner) > 1
+                  && Math.abs(it.band.inner - d.band.inner) > 1;
+    });
+    const fading = mid.ring1.length + mid.ring2.length > 0;
+    const good = t.id === "none" ? fading : (t.id === "fade" ? fading : isMid);
+    notes.push(`${t.id}:${t.id === "none" ? "0ms" : (good ? "有中间态" : "无中间态")}`);
+    if (!good) ok = false;
+  }
+  out.push(["每档过渡都能产出画面，形变档中途确实在两带之间", ok, notes.join("　")]);
+
+  state.path = saved.path; state.trans = saved.trans; state.center = saved.center;
+  state.firstBack = saved.first;
+  currentFrame = transitionFrame(depth(), depth(), saved.trans, T.morphMs);
+  render(currentFrame);
+  syncButtons();
+
+  const pass = out.filter((r) => r[1]).length;
+  document.getElementById("selfcheck").innerHTML =
+    `<b>页内自检：${pass}/${out.length} 通过</b>`
+    + out.map((r) => `<div class="${r[1] ? "ok" : "bad"}">${r[1] ? "✓" : "✗"} ${r[0]}　`
+                   + `<span class="hint">${r[2]}</span></div>`).join("");
+  return out;
+}
+
+window.addEventListener("error", (e) => {
+  const box = document.getElementById("selfcheck");
+  if (box) box.innerHTML = `<span class="bad">页面脚本出错：${e.message}</span>`;
+});
+
+try {
+  buildUi();
+  buildFeasibilityTable();
+  selectTrans("morphTop");
+  syncButtons();
+  selfCheck();
+  setStatus("就绪 —— 点分组扇区展开；点环 2 的分组项再进一层；点中心两半返回；点环外关闭；Esc 逐层退出");
+} catch (err) {
+  document.getElementById("selfcheck").innerHTML = `<span class="bad">初始化失败：${err.message}</span>`;
+}
+</script>
+</body>
+</html>

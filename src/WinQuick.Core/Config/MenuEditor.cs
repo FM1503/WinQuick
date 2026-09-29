@@ -1,4 +1,4 @@
-using WinQuick.Core.Geometry;
+﻿using WinQuick.Core.Geometry;
 
 namespace WinQuick.Core.Config;
 
@@ -57,12 +57,13 @@ public static class MenuEditor
     /// **分组必须带着第一个子项一起建。** 不允许建出空分组，原因是空分组会渲染成
     /// 一个既无子项、又无动作的扇区：点它什么都不发生、悬停也不展开任何东西，
     /// 而用户完全看不出为什么。宁可要求"先给它放一样东西"，
-    /// 建好之后把鼠标移上去、在子环里点「＋」继续加就是了。
+    /// 建好之后点开这个分组、在它的子环里点「＋」继续加就是了。
     ///
-    /// 分组只加在第一层：子环里再放分组就是第三层，而当前只支持两层。
+    /// <paramref name="parentIndex"/> 为 -1 建在第一层，否则建进该父项的子项列表 ——
+    /// 层级上限拆掉之后，「子环里再放分组」是正常操作（用户要求第二层环能建分组）。
     /// </summary>
     public static (MenuSpec Menu, string? Error) AddGroup(
-        MenuSpec menu, string? label, MenuItemSpec firstChild)
+        MenuSpec menu, string? label, MenuItemSpec firstChild, int parentIndex = -1)
     {
         var trimmedLabel = label?.Trim();
         if (string.IsNullOrEmpty(trimmedLabel))
@@ -74,7 +75,7 @@ public static class MenuEditor
             Children = [firstChild],
         };
 
-        return Add(menu, parentIndex: -1, group);
+        return Add(menu, parentIndex, group);
     }
 
     /// <summary>

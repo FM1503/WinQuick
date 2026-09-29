@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using WinQuick.App.Design;
@@ -124,7 +124,9 @@ public static class RenderPreview
 
             if (wantsChildArc && parentWithChildren >= 0)
             {
-                view.ExpandChildArc(parentWithChildren, immediate: true);
+                // 子项列表由调用方给出（视图不再自己去翻一级的 Children —— 下钻后那是错的那一层）
+                view.ExpandChildArc(parentWithChildren,
+                    trimmed.Items[parentWithChildren].Children, immediate: true);
                 // child-leaf 额外高亮第一个子项，用来验证子弧的悬停高亮色。
                 // 立即落定而不是 SetChildHover：只渲染一帧，动画推进不了，
                 // 否则画出来的永远是未形变状态，子环的鼓出就等于没被验证过。

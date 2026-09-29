@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using WinQuick.App.Design;
 using WinQuick.App.Diagnostics;
 using WinQuick.App.Hosting;
@@ -117,8 +117,10 @@ public static class FlickerProbe
                 Act(() => panel?.SetHotkeyStatusForProbe("该组合不可用（错误 1409：热键已被其它程序占用），换一个试试。")), true);
             await StepAsync("遮罩滑块→0.55",
                 Act(() => panel?.SetDimOpacityForTest(0.55)), true);
-            await StepAsync("悬停延迟→220/380",
-                Act(() => panel?.SetDelaysForText("220", "380")), true);
+            // 原来这步是改悬停延迟（那两个输入框已随「点击展开」删除）。
+            // 换成同样性质的"纯文本内容变化"，这一节测的是内容刷新而不是具体字段。
+            await StepAsync("热键状态→另一条长文本",
+                Act(() => panel?.SetHotkeyStatusForProbe("已切换到 Ctrl+Alt+Q。这个组合可以注册。")), true);
             await StepAsync("强调色→#FF6EA8FE",
                 Act(() => panel?.SetAccentForTest("#FF6EA8FE")), true);
 

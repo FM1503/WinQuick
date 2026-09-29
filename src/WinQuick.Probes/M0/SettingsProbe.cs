@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Windows.Interop;
 using WinQuick.App.Config;
 using WinQuick.App.Diagnostics;
@@ -101,10 +101,13 @@ public static class SettingsProbe
             var panelHwnd = (Windows.Win32.Foundation.HWND)panel.HandleValue;
             if (panelHwnd != default && Windows.Win32.PInvoke.GetWindowRect(panelHwnd, out var beforeDrag))
             {
-                // 标题栏在内容顶部：横向取中间，纵向离顶边约 24 DIP。
+                // 拖拽点直接向标题栏控件本人要屏幕坐标（取它左上角内侧一点）。
+                // 原来写死「左边 +120 DIP」—— 面板改成侧栏布局后那里是侧栏而不是标题栏，
+                // 拖动悄悄失效（移动 (0,0)）。布局常量不该出现在这种核对里。
                 var scale = WinQuick.App.Diagnostics.MonitorLayout.AtCursor().Scale;
-                var titleX = beforeDrag.left + (int)Math.Round(120 * scale);
-                var titleY = beforeDrag.top + (int)Math.Round(24 * scale);
+                var titlePoint = panel.TitleBar.PointToScreen(new System.Windows.Point(40, 12));
+                var titleX = (int)Math.Round(titlePoint.X);
+                var titleY = (int)Math.Round(titlePoint.Y);
 
                 // 先激活面板：真实使用时用户点它就会激活它。
                 // 探针里不激活的话，投递的鼠标消息与真实场景不等价
@@ -164,12 +167,21 @@ public static class SettingsProbe
             ProbeOutput.Section("改动即应用的语义");
 
             var applied = new List<AppConfig>();
-            panel = new SettingsPanel(store.Config, _ => (true, 0),
+            // _original 故意带着显式悬停延迟值：界面里那两个输入框已经删了，
+            // 但老配置里的显式值必须**原样带过去** —— 打开一次设置面板不该清掉用户的既有配置。
+            var withLegacyDelays = store.Config with
+            {
+                Behavior = store.Config.Behavior with
+                {
+                    HoverOpenDelayMs = 300,
+                    HoverCloseDelayMs = 500,
+                },
+            };
+            panel = new SettingsPanel(withLegacyDelays, _ => (true, 0),
                 config => applied.Add(config));
 
             var baseline = applied.Count;
             panel.SetHotkeyForTest(new HotkeySpec(HotkeyModifiers.Alt, 0x20, "Space"));
-            panel.SetDelaysForText("300", "500");
             panel.SetDimOpacityForTest(0.6);
             panel.SetAccentForTest("FF8800");
             panel.InvokeApplyForTest();
@@ -178,7 +190,8 @@ public static class SettingsProbe
             var last = applied.Count > 0 ? applied[^1] : null;
 
             ProbeOutput.Kv("热键", last?.Hotkey ?? "(无)");
-            ProbeOutput.Kv("展开/收起延迟", $"{last?.Behavior.HoverOpenDelayMs} / {last?.Behavior.HoverCloseDelayMs}");
+            ProbeOutput.Kv("旧配置的悬停延迟（应原样保留）",
+                $"{last?.Behavior.HoverOpenDelayMs} / {last?.Behavior.HoverCloseDelayMs}");
             ProbeOutput.Kv("遮罩不透明度", last?.Appearance.DimOpacity?.ToString() ?? "(空)");
             ProbeOutput.Kv("高亮色（自动补 #）", last?.Appearance.AccentColor ?? "(空)");
 
@@ -189,47 +202,33 @@ public static class SettingsProbe
                            && Math.Abs((last.Appearance.DimOpacity ?? 0) - 0.6) < 0.001
                            && last.Appearance.AccentColor == "#FF8800";
 
-            results.Add(("正常改动组装正确", normalOk, last?.Hotkey ?? ""));
+            results.Add(("正常改动组装正确（含旧延迟值不被冲掉）", normalOk, last?.Hotkey ?? ""));
 
-            // ---- 打字过程中的中间值 ----
-            //
-            // 这里刻意**允许**中间值生效，而不是拦掉。
-            // 理由：面板是实时预览，用户从 200 改到 300 的途中会出现 3、30 这种中间值，
-            // 让它们即时生效才符合"改动即预览"。真正防止坏值落盘的是**去抖保存** ——
-            // 用户打完字、手停下来之后写盘的才是最终值。
-            // （我最初在这里断言"半截输入不该被应用"，但那是我没实现的意图，不是设计缺陷。）
-            ProbeOutput.Section("打字过程中的中间值可生效，靠去抖保护落盘");
-            var beforeCount = applied.Count;
-            panel.SetDelaysForText("3", "");
-            panel.InvokeApplyForTest();
-            var afterFirstDigit = applied.Count;
+            // ---- 热键预设：走真实的 OnPresetChanged 路径 ---------------------
+            ProbeOutput.Section("热键预设下拉");
+            var beforePreset = applied.Count;
+            panel.SelectPresetForTest("Ctrl+Alt+Q");
+            var presetHotkey = applied.Count > beforePreset ? applied[^1].Hotkey : null;
+            ProbeOutput.Kv("选 Ctrl+Alt+Q 后应用的热键", presetHotkey ?? "(没有)");
+            results.Add(("选中预设即填入并应用（探测通过时）",
+                presetHotkey == "Ctrl+Alt+Q", presetHotkey ?? "无"));
 
-            panel.SetDelaysForText("", "3");
-            panel.InvokeApplyForTest();
-            var afterOtherSide = applied.Count;
+            panel.SelectPresetForTest("Ctrl+Shift+Z");
+            var userNamed = applied.Count > 0 ? applied[^1].Hotkey : null;
+            ProbeOutput.Kv("选用户点名的 Ctrl+Shift+Z 后应用的热键", userNamed ?? "(没有)");
+            results.Add(("用户点名的 Ctrl+Shift+Z 在预设里且可选可应用",
+                userNamed == "Ctrl+Shift+Z", userNamed ?? "无"));
 
-            ProbeOutput.Kv("输入「3」时立即生效", afterFirstDigit > beforeCount ? "是（预期）" : "否");
-            ProbeOutput.Kv("另一侧输入「3」时立即生效", afterOtherSide > afterFirstDigit ? "是（预期）" : "否");
-
-            // 真正要保证的是：非法输入（非数字）不生效、不报错刷屏。
-            panel.SetDelaysForText("abc", "350");
-            panel.InvokeApplyForTest();
-            var afterNonNumeric = applied.Count;
-
-            panel.SetDelaysForText("12x", "350");
-            panel.InvokeApplyForTest();
-            var afterTrailingGarbage = applied.Count;
-
-            ProbeOutput.Kv("非数字输入不生效", afterNonNumeric == afterOtherSide ? "是" : "否（异常）");
-            ProbeOutput.Kv("尾随非法字符也不生效", afterTrailingGarbage == afterOtherSide ? "是" : "否（异常）");
-            ProbeOutput.Line();
-            ProbeOutput.Line(afterTrailingGarbage == afterOtherSide
-                ? "  >>> 非数字输入既不生效也不刷红字。落盘由 500ms 去抖保护："
-                  + "手停下来之后写的才是最终值。"
-                : "  >>> 非法输入被当成有效值应用了。");
-
-            results.Add(("非数字输入不生效", afterTrailingGarbage == afterOtherSide,
-                $"{afterTrailingGarbage - afterOtherSide} 次"));
+            // ---- 热键预设清单本身的健全性（下拉里出现什么由它决定） ----
+            ProbeOutput.Section("预设清单健全性");
+            var badPresets = HotkeySpec.RecommendedPresets
+                .Where(p => !HotkeySpec.TryParse(p, out _, out _)
+                            || HotkeySpec.TryParse(p, out var spec, out _) && spec!.Modifiers == HotkeyModifiers.Win)
+                .ToList();
+            ProbeOutput.Kv("预设数", HotkeySpec.RecommendedPresets.Length.ToString());
+            ProbeOutput.Kv("解析失败或纯 Win 的预设", badPresets.Count == 0 ? "没有" : string.Join("、", badPresets));
+            results.Add(("预设全部可解析且不踩纯 Win 组合", badPresets.Count == 0,
+                string.Join(" / ", HotkeySpec.RecommendedPresets)));
 
             // ---- 走真实集成路径：面板能否取得前台 ----
             //
@@ -296,30 +295,42 @@ public static class SettingsProbe
             ProbeOutput.Line("  这样设计的效果：拖遮罩滑块、改高亮色、调悬停延迟，");
             ProbeOutput.Line("  都能立刻在旁边的轮盘上看到 —— 独立对话框做不到，它会占住前台、覆盖层已经关掉。");
 
-            // ---- 不合格的色值不能被应用 ----
-            ProbeOutput.Section("不合格的色值不能被应用");
-            var beforeAccent = applied.Count;
-            panel.SetAccentForTest("#00");               // 还没输完
-            panel.InvokeApplyForTest();
-            var afterShortHex = applied.Count;
-
+            // ---- 不合格的色值进不来（调色盘语义） ----
+            // 原来测的是文本框打字护栏；换调色盘后自由输入没了，
+            // 对应的保证是「接缝/HSV 输入收到非法值时当前选择不变」。
+            ProbeOutput.Section("不合格的色值进不来");
+            var accentBefore = panel.BuildConfigForTest()?.Appearance.AccentColor;
+            panel.SetAccentForTest("#00");               // 半截
+            var afterPartial = panel.BuildConfigForTest()?.Appearance.AccentColor;
             panel.SetAccentForTest("xyz");               // 明确不合法
-            panel.InvokeApplyForTest();
-            var afterBadHex = applied.Count;
+            var afterBad = panel.BuildConfigForTest()?.Appearance.AccentColor;
 
-            ProbeOutput.Kv("色值「#00」时的应用次数变化", (afterShortHex - beforeAccent).ToString());
-            ProbeOutput.Kv("色值「xyz」时的应用次数变化", (afterBadHex - afterShortHex).ToString());
-            ProbeOutput.Line();
-            ProbeOutput.Line(afterBadHex == beforeAccent
-                ? "  >>> 不完整与不合法的色值都未被应用。"
-                : "  >>> 不合格的色值被应用了。");
+            ProbeOutput.Kv("之前的选择", accentBefore ?? "(默认)");
+            ProbeOutput.Kv("塞「#00」之后", afterPartial ?? "(默认)");
+            ProbeOutput.Kv("塞「xyz」之后", afterBad ?? "(默认)");
+            results.Add(("半截与非法色值不改变当前选择",
+                afterPartial == accentBefore && afterBad == accentBefore,
+                $"{accentBefore} → {afterPartial} → {afterBad}"));
 
-            results.Add(("不合格色值不被应用", afterBadHex == beforeAccent,
-                $"{afterBadHex - beforeAccent} 次"));
+            // ---- 调色盘提交：最近使用会更新并进配置 ----
+            ProbeOutput.Section("调色盘提交与最近使用");
+            panel.CommitAccentForTest("#123456");
+            var recent1 = panel.BuildConfigForTest()?.Appearance.RecentAccentColors.ToList() ?? [];
+            panel.CommitAccentForTest("#654321");
+            panel.CommitAccentForTest("#123456");        // 再选一次：去重并顶到最前
+            var recent3 = panel.BuildConfigForTest()?.Appearance.RecentAccentColors.ToList() ?? [];
+
+            ProbeOutput.Kv("第一次提交后", string.Join(",", recent1));
+            ProbeOutput.Kv("三次提交后", string.Join(",", recent3));
+            results.Add(("提交即入「最近使用」：置前、去重",
+                recent1.FirstOrDefault() == "#123456"
+                && recent3.FirstOrDefault() == "#123456"
+                && recent3.Count(r => r == "#123456") == 1
+                && recent3.Contains("#654321"),
+                string.Join(",", recent3)));
 
             // ---- 留空 = 沿用设计基线 ----
             ProbeOutput.Section("留空表示沿用设计基线");
-            panel.SetDelaysForText("", "");
             panel.SetDimOpacityForTest(0.4);             // 等于默认值
             panel.SetAccentForTest("");
             panel.InvokeApplyForTest();
@@ -327,14 +338,12 @@ public static class SettingsProbe
             var baselineConfig = applied.Count > 0 ? applied[^1] : null;
             // 用模式匹配而不是 ?. 一次、下一行又直接取成员 —— 后者正是可空分析的经典漏网点。
             var behavior = baselineConfig?.Behavior;
-            ProbeOutput.Kv("延迟写回 null",
-                behavior is { HoverOpenDelayMs: null, HoverCloseDelayMs: null } ? "是" : "否");
+            // 悬停延迟的「留空写回 null」已经不适用：界面删了，值从 _original 原样带过去
+            //（上面那节核对的就是它），不会因为清空输入框而落成 null。
             ProbeOutput.Kv("遮罩等于默认时写回 null", baselineConfig?.Appearance.DimOpacity is null ? "是" : "否");
             ProbeOutput.Kv("高亮色留空写回 null", baselineConfig?.Appearance.AccentColor is null ? "是" : "否");
 
             var baselineOk = baselineConfig is not null
-                             && baselineConfig.Behavior.HoverOpenDelayMs is null
-                             && baselineConfig.Behavior.HoverCloseDelayMs is null
                              && baselineConfig.Appearance.DimOpacity is null
                              && baselineConfig.Appearance.AccentColor is null;
 

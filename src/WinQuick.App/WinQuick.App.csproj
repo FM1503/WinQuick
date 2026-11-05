@@ -29,11 +29,14 @@
     <ProjectReference Include="..\WinQuick.Core\WinQuick.Core.csproj" />
   </ItemGroup>
 
-  <!-- 探针项目的可见性来源。
+  <!-- 探针与单测的可见性来源。
        为什么不让那些 *ForProbe 成员变成 public：它们是**测试接缝**，不是产品接口 ——
-       放进 public 就等于承诺长期维护它们（见 docs/review-2026-09.md 的 P2/P3）。 -->
+       放进 public 就等于承诺长期维护它们（见 docs/review-2026-09.md 的 P2/P3）。
+       单测也要拿到 internal：纯逻辑（如 ExplorerTabs.UrlMatches 的比较口径）只有能被直接断言，
+       才不会退回到「靠跑一次真实资源管理器去猜」。 -->
   <ItemGroup>
     <InternalsVisibleTo Include="WinQuick.Probes" />
+    <InternalsVisibleTo Include="WinQuick.Core.Tests" />
   </ItemGroup>
 
   <!-- CsWin32 reads this to decide which Win32 APIs to project. Keeping the list

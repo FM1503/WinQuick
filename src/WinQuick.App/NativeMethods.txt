@@ -1,4 +1,4 @@
-﻿// CsWin32 生成清单。每行一个 API / 结构体 / 常量。
+﻿﻿// CsWin32 生成清单。每行一个 API / 结构体 / 常量。
 
 // 只列真正用到的，避免生成一大堆无用代码。M1 会继续追加。
 
@@ -333,3 +333,13 @@ DestroyWindow
 CreateWindowEx
 SetProcessWorkingSetSizeEx
 GetCurrentProcess
+// --- 队列批量打开文件夹：认 explorer 新建的窗口（类名 CabinetWClass）---
+EnumWindows
+GetClassName
+
+// --- 选择文件夹（「添加到菜单」里的「浏览文件夹…」）---
+// 走 IFileDialog + FOS_PICKFOLDERS 拿系统原生文件夹选择框，见 Interop/FolderPicker.cs
+FileOpenDialog
+IFileDialog
+IShellItem
+SIGDN

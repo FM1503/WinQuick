@@ -42,6 +42,12 @@ public sealed class ResidentHost : IDisposable
 
     /// <summary>上一次已知的菜单内容签名，用来判断菜单是否**真的**变了。</summary>
     private string _menuSignature = "";
+
+    /// <summary>启动队列执行器。它按自己的节奏在后台线程跑，这里只负责接线与提示。</summary>
+    private readonly LaunchQueueRunner _queueRunner = new();
+
+    /// <summary>上一次已知的队列内容签名，理由同 <see cref="_menuSignature"/>。</summary>
+    private string _queueSignature = "";
     private MenuSpec _menu;
     private readonly HotkeyManager _hotkeys;
     private readonly OverlayController _overlay;
@@ -75,7 +81,30 @@ public sealed class ResidentHost : IDisposable
         _overlay.SkinChanged += (_, e) => OnSkinChanged(e.SkinId, e.Form);
         _overlay.SetHotkeyProbe(spec => _hotkeys.ProbeTemporarily(spec));
         _overlay.SetSettingsSource(_config.Config);
+
+        // 设置面板「启动队列」分区的取数与保存。
+        // · 取数直接交 ConfigStore.Queues：那是热重载之后的那一份，与托盘菜单、执行器看到的是同一份；
+        // · 保存成功后 SaveQueues 会**就地**把 ConfigStore.Queues 换成刚写下去的这份，分区紧接着
+        //   的回拉拿到的就是新数据。原来靠 400ms 防抖热重载，中间那半秒回拉拿到的是旧列表 ——
+        //   实测表现为新建的队列消失、删除的还在；这里不需要再做通知；
+        // · 保存失败用托盘气泡说明原因（与「无法保存菜单」同一套提示方式），返回 false 让调用方不刷新。
+        _overlay.SetQueueEditorBinding(
+            () => _config.Queues,
+            queues =>
+            {
+                if (_config.SaveQueues(queues, out var error)) return true;
+
+                _tray.ShowBalloon("WinQuick 无法保存启动队列", error ?? "未知原因");
+                return false;
+            });
+
         ActionExecutor.Completed += OnActionCompleted;
+
+        _queueRunner.Started += queue => RunOnUi(() =>
+            _tray.ShowBalloon("WinQuick 启动队列", $"开始执行「{queue.Name}」：{queue.Items.Count} 项"));
+        _queueRunner.Finished += OnQueueFinished;
+        _queueRunner.Stopped += (queue, executed) => RunOnUi(() =>
+            _tray.ShowBalloon("启动队列已停止", $"「{queue.Name}」已停止，之前完成了 {executed} 项"));
 
         _session.SessionLocked += (_, _) => _overlay.Hide();
         _session.SessionUnlocked += OnSessionUnlocked;
@@ -143,6 +172,9 @@ public sealed class ResidentHost : IDisposable
         // 后续每次热重载都会独立提示，不会漏报。
         if (!_initialLoad.AllOk) ReportConfigProblems(_initialLoad);
 
+        // 托盘里的「启动队列」子菜单按当前配置建一次；之后由 OnConfigChanged 在签名变化时重建。
+        RefreshQueueMenu();
+
         _hookHealthTimer.Start();
     }
 
@@ -197,8 +229,46 @@ public sealed class ResidentHost : IDisposable
 
         _overlay.Hide();
 
+        // 启动队列是一条独立的流程（它有自己的执行器、状态与停止语义），不能交给
+        // ActionExecutor 当成"启动一个东西"：那样队列里的间隔、合并与停止都无处安放。
+        if (item.Action is { Type: "queue" })
+        {
+            RunQueue(item.Action.Target);
+            return;
+        }
+
         // ActionExecutor 内部走线程池，这里不会阻塞 —— 覆盖层的关闭路径必须立刻返回。
         ActionExecutor.Execute(item);
+    }
+
+    /// <summary>
+    /// 菜单项里的「启动队列」：按 id 找一套队列交给 <see cref="_queueRunner"/>。
+    ///
+    /// **按 id 而不是按名称匹配**：id 是 launch-queues.json 里的稳定标识，名称随时可改；
+    /// 按名称匹配的话，用户改一次名字，菜单里那一项就会悄无声息地失效。
+    ///
+    /// **target 允许为空**：内置的默认菜单项引用"第一套"，而新建装机时用户还没有已知的 id
+    /// 可写。空 target 的语义就是"第一套"，与托盘「启动队列」子菜单在没有任何队列时
+    /// 什么都不展示是一致的。
+    ///
+    /// 找不到时**必须出声**：菜单项还在，点击却毫无反应，用户会以为程序坏了。
+    /// </summary>
+    private void RunQueue(string target)
+    {
+        var queue = string.IsNullOrWhiteSpace(target)
+            ? _config.Queues.FirstOrDefault()
+            : _config.Queues.FirstOrDefault(q =>
+                string.Equals(q.Id, target, StringComparison.Ordinal));
+
+        if (queue is not null)
+        {
+            _queueRunner.Start(queue);
+            return;
+        }
+
+        _tray.ShowBalloon("WinQuick 启动队列", _config.Queues.Count == 0
+            ? "还没有配置任何队列。"
+            : $"找不到队列「{target}」——它可能已被改名或删除。");
     }
 
     /// <summary>
@@ -462,6 +532,57 @@ public sealed class ResidentHost : IDisposable
         _tray.ShowBalloon("WinQuick 无法执行", $"「{item.Label}」{result.Message}");
     }
 
+    /// <summary>
+    /// 队列跑完的汇总提示。
+    ///
+    /// 逐项不弹气球（见 <see cref="ActionExecutor.ExecuteSync"/>），所有信息压在这一条里：
+    /// 一次启动十个程序，用户只想知道「全起来了没有、哪几个没起来」。
+    /// 失败时只点出第一条 —— 气球正文显示不了几行，列全了反而谁也看不清。
+    /// </summary>
+    private void OnQueueFinished(
+        LaunchQueueSpec queue, int ok, IReadOnlyList<(string Label, string Message)>? failures)
+    {
+        if (failures is null)
+        {
+            RunOnUi(() =>
+            {
+                if (ok == 0)
+                {
+                    _tray.ShowBalloon("启动队列", $"「{queue.Name}」是空队列，没有执行任何项");
+                }
+                else
+                {
+                    _tray.ShowBalloon("启动队列完成", $"「{queue.Name}」：{ok} 项全部启动");
+                }
+            });
+            return;
+        }
+
+        var first = failures[0];
+        RunOnUi(() => _tray.ShowBalloon("启动队列完成",
+            $"「{queue.Name}」：{ok} 成功 / {failures.Count} 跳过。第一条：{first.Label}（{first.Message}）"));
+    }
+
+    /// <summary>
+    /// 把队列事件搬到 UI 线程。队列执行器的事件在后台线程上触发，
+    /// 而托盘气泡与菜单都是 UI 对象 —— 模式照抄 <see cref="ActionExecutor.Report"/>。
+    /// </summary>
+    private static void RunOnUi(Action action)
+    {
+        var dispatcher = Application.Current?.Dispatcher;
+        if (dispatcher is null) return;
+
+        if (dispatcher.CheckAccess()) action();
+        else dispatcher.BeginInvoke(action);
+    }
+
+    /// <summary>按当前配置重建托盘的「启动队列」子菜单。点击即「启动（或停止）那一套」。</summary>
+    private void RefreshQueueMenu()
+    {
+        _tray.SetLaunchQueues(_config.Queues, queue => _queueRunner.Start(queue));
+        _queueSignature = LaunchQueuesMapper.Serialize(LaunchQueuesMapper.ToFile(_config.Queues));
+    }
+
     /// <summary>热键来自配置；配置里没写或解析失败时用默认热键。</summary>
     private HotkeySpec ResolveHotkey()
     {
@@ -512,6 +633,18 @@ public sealed class ResidentHost : IDisposable
 
             // 菜单变了，右键菜单里那串目的地也就过时了，重写一次。
             SyncShellMenu();
+        }
+
+        // 队列：同样是「内容真的变了才重建」。
+        //
+        // 热重载每次设置面板的改动都会来一遍，而无差别重建托盘菜单没有必要 ——
+        // 更要紧的是，重建会把子菜单里的 MenuItem 全部换成新实例，
+        // 若用户恰好开着托盘菜单，那一份会被换成另一批对象而变得不响应。
+        // 序列化后比较顺便也把「只是格式/顺序上的重写」这类噪音排除掉了。
+        var queueSignature = LaunchQueuesMapper.Serialize(LaunchQueuesMapper.ToFile(_config.Queues));
+        if (!string.Equals(queueSignature, _queueSignature, StringComparison.Ordinal))
+        {
+            RefreshQueueMenu();
         }
 
         // 开关或程序路径变了也要重写（后者关系到注册表里那条命令指向何处）。

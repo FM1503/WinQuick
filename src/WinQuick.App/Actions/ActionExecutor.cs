@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 using WinQuick.App.Diagnostics;
+using WinQuick.App.Interop;
 using WinQuick.Core.Config;
 
 namespace WinQuick.App.Actions;
@@ -36,28 +37,37 @@ public static class ActionExecutor
     /// </summary>
     public static void Execute(MenuItemSpec item)
     {
+        // 不阻塞：调用方（覆盖层关闭路径）必须立刻返回。
+        ThreadPool.QueueUserWorkItem(_ => Report(item, ExecuteSync(item)));
+    }
+
+    /// <summary>
+    /// 同步执行一个菜单项的动作，返回结果而**不**触发 <see cref="Completed"/>。
+    ///
+    /// 给启动队列用的：队列在后台线程上按自己的节奏逐项调用，结果由队列汇总成
+    /// 一条提示。逐项走 <see cref="Execute"/> 的话，一次启动 10 个程序就会弹 10 次
+    /// 「无法执行」气球，而用户要的信息只在汇总里（哪几项坏了、其余照常启动）。
+    /// 失败项仍然写崩溃日志：不弹气球不等于不留痕，排查时日志是唯一线索。
+    /// </summary>
+    internal static ActionResult ExecuteSync(MenuItemSpec item)
+    {
         var action = item.Action;
         if (action is null)
         {
             // 有子菜单的项被点击时不该走到这里；真走到了说明子菜单还没实现，
             // 应当明确说出来而不是静默无事发生 —— 后者会被当成程序坏了。
-            Report(item, ActionResult.Fail($"「{item.Label}」还没有配置动作"));
-            return;
+            return ActionResult.Fail($"「{item.Label}」还没有配置动作");
         }
 
-        // 不阻塞：调用方（覆盖层关闭路径）必须立刻返回。
-        ThreadPool.QueueUserWorkItem(_ =>
+        try
         {
-            try
-            {
-                Report(item, Run(action));
-            }
-            catch (Exception ex)
-            {
-                CrashLog.Write($"执行动作失败: {item.Label}", ex);
-                Report(item, ActionResult.Fail(ex.Message));
-            }
-        });
+            return Run(action);
+        }
+        catch (Exception ex)
+        {
+            CrashLog.Write($"执行动作失败: {item.Label}", ex);
+            return ActionResult.Fail(ex.Message);
+        }
     }
 
     private static ActionResult Run(MenuAction action)
@@ -113,6 +123,51 @@ public static class ActionExecutor
 
         Process.Start(info);
         return ActionResult.Ok($"已启动 {Path.GetFileName(target)}");
+    }
+
+    /// <summary>
+    /// 打开一批文件夹，尽可能放进**同一个资源管理器窗口的多个标签页**。
+    ///
+    /// 这里曾经是「把多个路径拼进一次 <c>explorer.exe</c> 调用的 Arguments」，
+    /// 但实测（Win11 26300，三次）不成立：多参数调用只打开第一个路径，其余被忽略。
+    /// 现在交给 <see cref="ExplorerTabs.OpenAll"/>，链路见那里的注释。
+    ///
+    /// 结果分两种：全部进了同一窗口的标签页，或者有一部分退化成独立窗口
+    /// （UIA 的「添加新标签页」按钮不可用时的兜底 —— 退化成多窗口而不是整体失败）。
+    /// </summary>
+    internal static ActionResult ExecuteFoldersBatch(IReadOnlyList<MenuItemSpec> folders)
+    {
+        try
+        {
+            // 目标为空或为 null 的项不该出现在批里（调用方已过滤），真漏进来了也不能当成路径去开。
+            var targets = folders
+                .Select(f => f.Action?.Target)
+                .OfType<string>()
+                .ToList();
+            // OfType 一步去掉 null 并把元素类型收窄成 string，
+            // 免得 OpenAll 的签名被可空性拖成 IReadOnlyList<string?>。
+
+            if (targets.Count == 0)
+                return ActionResult.Fail("没有可打开的文件夹");
+
+            var result = ExplorerTabs.OpenAll(targets);
+            if (!result.Ok)
+                return ActionResult.Fail(result.Error ?? "打开文件夹失败");
+
+            if (result.SeparateWindows > 0)
+            {
+                return ActionResult.Ok(
+                    $"已打开 {result.TabsOpened + result.SeparateWindows} 个文件夹：" +
+                    $"{result.TabsOpened} 个同窗标签页，{result.SeparateWindows} 个独立窗口（标签页接口不可用）");
+            }
+
+            return ActionResult.Ok($"已在同一窗口打开 {result.TabsOpened} 个文件夹");
+        }
+        catch (Exception ex)
+        {
+            CrashLog.Write($"批量打开文件夹失败：{folders.Count} 个", ex);
+            return ActionResult.Fail(ex.Message);
+        }
     }
 
     /// <summary>是不是由 shell 解析的快捷方式（这类不能用"目标自己的目录"兜底）。</summary>

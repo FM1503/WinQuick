@@ -18,6 +18,10 @@ namespace WinQuick.App.Hosting;
 ///    AUMID 与系统语言无关（`Microsoft.WindowsCalculator_8wekyb3d8bbwe!App` 在
 ///    任何语言下都一样），而显示名会变。显示名交给 shell 提供，自动本地化。
 ///    找不到就跳过该项 —— 用户没装某个商店应用时菜单不该出现死项。
+/// 3. **启动队列**只放在「开发工具」子菜单里，不占顶层：顶层 8 项的钟面结构是 CHI'93 的
+///    错误率拐点（见 <see cref="Build"/> 的注释），多塞一项就破坏「上/右上/右/…」的直觉。
+///    已经生成过 menus.json 的用户不会自动拿到这一项（菜单是写进文件的），
+///    文档里给了一段手写样例。
 /// </summary>
 public static class DefaultMenu
 {
@@ -47,6 +51,14 @@ public static class DefaultMenu
         AddUwpItem(tools, "Microsoft.WindowsTerminal_", fallbackLabel: "终端");
         AddFileItem(tools, ["regedit.exe"]);
         AddFileItem(tools, ["System32", "charmap.exe"]);
+
+        // 启动队列：Target 留空 = "第一套"。不设 IconPath，走首字占位 ——
+        // 这里没有实体文件能取图标，而给个错图标比首字更误导。
+        tools.Add(new MenuItemSpec
+        {
+            Label = "启动队列",
+            Action = new MenuAction { Type = "queue", Target = "" },
+        });
 
         if (tools.Count > 0)
         {

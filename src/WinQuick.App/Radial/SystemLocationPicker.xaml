@@ -80,10 +80,15 @@
             </Grid>
 
             <TextBlock Style="{StaticResource Hint}" Margin="0,8,0,2"
-                       Text="选一个系统位置，或浏览文件。" />
+                       Text="选一个系统位置，或浏览文件、文件夹。" />
 
-            <Button Style="{StaticResource FlatButton}" HorizontalAlignment="Left"
-                    Content="浏览文件…" Click="OnBrowseClick" />
+            <!-- 两个「浏览…」并排：系统位置列表只覆盖已知位置，任意文件夹得单独给个入口。 -->
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+                <Button Style="{StaticResource FlatButton}"
+                        Content="浏览文件…" Click="OnBrowseClick" />
+                <Button Style="{StaticResource FlatButton}" Margin="4,0,0,0"
+                        Content="浏览文件夹…" Click="OnBrowseFolderClick" />
+            </StackPanel>
 
             <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="320" Margin="0,8,0,0">
                 <StackPanel x:Name="LocationList" />

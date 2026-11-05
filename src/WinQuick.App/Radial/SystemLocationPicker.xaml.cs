@@ -223,6 +223,29 @@ public partial class SystemLocationPicker : Window
         Choose(ShellNames.Get(path), MenuAction.Launch(path));
     }
 
+    /// <summary>
+    /// 「浏览文件夹…」：任意目录（不限已知位置）。
+    ///
+    /// 为什么需要它：下面的列表只覆盖**已知位置**（回收站、下载、各驱动器…），
+    /// 而队列编辑器与菜单都可能要加一个随便哪个深层目录 —— 列表再长也覆盖不完。
+    ///
+    /// 动作照 ActionExecutor 现有语义走 <c>open</c>：它本来就是「用 shell 打开一个路径」，
+    /// 目录与文件走同一条 —— 为文件夹另立动作类型就得在 executor 里再分流一次，
+    /// 两条语义迟早会不一致。
+    /// </summary>
+    private void OnBrowseFolderClick(object sender, RoutedEventArgs e)
+    {
+        // 以选择器自身为属主：无属主的弹出框不保证压在自己上面，也认不出归属。
+        var path = FolderPicker.PickFolder((nint)new WindowInteropHelper(this).Handle);
+        if (string.IsNullOrWhiteSpace(path)) return;
+
+        // 根目录（C:\）没有"最后一段"，Path.GetFileName 会返回空串；那种情况直接用完整路径当标签。
+        var name = Path.GetFileName(path);
+        if (string.IsNullOrWhiteSpace(name)) name = path;
+
+        Choose(name, new MenuAction { Type = "open", Target = path });
+    }
+
     private void OnCancelClick(object sender, RoutedEventArgs e) => Close();
 
     internal nint HandleValue => new WindowInteropHelper(this).Handle;

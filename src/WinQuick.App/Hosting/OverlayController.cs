@@ -137,12 +137,21 @@ public sealed class OverlayController : IDisposable
             if (_zOrder.NeedsReassert()) ReassertTopmost();
         };
 
-        // 系统对话框必须在最顶层参与重申。
+        // 系统对话框与选择器必须在最顶层参与重申。
         //
         // 为什么不是"给对话框加个 topmost 就完事"：我们的 800ms 置顶重申会把
         // 自己的窗口逐个插到 topmost 层最前面，那样反而会把对话框挤到我们后面。
         // 让它成为层级栈的顶层，重申结束时它才确实在最前面。
-        _zOrder.AddLayer("系统对话框", () => FindOwnedSystemDialog() is { } dialog ? [dialog] : []);
+        //
+        // 这一层放会话期间临时置顶的**外来对话框**（文件框、消息框等）与**自家选择器**
+        // （SystemLocationPicker）。数据源是 <see cref="CollectTransientDialogs"/>：按属主链枚举。
+        //
+        // 为什么不再"从当前前台窗口猜"：前台判定要求（a）对话框真的抢到了前台，
+        // （b）它的**直接**属主是我们的窗口。从选择器里再点「浏览文件…」弹出的文件框，
+        // 直接属主是**选择器**而不是轮盘 —— 不在判定集里，于是永远进不了这一层，
+        // 每轮重申都把遮罩/轮盘插到它上面（用户看到的就是「系统对话框被遮罩盖住」）。
+        // 属主链枚举不依赖抢前台，也天然覆盖这种二级关系。
+        _zOrder.AddLayer("系统对话框与选择器", CollectTransientDialogs);
 
         // 层级从上到下声明。注意这里**必须**与视觉预期一致：
         // 设置面板盖住操作条，操作条盖住轮盘，轮盘盖住遮罩。
@@ -235,6 +244,9 @@ public sealed class OverlayController : IDisposable
     /// 同步语义，所以调用方（常驻）的流程一行不用改。**必须传 owner**：有所有者的对话框
     /// 才跟着轮盘一起处于置顶之列，而 z 序重申仍靠那对 modal 钩子把覆盖层留在"对话框期间
     /// 不失焦就关闭"的豁免状态里。
+    ///
+    /// 光有 owner 还不够：选择器是自家窗口，不是「外来对话框」，不会自动进 z 序栈的顶层，
+    /// 打开期间要把它登记到 <see cref="_activePickerDialog"/>，否则重申会把它压到遮罩下面。
     /// </summary>
     public MenuItemSpec? PickMenuItemForAdd()
     {
@@ -275,6 +287,11 @@ public sealed class OverlayController : IDisposable
             // 第一遍先给个位置（布局完成前 ActualHeight 不可靠，靠 MaxHeight 估），
             // 让窗口出现时就大致在正确的地方；建句柄是必须的 —— 没句柄时 SetWindowPos 无处可去。
             _ = new WindowInteropHelper(picker).EnsureHandle();
+
+            // 登记到 z 序栈的顶层：选择器是自家窗口，不会走「外来对话框」的识别路径，
+            // 不登记的话 ShowDialog 期间每 100ms 的重申都会把遮罩插到它上面（实测现象）。
+            _activePickerDialog = picker.HandleValue;
+
             PositionPanel(picker, picker.PlacedByUser);
 
             // 入场与第二遍摆位都排在"第一帧渲染完成"之后 ——
@@ -291,6 +308,8 @@ public sealed class OverlayController : IDisposable
         }
         finally
         {
+            // 取消、异常、正常关闭都从这里走 —— 漏一次就会让一个已销毁的句柄留在栈顶。
+            _activePickerDialog = 0;
             _modalDialogDepth--;
             SetTopmostInterval(TopmostReassertInterval);
         }
@@ -349,6 +368,17 @@ public sealed class OverlayController : IDisposable
 
     /// <summary>同时打开的系统对话框层数（正常只可能是 0 或 1）。</summary>
     private int _modalDialogDepth;
+
+    /// <summary>
+    /// 当前打开的**自家**选择器窗口（0 = 没有）。
+    ///
+    /// 为什么需要单独登记：「系统对话框」那一层只认**非自家**的前台窗口（自家窗口会被
+    /// <see cref="IsOwnWindow"/> 排除掉，因为它不能被算进那张表、否则就成自引用），
+    /// 而选择器是我们自己的 WPF 窗口，不属于任何一层 —— 于是打开期间每 100ms 的置顶重申
+    /// 会把遮罩/轮盘/操作条/面板全部插到它上面（实测：选择器被遮罩盖住，点不到）。
+    /// 它必须像外来对话框一样在层级栈的最顶层参与重申。
+    /// </summary>
+    private nint _activePickerDialog;
 
     /// <summary>遮罩不透明度的用户覆盖值（0–1）。null 表示沿用设计基线。</summary>
     public double? DimOpacityOverride { get; private set; }
@@ -906,6 +936,20 @@ public sealed class OverlayController : IDisposable
     }
 
     /// <summary>
+    /// 属主链枚举的锚点判定：自家窗口，或登记中的选择器。
+    ///
+    /// 单列一层的理由是"锚点"和"自家窗口"在别的用途里并不等价：焦点判定（<see cref="IsOwnWindow"/>）
+    /// 只认自己的窗口，而属主链要看的是"这段关系最终是否落回我们自己"—— 选择器也是我们的，
+    /// 只是它不参与焦点判定（它出现时正处在模态豁免里）。
+    /// </summary>
+    private bool IsAnchorWindow(HWND hwnd)
+    {
+        if (hwnd == default) return false;
+        if (_activePickerDialog != 0 && hwnd == (HWND)_activePickerDialog) return true;
+        return IsOwnWindow(hwnd);
+    }
+
+    /// <summary>
     /// 打开设置面板。面板与轮盘同时在场，所以拖滑块、改高亮色都能立刻在轮盘上看到效果。
     /// </summary>
     public void OpenSettings()
@@ -1026,7 +1070,32 @@ public sealed class OverlayController : IDisposable
         panel.CloseRequested += (_, _) => CloseSettings();
         panel.SkinRequested += (_, _) => OpenSkinPanel();
 
+        // 「添加…」走既有的选择界面（系统位置 + 浏览文件 + 浏览文件夹）。
+        // 队列项与菜单项同形，所以不需要第二条选择路径 —— 用户在哪见过"选程序"的界面，这里就是同一块。
+        panel.AddQueueItemRequested = () => PickMenuItemForAdd();
+
+        // 面板可能晚于绑定被创建：建出来时把已经设好的绑定立刻交过去，
+        // 否则第一次打开「启动队列」分区会是空的（要切走再切回来才有数据）。
+        if (_queueLoad is not null || _queueSave is not null)
+            panel.BindQueues(_queueLoad, _queueSave);
+
         return panel;
+    }
+
+    private Func<IReadOnlyList<LaunchQueueSpec>>? _queueLoad;
+    private Func<IReadOnlyList<LaunchQueueSpec>, bool>? _queueSave;
+
+    /// <summary>
+    /// 注入启动队列的取数/保存（由常驻装配接到 ConfigStore）。
+    /// 面板按需创建，所以绑定先存在这里，创建时再转交 —— 见 <see cref="CreateSettingsPanel"/>。
+    /// </summary>
+    public void SetQueueEditorBinding(
+        Func<IReadOnlyList<LaunchQueueSpec>>? load,
+        Func<IReadOnlyList<LaunchQueueSpec>, bool>? save)
+    {
+        _queueLoad = load;
+        _queueSave = save;
+        _settingsPanel?.BindQueues(load, save);
     }
 
     /// <summary>由常驻装配注入的热键探测（会临时释放当前热键，见 HotkeyManager.ProbeTemporarily）。</summary>
@@ -1362,44 +1431,116 @@ public sealed class OverlayController : IDisposable
     }
 
     /// <summary>
-    /// 找出当前由我们某个窗口拥有的系统对话框（文件选择、消息框等）。
+    /// 诊断用：当前识别到的第一个临时置顶窗口（0 表示没有）。
     ///
-    /// 判据用**owner 关系**而不是窗口类名：`ShowDialog(owner)` 会把 owner 设成调用方，
-    /// 而窗口类名 `#32770` 是通用对话框类，全系统都在用 —— 按类名判会误伤别人的对话框。
-    ///
-    /// 找到之后要**主动**把它置顶：走的是系统对话框自己的窗口，我们改不了它的创建参数，
-    /// 只能事后补样式。这也是为什么必须由重申逻辑兜着 —— 补一次不够，
-    /// 我们自己的窗口每次重申都可能把它挤下去。
+    /// 语义从「当前前台那个属于我们的对话框」改成了「按属主链枚举出来的第一个」——
+    /// 探针（--flash-probe）只需要一个"此刻该被关掉的对话框"，枚举结果就够。
     /// </summary>
-    /// <summary>诊断用：当前由我们某个窗口拥有的系统对话框句柄（0 表示没有）。</summary>
-    internal nint OwnedSystemDialogForProbe() => FindOwnedSystemDialog();
+    internal nint OwnedSystemDialogForProbe() => CollectTransientDialogs().FirstOrDefault();
 
     /// <summary>诊断用：某个句柄是不是我们自己的窗口。</summary>
     internal bool IsOwnWindowForProbe(nint hwnd) => IsOwnWindow((HWND)hwnd);
 
-    private nint FindOwnedSystemDialog()
+    /// <summary>属主链向上追的跳数上限（防环，也防某些壳窗口的链很长）。</summary>
+    private const int MaxOwnerChainHops = 4;
+
+    /// <summary>
+    /// 收集「此刻应当排在我们所有窗口之上的临时窗口」：外来对话框（文件框/消息框）与自家选择器。
+    ///
+    /// ## 判据：属主链命中锚点集合
+    ///
+    /// 锚点 = <see cref="IsAnchorWindow"/> 认的自家窗口 + 登记中的选择器。对每个**可见**顶层窗口，
+    /// 沿 GW_OWNER 往上走最多 <see cref="MaxOwnerChainHops"/> 跳，任一跳命中锚点就收进来；
+    /// 窗口自身是锚点的排除（锚点由它自己那一层负责，不能在这里自引用）。
+    ///
+    /// 为什么用属主链而不是「看前台窗口的直接属主」：
+    /// - 不依赖对话框抢到前台 —— 前台判定是猜的（用户切走一下就认不到，切回来之前那一层是空的）；
+    /// - 天然覆盖二级关系 —— 选择器里再弹的文件框，属主是选择器而不是轮盘，一跳不够、往上走就到锚点。
+    ///
+    /// 为什么判据不是窗口类名：`ShowDialog(owner)` 会把 owner 设成调用方，而 `#32770` 是全系统
+    /// 通用的对话框类 —— 按类名判会误伤别人的对话框。
+    ///
+    /// ## 成本
+    ///
+    /// EnumWindows 每个 tick（重申检查约 100ms 一次）跑一遍，且只在会话期间（有模态或选择器在场时
+    /// 真正需要），系统顶层窗口量级是几十个 —— 与重申本身的 SetWindowPos 相比可忽略。
+    ///
+    /// ## 为什么不在收集时就把它提到最前
+    ///
+    /// 这个函数是 z 序层的**数据源**，会被 <see cref="ZOrderManager.NeedsReassert"/> 当纯查询调用
+    /// （每个重申 tick 一次，模态期间约 100ms）。在查询里发 SetWindowPos 意味着：哪怕本次判定是
+    /// 「不需要重申」，也会对每个临时窗口无条件重排一次 —— 层内窗口一多就是每 tick 一串窗口级
+    /// 操作，而「频繁单窗重排 → 分层窗口持续重新合成」正是本项目治理过的闪烁来源
+    /// （见 ZOrderManager.Reassert 里「不能逐个 SetWindowPos」的注释与 --flash-probe 实测）。
+    ///
+    /// 正确机制已经存在，无需在这里额外补刀：临时窗口成为层成员后，
+    /// <see cref="ZOrderManager.NeedsReassert"/> 的第①条检查（层成员的 WS_EX_TOPMOST 还在吗）
+    /// 自然发现它不是 topmost → 判定需要重申 → Reassert 把全部层成员**整组按序**插成 topmost
+    /// （含该对话框）。成员资格驱动检查与修复，这才是唯一动手的地方。
+    ///
+    /// 注意 Reassert 内部单目标时本来就走 BringToTopmostFront，多目标走 BeginDeferWindowPos
+    /// 整组提交 —— 顺序与防闪烁的保证都在那里，收集函数只负责回答「谁在这一层」。
+    /// </summary>
+    private List<nint> CollectTransientDialogs()
     {
-        var foreground = PInvoke.GetForegroundWindow();
-        if (foreground == default) return 0;
-        if (IsOwnWindow(foreground)) return 0;
-        if (!PInvoke.IsWindowVisible(foreground)) return 0;
+        // 锚点集合就是「自家窗口」那几张表；用 IsAnchorWindow 逐个问，判定与 IsOwnWindow
+        // 同源 —— 两处各写一份名单迟早漂移，这里只是把"哪些句柄算锚点"摊开成可枚举的。
+        var anchors = new HashSet<nint>(6);
+        foreach (var h in new nint[]
+        {
+            _radial.HandleValue,
+            _actionBar.HandleValue,
+            _settingsPanel?.HandleValue ?? 0,
+            _skinPanel?.HandleValue ?? 0,
+        })
+        {
+            if (IsAnchorWindow((HWND)h)) anchors.Add(h);
+        }
+        foreach (var dim in _dims)
+        {
+            if (IsAnchorWindow((HWND)dim.HandleValue)) anchors.Add(dim.HandleValue);
+        }
 
-        if (!IsOwnedByUs(foreground)) return 0;
+        var result = new List<nint>(2);
 
-        // 补上 topmost：对话框创建时并不知道我们的窗口是置顶的，
-        // 而官方语义是「一个窗口**变成** topmost 时其被拥有窗口才连带变 topmost」——
-        // 我们的面板早就是 topmost 了，这个转变从未发生，所以对话框一直是非置顶的。
-        ZOrderManager.BringToTopmostFront(foreground);
-        return (IntPtr)foreground;
-    }
+        // 显式追加选择器：它也是锚点，但枚举只收"锚点之外、属主链命中锚点"的窗口，
+        // 单靠自己不会被收进来；另外选择器刚建句柄、子窗口尚未附着时，
+        // 枚举可能还看不到它（或它此时无可枚举的属主关系），显式追加兜住这一小段。
+        var picker = _activePickerDialog;
+        if (picker != 0 && PInvoke.IsWindow((HWND)picker))
+        {
+            anchors.Add(picker);
+            result.Add(picker);
+        }
 
-    /// <summary>这个窗口是不是由我们的某个窗口拥有的。</summary>
-    private bool IsOwnedByUs(HWND hwnd)
-    {
-        var owner = PInvoke.GetWindow(hwnd, GET_WINDOW_CMD.GW_OWNER);
-        if (owner == default) return false;
+        if (anchors.Count == 0) return result;
 
-        return IsOwnWindow(owner);
+        // 委托变量保活：EnumWindows 同步回调，但把它直接内联传参会悬在 P/Invoke 边界上。
+        var callback = new WNDENUMPROC((hwnd, _) =>
+        {
+            var h = (nint)hwnd;
+            if (!PInvoke.IsWindowVisible(hwnd)) return true;
+            if (anchors.Contains(h)) return true;
+
+            var current = hwnd;
+            for (var hop = 0; hop < MaxOwnerChainHops; hop++)
+            {
+                current = PInvoke.GetWindow(current, GET_WINDOW_CMD.GW_OWNER);
+                if (current == default) break;
+                if (anchors.Contains((nint)current))
+                {
+                    result.Add(h);
+                    break;
+                }
+            }
+
+            return true;
+        });
+
+        PInvoke.EnumWindows(callback, default);
+        GC.KeepAlive(callback);
+
+        return result;
     }
 
     private IntPtr OnRadialMessage(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)

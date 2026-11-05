@@ -6,6 +6,8 @@ using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Interop;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Media.Animation;
 using WinQuick.App.Config;
 using WinQuick.App.Design;
@@ -97,12 +99,17 @@ public partial class SettingsPanel : Window
     {
         if (PageHeader is null) return;   // InitializeComponent 期间也会触发一次
 
-        var pages = new UIElement[] { PageHotkey, PageLook, PageBehavior, PageMenu, PageStartup };
+        var pages = new UIElement[] { PageHotkey, PageLook, PageBehavior, PageMenu, PageQueues, PageStartup };
         var index = NavList.SelectedIndex;
         for (var i = 0; i < pages.Length; i++)
             pages[i].Visibility = i == index ? Visibility.Visible : Visibility.Collapsed;
 
         PageHeader.Text = NavList.SelectedItem is ListBoxItem item ? item.Content.ToString() ?? "" : "";
+
+        // 启动队列分区**每次变为可见时**重新取数：队列文件也可能被别人改
+        // （手改 launch-queues.json、另一个进程写），一直挂着一份旧工作副本
+        // 会让下一次"改一下存一次"把别人刚写的内容覆盖掉。
+        if (pages[index] == PageQueues) LoadQueuesFromSource();
     }
 
     /// <summary>热键预设：选中即填入并立即探测注册（成了就应用）；「自定义…」转去录制框。</summary>
@@ -733,6 +740,573 @@ public partial class SettingsPanel : Window
         catch (Exception ex)
         {
             SetFooter("无法打开 menus.json：" + ex.Message, isError: true);
+        }
+    }
+
+    // ---------------------------------------------------------------- 启动队列
+    //
+    // 数据流（为什么是"每次改动立即整表保存"）：
+    // · 队列编辑是低频操作（加一项、挪一下），攒着不存再点"确定"只会多出一个
+    //   "有未保存改动"的状态要维护；即时落盘 + 400ms 热重载把状态数压到最少。
+    // · 每次保存成功后**重新从取数回调拉一遍**，而不是继续用手里那份工作副本 ——
+    //   只有经过文件往返（并被 Mapper 归一：钳间隔、丢坏项）的数据才算数，
+    //   否则 UI 显示的顺序/间隔可能与实际会被执行的不是一回事。
+
+    private Func<IReadOnlyList<LaunchQueueSpec>>? _queueLoad;
+    private Func<IReadOnlyList<LaunchQueueSpec>, bool>? _queueSave;
+
+    /// <summary>工作副本（深拷贝：改本地列表时不能碰 ConfigStore.Queues 里那份）。</summary>
+    private List<LaunchQueueSpec> _queues = [];
+
+    /// <summary>正在重建队列界面。期间控件产生的事件（ComboBox 选择变化、文本框赋值）都不算用户操作。</summary>
+    private bool _queueSyncing;
+
+    /// <summary>改名框是否处于打开态。失焦提交时据此判断"这一下是不是该提交"。</summary>
+    private bool _queueRenameOpen;
+
+    /// <summary>
+    /// 注入队列的取数/保存回调（由 OverlayController 转发，实际落到 ConfigStore）。
+    /// 传 null 表示"队列编辑不可用"（探针或未装配的宿主）：分区显示空状态文案，
+    /// 而不是在点按钮时才空引用崩掉。
+    /// </summary>
+    internal void BindQueues(
+        Func<IReadOnlyList<LaunchQueueSpec>>? load,
+        Func<IReadOnlyList<LaunchQueueSpec>, bool>? save)
+    {
+        _queueLoad = load;
+        _queueSave = save;
+
+        // 面板早于绑定被创建时，绑定到来的这一刻就补一次 —— 否则用户要先切走再切回来才看得到数据。
+        if (PageQueues is { IsVisible: true }) LoadQueuesFromSource();
+    }
+
+    /// <summary>从取数回调拉最新列表，替换工作副本后整页重绘。</summary>
+    private void LoadQueuesFromSource()
+    {
+        if (QueueItemsPanel is null) return;
+
+        IReadOnlyList<LaunchQueueSpec> source = [];
+        if (_queueLoad is not null)
+        {
+            try
+            {
+                source = _queueLoad();
+            }
+            catch (Exception ex)
+            {
+                CrashLog.Write("读取启动队列失败", ex);
+                SetFooter("读取启动队列失败：" + ex.Message, isError: true);
+            }
+        }
+
+        _queues = source.Select(CloneQueue).ToList();
+        RenderQueuePage();
+    }
+
+    /// <summary>
+    /// 深拷贝一套队列。record 的 with 只换引用，Items 仍是同一个列表 ——
+    /// 工作的这几项（移动、移除、追加）只要有一处忘了"先复制"，就会改到 ConfigStore 手里的
+    /// 运行期队列，表现是"还没保存，托盘菜单里的名字已经变了"。
+    /// </summary>
+    private static LaunchQueueSpec CloneQueue(LaunchQueueSpec queue) => queue with { Items = queue.Items.ToList() };
+
+    /// <summary>改其中一处留下的同一个"先复制"讲究：name/interval/items 任给其一，其余原样带过去。</summary>
+    private static LaunchQueueSpec CloneQueue(
+        LaunchQueueSpec queue, string? name = null, int? intervalMs = null, List<MenuItemSpec>? items = null) => new(
+        queue.Id,
+        name ?? queue.Name,
+        intervalMs ?? queue.IntervalMs,
+        items ?? queue.Items.ToList());
+
+    /// <summary>当前选中的那一套；没有任何队列时为 null。</summary>
+    private LaunchQueueSpec? CurrentQueue(int index) =>
+        index >= 0 && index < _queues.Count ? _queues[index] : null;
+
+    private int SelectedQueueIndex => Math.Clamp(QueueSelect.SelectedIndex, 0, Math.Max(0, _queues.Count - 1));
+
+    private void RenderQueuePage()
+    {
+        _queueSyncing = true;
+        try
+        {
+            var usable = _queueLoad is not null && _queueSave is not null;
+            var hasQueues = usable && _queues.Count > 0;
+
+            // 头部下拉：按位置填（选中位置在这里保住；重建过程中 SelectionChanged 被 _queueSyncing 挡住）。
+            var previous = QueueSelect.SelectedIndex;
+            QueueSelect.Items.Clear();
+            foreach (var queue in _queues) QueueSelect.Items.Add(queue.Name);
+            if (hasQueues) QueueSelect.SelectedIndex = Math.Clamp(previous, 0, _queues.Count - 1);
+
+            QueueSelect.Visibility = hasQueues && !_queueRenameOpen ? Visibility.Visible : Visibility.Collapsed;
+            QueueNameBox.Visibility = hasQueues && _queueRenameOpen ? Visibility.Visible : Visibility.Collapsed;
+
+            QueueSelect.IsEnabled = usable;
+            QueueRenameButton.IsEnabled = hasQueues;
+            QueueDeleteButton.IsEnabled = hasQueues;
+
+            var current = hasQueues ? CurrentQueue(SelectedQueueIndex) : null;
+
+            // 空状态其实是三档：没有任何队列 / 当前队列没有条目 / 队列编辑根本不可用。
+            // 前两档用户能自己解决，第三档只有一个"为什么点不动"的说明 —— 所以分开成两个文案位。
+            QueueNoQueues.Visibility = !usable ? Visibility.Visible : Visibility.Collapsed;
+            QueueNoQueuesLabel.Text = "队列编辑不可用";
+
+            QueueNoItems.Visibility = usable && !hasQueues ? Visibility.Visible : Visibility.Collapsed;
+            QueueNoQueuesButton.Visibility = usable && !hasQueues ? Visibility.Visible : Visibility.Collapsed;
+            QueueEmptyItems.Visibility = hasQueues && current is { Items.Count: 0 }
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+
+            QueueListBorder.Visibility = current is not null ? Visibility.Visible : Visibility.Collapsed;
+            QueueAddRow.Visibility = current is not null ? Visibility.Visible : Visibility.Collapsed;
+
+            QueueItemsPanel.Children.Clear();
+            if (current is not null)
+            {
+                for (var i = 0; i < current.Items.Count; i++)
+                    QueueItemsPanel.Children.Add(BuildQueueRow(current.Items[i], i, current.Items.Count));
+            }
+
+            QueueAddButton.IsEnabled = current is not null && current.Items.Count < LaunchQueuesMapper.MaxItems;
+            QueueAddButton.ToolTip = current is not null && current.Items.Count >= LaunchQueuesMapper.MaxItems
+                ? $"单套队列最多 {LaunchQueuesMapper.MaxItems} 项"
+                : "选一个系统位置、文件或文件夹加进队列末尾";
+
+            if (current is not null) QueueIntervalBox.Text = current.IntervalMs.ToString(CultureInfo.InvariantCulture);
+            UpdateIntervalNote(current);
+
+            StartQueueNameEditIfPending(current);
+        }
+        finally
+        {
+            _queueSyncing = false;
+        }
+    }
+
+    /// <summary>间隔旁的小字：把"N 项跑完大约多久"直接算出来，省得用户自己乘。</summary>
+    private void UpdateIntervalNote(LaunchQueueSpec? queue)
+    {
+        if (queue is null || queue.Items.Count == 0)
+        {
+            QueueIntervalNote.Text = "相邻两项的等待毫秒；0 = 同时交给系统，由执行器限速";
+            return;
+        }
+
+        var total = (queue.Items.Count - 1) * (long)queue.IntervalMs;
+        QueueIntervalNote.Text = total >= 1000
+            ? $"毫秒 · 相邻两项的等待；{queue.Items.Count} 项跑完约 {total / 1000.0:0.#} 秒"
+            : $"毫秒 · 相邻两项的等待；{queue.Items.Count} 项跑完约 {(total == 0 ? "同时" : total + " 毫秒")}";
+    }
+
+    /// <summary>
+    /// 一行：图标（取不到画首字圆占位，与轮盘同规则）｜名称｜目标灰字｜行尾 ↑ ↓ ✕。
+    /// </summary>
+    private FrameworkElement BuildQueueRow(MenuItemSpec item, int index, int count)
+    {
+        var row = new Grid { Height = 30, Background = System.Windows.Media.Brushes.Transparent };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        // 悬停底色靠一个铺满的 Border（Grid 本身没有背景可言，设了也拿不到鼠标事件的视觉反馈）。
+        row.Children.Add(new Border
+        {
+            Background = TokenBrushes.Brush("#FFFFFF", 0.045),
+            CornerRadius = new CornerRadius(3),
+            Visibility = Visibility.Collapsed,
+            IsHitTestVisible = false,
+            Tag = "hover",
+        });
+        row.MouseEnter += (_, _) => ((Border)row.Children[0]).Visibility = Visibility.Visible;
+        row.MouseLeave += (_, _) => ((Border)row.Children[0]).Visibility = Visibility.Collapsed;
+
+        // ---- 图标 ----
+        var iconHost = new Grid
+        {
+            Width = 16,
+            Height = 16,
+            Margin = new Thickness(10, 0, 8, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        var bitmap = ShellIcons.GetScaled(item.IconPath, 16);
+        if (bitmap is not null)
+        {
+            var image = new Image { Source = bitmap, Width = 16, Height = 16 };
+            // 取的是按目标尺寸预缩好的位图，显示尺寸 1:1 —— 用廉价的 Linear 即可（同轮盘的取舍）。
+            RenderOptions.SetBitmapScalingMode(image, BitmapScalingMode.Linear);
+            iconHost.Children.Add(image);
+        }
+        else
+        {
+            // 占位圆与轮盘同规则：徽标底色 + 淡描边 + 名称首字。
+            iconHost.Children.Add(new System.Windows.Shapes.Ellipse
+            {
+                Fill = TokenResources.Brush("Color.BadgeFill"),
+                Stroke = TokenResources.Brush("Color.Stroke"),
+                StrokeThickness = 1,
+            });
+            iconHost.Children.Add(new TextBlock
+            {
+                Text = string.IsNullOrEmpty(item.Label) ? "?" : item.Label[..1],
+                Foreground = TokenResources.Brush("Color.Text"),
+                FontFamily = (System.Windows.Media.FontFamily)FindResource("Wq.Font.Family"),
+                FontSize = 9,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+            });
+        }
+        Grid.SetColumn(iconHost, 0);
+        row.Children.Add(iconHost);
+
+        // ---- 名称 + 目标（目标超长省略，全文在 ToolTip） ----
+        var texts = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 8, 0) };
+        texts.Children.Add(new TextBlock
+        {
+            Text = item.Label,
+            Foreground = TokenResources.Brush("Color.Text"),
+            FontFamily = (System.Windows.Media.FontFamily)FindResource("Wq.Font.Family"),
+            FontSize = TokenResources.Get<double>("Font.BodySize"),
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            ToolTip = item.Label,
+        });
+
+        var target = item.Action?.Target ?? "";
+        var targetRow = new Grid
+        {
+            // 小号灰字：与行内其余文字同列宽，过长的路径要从中间截，不能把行撑宽。
+            ClipToBounds = true,
+        };
+        var targetText = new TextBlock
+        {
+            Text = target,
+            Foreground = TokenResources.Brush("Color.TextMuted"),
+            FontFamily = (System.Windows.Media.FontFamily)FindResource("Wq.Font.Family"),
+            FontSize = TokenResources.Get<double>("Font.SmallSize"),
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        };
+        if (target.Length > 0) targetText.ToolTip = target;
+        targetRow.Children.Add(targetText);
+        texts.Children.Add(targetRow);
+        Grid.SetColumn(texts, 1);
+        row.Children.Add(texts);
+
+        // ---- 行尾操作 ----
+        var ops = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 6, 0),
+        };
+        var up = MakeRowOp("↑", "上移", index > 0, () => MoveQueueItem(index - 1));
+        up.Margin = new Thickness(0, 0, 2, 0);
+        ops.Children.Add(up);
+
+        var down = MakeRowOp("↓", "下移", index < count - 1, () => MoveQueueItem(index + 1));
+        down.Margin = new Thickness(0, 0, 2, 0);
+        ops.Children.Add(down);
+
+        ops.Children.Add(MakeRowOp("✕", "移出队列", true, () => RemoveQueueItem(index)));
+        Grid.SetColumn(ops, 2);
+        row.Children.Add(ops);
+
+        // 除最后一行外的分隔线：用一个薄的 Border 贴在行底（放进 Grid 不占列宽以外的空间）。
+        if (index < count - 1)
+        {
+            var separator = new Border
+            {
+                Height = 1,
+                VerticalAlignment = VerticalAlignment.Bottom,
+                Background = TokenBrushes.Brush("#FFFFFF", 0.05),
+                IsHitTestVisible = false,
+            };
+            Grid.SetColumnSpan(separator, 3);
+            row.Children.Add(separator);
+        }
+
+        return row;
+    }
+
+    private Button MakeRowOp(string glyph, string tip, bool enabled, Action onClick)
+    {
+        var button = new Button
+        {
+            Style = (Style)FindResource("FlatButton"),
+            Content = glyph,
+            Padding = new Thickness(5, 0, 5, 0),
+            MinWidth = 22,
+            FontSize = TokenResources.Get<double>("Font.SmallSize"),
+            VerticalAlignment = VerticalAlignment.Center,
+            IsEnabled = enabled,
+            ToolTip = tip,
+        };
+        button.Click += (_, _) =>
+        {
+            // 分区坏了不能带崩整个设置面板（同 PickMenuItemForAdd 的兜底）：这一次"什么都没发生"并留日志。
+            try { onClick(); }
+            catch (Exception ex)
+            {
+                CrashLog.Write("启动队列行操作失败", ex);
+                SetFooter("操作失败：" + ex.Message, isError: true);
+            }
+        };
+        return button;
+    }
+
+    private void MoveQueueItem(int toIndex)
+    {
+        var from = SelectedQueueIndex;
+        var queue = CurrentQueue(from);
+        if (queue is null || toIndex < 0 || toIndex >= queue.Items.Count || toIndex == from) return;
+
+        var items = queue.Items.ToList();
+        (items[from], items[toIndex]) = (items[toIndex], items[from]);
+        _queues[from] = CloneQueue(queue, items: items);
+        CommitQueues();
+    }
+
+    private void RemoveQueueItem(int index)
+    {
+        var q = SelectedQueueIndex;
+        var queue = CurrentQueue(q);
+        if (queue is null || index < 0 || index >= queue.Items.Count) return;
+
+        // 移除不做二次确认：误删的代价只是重新加一项，而每删一次都弹框会把"整理列表"变得很烦。
+        var items = queue.Items.ToList();
+        items.RemoveAt(index);
+        _queues[q] = CloneQueue(queue, items: items);
+        CommitQueues();
+    }
+
+    /// <summary>整表保存，成功后按文件里的结果重绘（见本节开头的"数据流"）。</summary>
+    private void CommitQueues()
+    {
+        if (_queueSave is null) return;
+        if (!_queueSave(_queues)) return;   // 失败提示由保存回调那一层（托盘气泡）负责
+
+        LoadQueuesFromSource();
+    }
+
+    // ---- 头部操作 ----
+
+    private void OnQueueSelected(object sender, SelectionChangedEventArgs e)
+    {
+        if (_queueSyncing) return;
+        RenderQueuePage();
+    }
+
+    private void OnQueueNewClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            if (_queueSave is null) return;
+
+            // id 只是一个键：用时间戳保证不撞（同一毫秒连点两次的概率可以忽略，且 QueueSelect 会挡住）。
+            var id = "q" + DateTime.Now.ToString("yyMMddHHmmss", CultureInfo.InvariantCulture);
+            var number = 0;
+            var name = "新队列";
+            while (_queues.Any(q => q.Name == name)) name = "新队列 " + ++number;
+
+            _queues.Add(new LaunchQueueSpec(id, name, LaunchQueuesMapper.DefaultIntervalMs, []));
+            if (!_queueSave(_queues)) return;
+
+            LoadQueuesFromSource();
+
+            // 新建之后直接进入改名：名字几乎总要改，先填好省一次点击。
+            // 不直接调 BeginQueueRename —— 那时界面还在 _queueSyncing 里，交给重建末尾的挂起标记。
+            QueueSelect.SelectedIndex = _queues.FindIndex(q => q.Id == id);
+            _queueRenamePending = true;
+            RenderQueuePage();
+        }
+        catch (Exception ex)
+        {
+            CrashLog.Write("新建启动队列失败", ex);
+            SetFooter("新建队列失败：" + ex.Message, isError: true);
+        }
+    }
+
+    private void OnQueueRenameClick(object sender, RoutedEventArgs e)
+    {
+        try { BeginQueueRename(); }
+        catch (Exception ex)
+        {
+            CrashLog.Write("启动队列改名失败", ex);
+            SetFooter("改名失败：" + ex.Message, isError: true);
+        }
+    }
+
+    private void BeginQueueRename()
+    {
+        var queue = CurrentQueue(SelectedQueueIndex);
+        if (queue is null) return;
+
+        _queueRenameOpen = true;
+        QueueNameBox.Text = queue.Name;
+        QueueSelect.Visibility = Visibility.Collapsed;
+        QueueNameBox.Visibility = Visibility.Visible;
+        QueueNameBox.Focus();
+        QueueNameBox.SelectAll();
+    }
+
+    /// <summary>提交改名。空白名不提交（名称是唯一让人认出"是哪一套"的东西，空名等于一列无名行）。</summary>
+    private void CommitQueueRename()
+    {
+        if (!_queueRenameOpen) return;
+
+        var index = SelectedQueueIndex;
+        var queue = CurrentQueue(index);
+        var name = QueueNameBox.Text.Trim();
+        var unchanged = queue is null || name.Length == 0 || name == queue.Name;
+
+        EndQueueRename();
+
+        if (unchanged) return;
+
+        _queues[index] = CloneQueue(queue!, name: name);
+        CommitQueues();
+    }
+
+    private void CancelQueueRename() => EndQueueRename();
+
+    private void EndQueueRename()
+    {
+        _queueRenameOpen = false;
+        QueueNameBox.Visibility = Visibility.Collapsed;
+        QueueSelect.Visibility = _queues.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>新建后要立刻进改名态，但那一轮重建里 _queueSyncing 还没放开。挂一个"待改名"标记。</summary>
+    private bool _queueRenamePending;
+
+    private void StartQueueNameEditIfPending(LaunchQueueSpec? current)
+    {
+        if (!_queueRenamePending) return;
+        _queueRenamePending = false;
+        if (current is not null) BeginQueueRename();
+    }
+
+    private void OnQueueNameKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter)
+        {
+            e.Handled = true;
+            CommitQueueRename();
+            // Enter 后把焦点交还面板：不然焦点还在隐藏的框里，下一次按键会被吞。
+            QueueSelect.Focus();
+        }
+        else if (e.Key == Key.Escape)
+        {
+            // **必须吃掉 Esc**：面板的 PreviewKeyDown 会把 Esc 当成"关闭面板"。
+            e.Handled = true;
+            CancelQueueRename();
+            QueueSelect.Focus();
+        }
+    }
+
+    private void OnQueueNameLostFocus(object sender, RoutedEventArgs e)
+    {
+        // 提交前先看焦点去哪：如果失焦是因为按了 Esc（CancelQueueRename 已经关掉编辑态），这里就是空的。
+        if (_queueRenameOpen) CommitQueueRename();
+    }
+
+    private void OnQueueDeleteClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var index = SelectedQueueIndex;
+            var queue = CurrentQueue(index);
+            if (queue is null || _queueSave is null) return;
+
+            var answer = MessageBox.Show(
+                this,
+                $"删除队列「{queue.Name}」？这一操作会立即写盘。",
+                "WinQuick 启动队列",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question,
+                MessageBoxResult.No);
+
+            if (answer != MessageBoxResult.Yes) return;
+
+            _queues.RemoveAt(index);
+            if (!_queueSave(_queues)) return;
+
+            LoadQueuesFromSource();
+        }
+        catch (Exception ex)
+        {
+            CrashLog.Write("删除启动队列失败", ex);
+            SetFooter("删除队列失败：" + ex.Message, isError: true);
+        }
+    }
+
+    // ---- 条目 / 间隔 ----
+
+    /// <summary>「添加…」：走既有的选择位置流程（系统位置 + 浏览文件 + 浏览文件夹都在里面）。</summary>
+    private void OnQueueAddClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var index = SelectedQueueIndex;
+            var queue = CurrentQueue(index);
+            if (queue is null || queue.Items.Count >= LaunchQueuesMapper.MaxItems) return;
+            if (AddQueueItemRequested is null) return;
+
+            var item = AddQueueItemRequested();
+            if (item is null) return;   // 用户取消
+
+            // 追加到末尾：队列的语义就是"按顺序"，新加的自然是最后跑的那一个。
+            var items = queue.Items.ToList();
+            items.Add(item);
+            _queues[index] = CloneQueue(queue, items: items);
+            CommitQueues();
+        }
+        catch (Exception ex)
+        {
+            CrashLog.Write("向启动队列添加条目失败", ex);
+            SetFooter("添加失败：" + ex.Message, isError: true);
+        }
+    }
+
+    /// <summary>打开「添加」选择界面（由 OverlayController 提供），返回用户选中的项；取消返回 null。</summary>
+    internal Func<MenuItemSpec?>? AddQueueItemRequested { get; set; }
+
+    private void OnQueueIntervalKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter)
+        {
+            e.Handled = true;
+            CommitQueueInterval();
+        }
+    }
+
+    private void OnQueueIntervalLostFocus(object sender, RoutedEventArgs e) => CommitQueueInterval();
+
+    private void CommitQueueInterval()
+    {
+        try
+        {
+            var index = SelectedQueueIndex;
+            var queue = CurrentQueue(index);
+            if (queue is null || _queueSyncing) return;
+
+            if (!int.TryParse(QueueIntervalBox.Text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var raw))
+            {
+                // 非数字/空：不提交，把框里的值退回当前值（否则框里会一直留着一串无效字符）。
+                QueueIntervalBox.Text = queue.IntervalMs.ToString(CultureInfo.InvariantCulture);
+                return;
+            }
+
+            var clamped = Math.Clamp(raw, LaunchQueuesMapper.MinIntervalMs, LaunchQueuesMapper.MaxIntervalMs);
+            if (clamped != raw) QueueIntervalBox.Text = clamped.ToString(CultureInfo.InvariantCulture);
+
+            if (clamped == queue.IntervalMs) return;
+
+            _queues[index] = CloneQueue(queue, intervalMs: clamped);
+            CommitQueues();
+        }
+        catch (Exception ex)
+        {
+            CrashLog.Write("设置启动队列间隔失败", ex);
+            SetFooter("设置间隔失败：" + ex.Message, isError: true);
         }
     }
 

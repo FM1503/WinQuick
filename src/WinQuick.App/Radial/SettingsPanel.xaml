@@ -170,6 +170,7 @@
                     <ListBoxItem>外观</ListBoxItem>
                     <ListBoxItem>行为</ListBoxItem>
                     <ListBoxItem>菜单</ListBoxItem>
+                    <ListBoxItem>启动队列</ListBoxItem>
                     <ListBoxItem>启动</ListBoxItem>
                 </ListBox>
             </Border>
@@ -519,6 +520,94 @@
                                         <CheckBox x:Name="ShellMenuBox" Grid.Column="1"
                                                   Click="OnShellMenuChanged" />
                                     </Grid>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+
+                        <!-- ============ 启动队列 ============
+                             版式是用户从 preview/queuepanel-preview.html 挑的 ① 档：行内操作列表。
+                             条目列表由代码建行（每行带闭包要吃当前下标，纯 XAML 的 ItemsControl
+                             光靠模板表达不了"上移/下移/移除"，见 RenderQueuePage）。 -->
+                        <StackPanel x:Name="PageQueues" Visibility="Collapsed">
+                            <TextBlock Style="{StaticResource PageDesc}"
+                                       Text="一组按间隔依次打开的程序与文件夹。同一时间只跑一套；某一项目标不存在只会跳过该项。改动即时保存。" />
+                            <Border Style="{StaticResource GroupCard}" Margin="0,10,0,0">
+                                <StackPanel Margin="14,10,14,12">
+
+                                    <!-- 头部：队列选择（与改名框叠在同一格里，二选一显示） -->
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <Grid Grid.Column="0">
+                                            <ComboBox x:Name="QueueSelect" MinWidth="140"
+                                                      HorizontalAlignment="Left"
+                                                      SelectionChanged="OnQueueSelected" />
+                                            <TextBox x:Name="QueueNameBox" Style="{StaticResource Field}"
+                                                     HorizontalAlignment="Left" MinWidth="140" MaxWidth="320"
+                                                     Visibility="Collapsed"
+                                                     KeyDown="OnQueueNameKeyDown"
+                                                     LostFocus="OnQueueNameLostFocus" />
+                                        </Grid>
+                                        <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                            <Button Style="{StaticResource FlatButton}" Padding="9,4"
+                                                    Margin="8,0,0,0" Content="新建"
+                                                    Click="OnQueueNewClick" ToolTip="新建一套空队列" />
+                                            <Button x:Name="QueueRenameButton" Style="{StaticResource FlatButton}"
+                                                    Padding="9,4" Margin="6,0,0,0" Content="改名"
+                                                    Click="OnQueueRenameClick" ToolTip="给当前队列改名" />
+                                            <Button x:Name="QueueDeleteButton" Style="{StaticResource FlatButton}"
+                                                    Padding="9,4" Margin="6,0,0,0" Content="删除"
+                                                    Click="OnQueueDeleteClick" ToolTip="删除当前队列" />
+                                        </StackPanel>
+                                    </Grid>
+
+                                    <!-- 空状态两档（第三档"不可用"复用 QueueNoQueues 的文案位，由代码改字）：
+                                         没有任何队列 / 当前队列没有条目 -->
+                                    <StackPanel x:Name="QueueNoQueues" Margin="0,16,0,10" Visibility="Collapsed">
+                                        <TextBlock x:Name="QueueNoQueuesLabel" Style="{StaticResource CardDesc}"
+                                                   HorizontalAlignment="Center" Text="还没有队列" />
+                                        <Button x:Name="QueueNoQueuesButton" Style="{StaticResource FlatButton}"
+                                                Margin="0,10,0,0" Padding="20,8" FontSize="15"
+                                                HorizontalAlignment="Center" Content="新建"
+                                                Click="OnQueueNewClick" />
+                                    </StackPanel>
+                                    <TextBlock x:Name="QueueNoItems" Style="{StaticResource CardDesc}"
+                                               Margin="0,16,0,10" Visibility="Collapsed"
+                                               Text="还没有队列" />
+                                    <TextBlock x:Name="QueueEmptyItems" Style="{StaticResource Hint}"
+                                               Margin="0,10,0,4" Visibility="Collapsed"
+                                               Text="点「添加…」把要启动的程序与文件夹加进来" />
+
+                                    <!-- 条目列表。高度写死：SizeToContent 的面板里，列表随条目增减变高
+                                         会让窗口每次改动都重建整块分层表面（观感是每加一项闪一下），
+                                         而分层窗口改高度本来就不便宜（见 M0 的实测结论）。 -->
+                                    <Border x:Name="QueueListBorder" Margin="0,10,0,0"
+                                            Height="216"
+                                            BorderBrush="{DynamicResource Wq.Color.Stroke}"
+                                            BorderThickness="1"
+                                            CornerRadius="{DynamicResource Wq.Size.CornerRadius}">
+                                        <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                                      HorizontalScrollBarVisibility="Disabled">
+                                            <StackPanel x:Name="QueueItemsPanel" />
+                                        </ScrollViewer>
+                                    </Border>
+
+                                    <!-- 底部：添加 + 间隔 -->
+                                    <StackPanel x:Name="QueueAddRow" Orientation="Horizontal" Margin="0,10,0,0">
+                                        <Button x:Name="QueueAddButton" Style="{StaticResource FlatButton}"
+                                                Content="添加…" Click="OnQueueAddClick"
+                                                ToolTip="选一个系统位置、文件或文件夹加进队列末尾" />
+                                        <TextBlock Style="{StaticResource Caption}" Margin="14,0,6,0" Text="间隔" />
+                                        <TextBox x:Name="QueueIntervalBox" Style="{StaticResource Field}"
+                                                 Width="62" TextAlignment="Center"
+                                                 KeyDown="OnQueueIntervalKeyDown"
+                                                 LostFocus="OnQueueIntervalLostFocus"
+                                                 ToolTip="相邻两项之间等待的毫秒数，0–5000" />
+                                        <TextBlock x:Name="QueueIntervalNote" Style="{StaticResource Hint}"
+                                                   Margin="8,0,0,0" VerticalAlignment="Center" />
+                                    </StackPanel>
                                 </StackPanel>
                             </Border>
                         </StackPanel>

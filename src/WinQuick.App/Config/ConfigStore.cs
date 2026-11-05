@@ -8,12 +8,17 @@ using WinQuick.Core.Config;
 
 namespace WinQuick.App.Config;
 
+/// <param name="QueuesOk">
+/// launch-queues.json 是否读取/解析成功。给默认值是为了不破坏既有的三参构造调用 ——
+/// 那些调用点都不关心队列，把它们全部改成四参只会制造无谓的改动。
+/// </param>
 public sealed record ConfigReloadResult(
     bool ConfigOk,
     bool MenuOk,
-    IReadOnlyList<string> Problems)
+    IReadOnlyList<string> Problems,
+    bool QueuesOk = true)
 {
-    public bool AllOk => ConfigOk && MenuOk;
+    public bool AllOk => ConfigOk && MenuOk && QueuesOk;
 
     public string Summary => Problems.Count == 0
         ? "配置已生效"
@@ -72,9 +77,13 @@ public sealed class ConfigStore : IDisposable
     public string Directory => _directory;
     public string ConfigPath => Path.Combine(_directory, "config.json");
     public string MenusPath => Path.Combine(_directory, "menus.json");
+    public string QueuesPath => Path.Combine(_directory, "launch-queues.json");
 
     public AppConfig Config { get; private set; } = new();
     public MenuSpec Menu { get; private set; } = MenuSpec.BuiltInDefault;
+
+    /// <summary>启动队列。没有这个文件时为空列表（不是错误）。</summary>
+    public IReadOnlyList<LaunchQueueSpec> Queues { get; private set; } = [];
     public IReadOnlyList<string> LastProblems { get; private set; } = [];
 
     /// <summary>配置或菜单发生变化并已生效。UI 与热键需要据此重新应用。</summary>
@@ -123,6 +132,7 @@ public sealed class ConfigStore : IDisposable
         var problems = new List<string>();
         var configOk = true;
         var menuOk = true;
+        var queuesOk = true;
 
         // ---- config.json ----
         try
@@ -185,13 +195,42 @@ public sealed class ConfigStore : IDisposable
             problems.Add($"menus.json 解析失败：{ex.Message}（保留上一份有效菜单）");
         }
 
+        // ---- launch-queues.json ----
+        //
+        // 与 menus.json 的关键差别：**文件不存在不是问题**。队列是可选功能，
+        // 大多数用户根本没有这个文件；若把它当成错误，这些人每次重载都会看到一条
+        // 「launch-queues.json 解析失败」的提示，等于给可选功能强行收税。
+        // 而映射出的 problems 只是「已保底加载但有毛病」，所以也不置 queuesOk=false ——
+        // 只有整个文件读不出来/解析不了才保留上一份。
+        try
+        {
+            if (File.Exists(QueuesPath))
+            {
+                var text = File.ReadAllText(QueuesPath);
+                var file = LaunchQueueConfigFile.Parse(text);
+                var (queues, mapProblems) = LaunchQueuesMapper.ToQueues(file);
+
+                Queues = queues;
+                problems.AddRange(mapProblems.Select(p => "launch-queues.json: " + p));
+            }
+            else
+            {
+                Queues = [];
+            }
+        }
+        catch (Exception ex)
+        {
+            queuesOk = false;
+            problems.Add($"launch-queues.json 解析失败：{ex.Message}（保留上一份有效队列）");
+        }
+
         LastProblems = problems;
 
         if (problems.Count > 0)
             CrashLog.Write("配置有问题", new InvalidOperationException(string.Join("\n", problems)));
 
         Changed?.Invoke(this, EventArgs.Empty);
-        return new ConfigReloadResult(configOk, menuOk, problems);
+        return new ConfigReloadResult(configOk, menuOk, problems, queuesOk);
     }
 
     /// <summary>开始监视两个配置文件的变化。</summary>
@@ -476,6 +515,46 @@ public sealed class ConfigStore : IDisposable
         {
             error = ex.Message;
             CrashLog.Write("保存菜单失败", ex);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 把整套启动队列写回 launch-queues.json（设置面板的「启动队列」分区调用）。
+    ///
+    /// 与 <see cref="SaveMenu"/> 的两点不同：
+    /// 1. **原子写**（先写 .tmp 再改名）。这份文件在设置面板里是「每改一下写一次」的，
+    ///    直接覆盖会让同时监听的 FileSystemWatcher 有机会读到写了一半的内容。
+    ///    临时文件后缀不是 .json，不匹配监视器的 *.json 过滤，所以不会多触发一次目录事件
+    ///    （同 <see cref="TryWriteAddRequest"/> 的理由）。
+    /// 2. **写完不在这里回读文件**，而是直接把传入的这份赋给 <see cref="Queues"/>。
+    ///    刚写下去的这份就是权威数据；回读文件只会重新引入「读与防抖重载赛跑」的问题
+    ///    （重载还没发生，读到的仍是旧列表 —— 实测表现为面板里新建的队列消失、删除的还在）。
+    ///    <see cref="Changed"/> 事件仍由 400ms 防抖热重载照常发出，托盘的「启动队列」
+    ///    子菜单在那半秒内跟上，而面板的立即回拉从此拿到的是新数据。
+    /// </summary>
+    public bool SaveQueues(IReadOnlyList<LaunchQueueSpec> queues, out string? error)
+    {
+        error = null;
+        var tempPath = QueuesPath + ".tmp";
+        try
+        {
+            System.IO.Directory.CreateDirectory(_directory);
+            File.WriteAllText(tempPath, LaunchQueuesMapper.Serialize(LaunchQueuesMapper.ToFile(queues)), Utf8NoBom);
+            File.Move(tempPath, QueuesPath, overwrite: true);
+
+            // 写成功之后立刻更新内存里的那份：调用方（设置面板）紧接着就会读 Queues，
+            // 而防抖热重载要等 400ms 才来，中间这段窗口期里它必须已经是新的。
+            Queues = queues;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            CrashLog.Write("保存启动队列失败", ex);
+
+            // 失败的 .tmp 留在目录里没有意义（它不是 .json，不会触发热重载），顺手清掉。
+            try { File.Delete(tempPath); } catch { /* 删不掉也就算了，下次写会覆盖 */ }
             return false;
         }
     }

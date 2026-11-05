@@ -68,6 +68,12 @@ internal static class ProbesHost
                 RunDetached(app, () => SettingsProbe.RunAsync(cli));
                 break;
 
+            case "--tabs-probe":
+                // 同步探针：内部 Thread.Sleep 等 explorer 落定，不需要调度器泵消息。
+                TabsProbe.Run(cli);
+                ExitSoon(app);
+                break;
+
             case "--config-probe":
                 RunDetached(app, () => ConfigProbe.RunAsync(cli));
                 break;
@@ -186,6 +192,9 @@ internal static class ProbesHost
           --apps-probe              枚举 shell:AppsFolder，核对 UWP 应用的 AUMID 与图标
           --config-probe            配置系统：默认文件创建、非法配置的容错、合法配置生效
           --action-probe            核对动作执行：Process.Start 是否成功、参数是否传对
+          --tabs-probe <目录1> <目录2> [目录3...]
+                                    多标签打开：调产品 ExplorerTabs.OpenAll，对照检查
+                                    新窗口数与标签数（会动真实资源管理器，只关本次新开的窗口）
 
         覆盖层与分层窗口
           --overlay-probe           核对覆盖层：窗口真实可见性、位置钳制、前台焦点还原、点击扇区

@@ -1,0 +1,799 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>WinQuick · 启动队列编辑器布局（原型）</title>
+<style>
+  :root { --bg:#0d1117; --fg:#e6edf6; --muted:#9aa3b2; --line:#ffffff1a;
+          --accent:#8ab4ff; --ok:#7fd18f; --warn:#e2c56a; --bad:#e08a7a;
+          --surface:#1b212e; --field:#0e1420; --stroke:#3a4356; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:13px/1.6 "Segoe UI","Microsoft YaHei",system-ui,sans-serif; }
+  header { padding:16px 20px 4px; }
+  h1 { margin:0 0 6px; font-size:17px; font-weight:600; }
+  p { margin:4px 0; }
+  .muted { color:var(--muted); }
+  .note { border-left:3px solid var(--accent); background:#8ab4ff10; padding:7px 11px;
+          margin:8px 0; border-radius:0 6px 6px 0; font-size:12.5px; }
+  button, select, input { font:inherit; }
+  button { background:#ffffff0d; color:var(--fg); border:1px solid var(--line);
+           border-radius:4px; padding:3px 9px; cursor:pointer; }
+  button:hover { background:#ffffff1a; }
+  .hint { color:#7b8496; font-size:12px; }
+
+  /* 左列候选 + 右列预览（AGENTS.md §3.5 的固定布局） */
+  #app { display:flex; gap:18px; align-items:flex-start; padding:12px 20px 26px; }
+  #list { width:352px; flex:0 0 auto; }
+  .card { display:flex; gap:9px; border:1px solid var(--line); border-radius:10px;
+          padding:8px 9px; margin-bottom:7px; background:#ffffff05; cursor:pointer;
+          transition:border-color .12s, background .12s; }
+  .card:hover { border-color:#8ab4ff66; background:#8ab4ff0d; }
+  .card.on { border-color:var(--accent); background:#8ab4ff18; }
+  .card .name { font-weight:600; font-size:13.5px; }
+  .card .line { color:var(--muted); font-size:12px; }
+  .card .src { color:#7b8496; font-size:11.5px; margin-top:2px; }
+  .cost { font-size:11.5px; }
+  .cost.low { color:var(--ok); } .cost.mid { color:var(--warn); } .cost.high { color:var(--bad); }
+
+  /* 预览舞台：640 宽设置面板（④ 侧栏），左栏 132 + 右列 508，与 settings-preview 同一套参数 */
+  #stage { flex:0 0 auto; }
+  .panel { background:var(--surface); border:1px solid var(--stroke); border-radius:8px;
+           opacity:.97; overflow:hidden; display:flex;
+           font:13px/1.5 "Segoe UI","Microsoft YaHei",system-ui,sans-serif; }
+  .panel .inner { padding:14px 18px 16px; }
+  .titlebar { display:flex; justify-content:space-between; align-items:center; margin-bottom:2px; }
+  .titlebar .t { font-size:17px; font-weight:600; }
+  .xbtn { border:none; background:transparent; padding:2px 9px; font-size:14px; }
+  .panel .side { flex:0 0 132px; border-right:1px solid var(--stroke); padding:10px 0; }
+  .panel .side .si { padding:7px 14px; color:var(--muted); font-size:13px; }
+  .panel .side .si.on { color:var(--fg); background:#ffffff10; font-weight:600;
+                        border-right:2px solid var(--accent); margin-right:-1px; }
+  .panel .main { flex:1 1 auto; min-width:0; }
+  .grp { border:1px solid var(--stroke); border-radius:8px; margin-top:12px; overflow:hidden; }
+  .grp > .gtitle { padding:8px 14px 0; color:var(--accent); font-weight:600; font-size:13px; }
+  .grp > .gdesc { padding:2px 14px 6px; color:var(--muted); font-size:11.5px; }
+  .srow { display:flex; align-items:center; gap:12px; padding:9px 14px; }
+  .srow + .srow { border-top:1px solid #ffffff0d; }
+  .srow .sl { flex:1 1 auto; min-width:0; }
+  .srow .st { font-weight:600; font-size:13px; }
+  .srow .sd { color:var(--muted); font-size:11.5px; margin-top:1px; line-height:1.5; }
+  .srow .sc { flex:0 0 auto; display:flex; align-items:center; gap:8px; }
+  .cur-field { background:var(--field); border:1px solid var(--stroke); border-radius:4px;
+               padding:2px 6px; color:var(--fg); }
+
+  /* —— 分区内共用 —— */
+  .qfield { background:var(--field); border:1px solid var(--stroke); border-radius:4px;
+            padding:3px 6px; color:var(--fg); min-width:0; }
+  .qfield:focus { outline:none; border-color:var(--accent); }
+  .qtop { display:flex; align-items:center; gap:6px; }
+  .qtop select.qfield { flex:1 1 auto; }
+  .qtop button { padding:2px 7px; }
+  .qbottom { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:8px; }
+  .qbottom .sd { color:var(--muted); font-size:11.5px; line-height:1.5; }
+  .qempty { color:var(--muted); font-size:12px; padding:12px; text-align:center; }
+  .ib { width:22px; height:22px; display:grid; place-items:center; border-radius:4px;
+        border:1px solid transparent; background:transparent; color:var(--muted);
+        font-size:12px; padding:0; line-height:1; }
+  .ib:hover { background:#ffffff14; color:var(--fg); border-color:var(--line); }
+  .ib:disabled { opacity:.28; cursor:default; background:transparent; }
+  .ib.delrow:hover { color:#e08a7a; }
+  .ico { flex:0 0 auto; width:18px; height:18px; border-radius:3px; border:1px solid #ffffff2e;
+         display:grid; place-items:center; font-size:10px; color:var(--muted); }
+  .ico.folder::after { content:""; width:9px; height:7px; border:1px solid #8ab4ff88;
+                       border-radius:1px; display:block; }
+  .ico.app::after { content:""; width:8px; height:8px; border:1px solid #7fd18f99;
+                    border-radius:50%; display:block; }
+  .miss { color:var(--bad); }
+  .miss .nm { text-decoration:line-through; text-decoration-color:#e08a7a88; }
+  .tag-miss { font-size:10.5px; color:var(--bad); border:1px solid #e08a7a66; border-radius:3px;
+              padding:0 5px; margin-left:6px; white-space:nowrap; }
+
+  /* ① 行内操作列表 */
+  .rrow { display:flex; align-items:center; gap:8px; padding:4px 8px 4px 10px; cursor:pointer; }
+  .rrow + .rrow { border-top:1px solid #ffffff0d; }
+  .rrow:hover { background:#ffffff07; }
+  .rrow.sel { background:#8ab4ff16; box-shadow:inset 2px 0 0 var(--accent); }
+  .rrow .rtxt { flex:1 1 auto; min-width:0; }
+  .rrow .nm { font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .rrow .tp { color:var(--muted); font-size:11px; overflow:hidden; text-overflow:ellipsis;
+              white-space:nowrap; }
+  .rrow .ops { flex:0 0 auto; display:flex; gap:1px; opacity:.55; }
+  .rrow:hover .ops, .rrow.sel .ops { opacity:1; }
+
+  /* ② 主从两栏 */
+  .master { display:flex; height:236px; }
+  .master .mcol { flex:0 0 150px; border-right:1px solid #ffffff14; overflow:auto; padding:4px; }
+  .master .mrow { display:flex; align-items:center; gap:6px; padding:4px 6px; border-radius:4px;
+                  cursor:pointer; font-size:12.5px; }
+  .master .mrow .nm { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis;
+                      white-space:nowrap; }
+  .master .mrow:hover { background:#ffffff0a; }
+  .master .mrow.sel { background:#8ab4ff22; color:#fff; }
+  .master .mops { display:flex; gap:0; opacity:0; }
+  .master .mrow:hover .mops, .master .mrow.sel .mops { opacity:1; }
+  .master .detail { flex:1 1 auto; min-width:0; padding:8px 12px; overflow:auto; }
+  .master .dfield { margin-bottom:8px; }
+  .master .dlab { color:var(--muted); font-size:11px; margin-bottom:2px; }
+  .master .dinput { width:100%; }
+  .master .dseg { display:flex; gap:0; }
+  .master .dseg button { border-radius:0; padding:2px 8px; font-size:12px; }
+  .master .dseg button:first-child { border-radius:4px 0 0 4px; }
+  .master .dseg button:last-child { border-radius:0 4px 4px 0; }
+  .master .dseg button.on { background:#8ab4ff33; border-color:#8ab4ff88; color:#fff; }
+
+  /* ③ 卡片摘要式 */
+  .ctools { display:flex; gap:6px; padding:6px 14px 8px; border-bottom:1px solid #ffffff0d; }
+  .ccards { display:flex; flex-direction:column; gap:6px; padding:8px; }
+  .ccard { position:relative; border:1px solid #ffffff14; border-radius:6px; padding:5px 8px;
+           cursor:pointer; background:#ffffff05; }
+  .ccard:hover { border-color:#8ab4ff66; }
+  .ccard.sel { border-color:var(--accent); background:#8ab4ff14;
+               box-shadow:inset 2px 0 0 var(--accent); }
+  .ccard .c1 { display:flex; align-items:center; gap:6px; }
+  .ccard .nm { font-size:12.5px; font-weight:600; flex:1 1 auto; min-width:0;
+               overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .ccard .tp { color:var(--muted); font-size:11px; margin-left:24px; overflow:hidden;
+               text-overflow:ellipsis; white-space:nowrap; }
+  .ccard .ops { position:absolute; right:5px; top:4px; display:none; gap:1px;
+                background:var(--surface); border-radius:4px; padding-left:4px; }
+  .ccard:hover .ops, .ccard.sel .ops { display:flex; }
+  .ccard .ops .ib { width:20px; height:20px; }
+  .badge { flex:0 0 auto; font-size:10.5px; color:var(--accent); border:1px solid #8ab4ff55;
+           border-radius:3px; padding:0 5px; }
+  .badge.open { color:#7fd18f; border-color:#7fd18f55; }
+
+  /* 添加弹层（三档共用：面内绝对定位，而不是 WPF Popup —— 面板内高度够用） */
+  .addwrap { position:relative; display:inline-block; }
+  .addpop { position:absolute; z-index:5; top:calc(100% + 4px); left:0; width:240px;
+            background:var(--surface); border:1px solid var(--stroke); border-radius:6px;
+            box-shadow:0 8px 24px #0008; padding:6px; }
+  .addpop .pt { color:var(--muted); font-size:11px; padding:2px 4px 4px; }
+  .addpop .pi { display:flex; align-items:center; gap:7px; padding:5px 6px; border-radius:4px;
+                cursor:pointer; font-size:12.5px; }
+  .addpop .pi:hover { background:#ffffff0f; }
+  .addpop .pi .sd { color:var(--muted); font-size:11px; margin-left:auto; }
+
+  #status { margin-top:10px; color:var(--accent); font-size:12.5px; min-height:20px; }
+  #status.bad { color:var(--bad); font-weight:600; }
+  #metrics { margin-top:6px; font-size:12px; color:var(--muted); }
+  #selfcheck { font-size:12.5px; margin-top:10px; }
+  #selfcheck .ok { color:var(--ok); } #selfcheck .bad { color:var(--bad); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>WinQuick · 启动队列编辑器：三档布局（原型）</h1>
+  <p class="muted">设置面板已定「④ 侧栏分区」，启动队列会是其中一个新分区。这里按<b>真实几何</b>渲染：
+     面板 <b>640</b>（侧栏 132 + 右列 508）、正文 <b>13px</b>、小字 <b>11.5px</b>、圆角 8、
+     内边距 18/14 —— 与 <code>settings-preview.html</code> ④ 档同一套参数。<b>三档全部可实操</b>：
+     点行选中、上/下移/移除真的改列表、「添加程序…/添加文件夹…」弹出选择层、间隔输入即时生效。</p>
+</header>
+
+<div style="padding:0 20px">
+  <div class="note">
+    <b>数据</b>：标签与顺序抄自 <code>%APPDATA%\WinQuick\launch-queues.json</code>（「测试队列」四条 + 「第二套」一条）；
+    按指令补成「日常开发」/「第二套」，前者的文件夹（D:\Work\WinQuick）与程序（谷歌浏览器、协议调试工具）混排，
+    并含一条<b>目标不存在</b>的失败样式。失败样式依据 <code>LaunchQueuesMapper</code> 的取舍：
+    <b>坏一项只废一项、其余照跑</b> —— 所以行上标红 + 加「目标不存在」徽标，而不是整单报错。
+    「选择程序」层里的候选其实来自右列的输入框（在那里改目标、「试选」比对存在性）。
+  </div>
+</div>
+
+<div id="app">
+  <aside id="list"></aside>
+  <div id="stage">
+    <div id="panelWrap"></div>
+    <div id="status">就绪</div>
+    <div id="metrics"></div>
+    <div id="selfcheck">自检中…</div>
+  </div>
+</div>
+
+<script>
+// ============================================================================
+// 模型：队列 = { id, name, intervalMs, items[] }；条目 = { label, type: launch|open, target }
+// type 的语义与菜单动作一致（launch = 程序，open = 文件夹）。
+// ============================================================================
+function seedQueues() {
+  return [
+    { id:"daily", name:"日常开发", intervalMs:800, items:[
+      { label:"记事本",         type:"launch", target:"C:\\Windows\\System32\\notepad.exe" },
+      { label:"谷歌浏览器",     type:"launch", target:"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" },
+      { label:"D:\\Work\\WinQuick", type:"open", target:"D:\\Work\\WinQuick" },
+      { label:"C:\\Program Files",  type:"open", target:"C:\\Program Files" },
+      { label:"协议调试工具",   type:"launch", target:"D:\\Tools\\ProtocolDebugger\\debugger.exe" },
+      { label:"坏路径（应跳过）", type:"launch", target:"D:\\不存在\\xx.exe", missing:true },
+    ]},
+    { id:"second", name:"第二套", intervalMs:500, items:[
+      { label:"记事本2", type:"launch", target:"C:\\Windows\\System32\\notepad.exe" },
+    ]},
+  ];
+}
+let queues = seedQueues();
+let curQ = 0;
+let selIdx = 0;
+let intervalNote = "";     // 间隔输入框事件后的即时说明（measure 时展示）
+
+// 「选择程序 / 选择文件夹」假面板里的候选。存在性靠 missing 标记（真实实现要查文件系统）。
+const PICKERS = {
+  program: [
+    { label:"Visual Studio Code", target:"C:\\Program Files\\Microsoft VS Code\\Code.exe" },
+    { label:"Windows Terminal",   target:"C:\\Program Files\\WindowsApps\\wt.exe" },
+    { label:"计算器",              target:"C:\\Windows\\System32\\calc.exe" },
+    { label:"已卸载的工具（演示失败）", target:"C:\\Old\\gone.exe", missing:true },
+  ],
+  folder: [
+    { label:"D:\\Work",   target:"D:\\Work" },
+    { label:"文档",        target:"C:\\Users\\22572\\Documents" },
+    { label:"不存在的盘", target:"E:\\NoSuch", missing:true },
+  ],
+};
+
+const q = () => queues[curQ];
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s).replace(/[&<>"]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]));
+const isFolder = (it) => it.type === "open";
+
+function clampSel() {
+  const n = q().items.length;
+  if (!n) selIdx = -1;
+  else selIdx = Math.max(0, Math.min(selIdx, n - 1));
+}
+
+// ---------------------------------------------------------------------------
+// 列表操作：三档共用同一份真实逻辑（上/下移、移除、添加），改的是 queues 本身
+// ---------------------------------------------------------------------------
+function moveItem(from, delta) {
+  const items = q().items;
+  const to = from + delta;
+  if (to < 0 || to >= items.length) return false;
+  [items[from], items[to]] = [items[to], items[from]];
+  selIdx = to;
+  return true;
+}
+function removeItem(i) {
+  const items = q().items;
+  if (i < 0 || i >= items.length) return false;
+  items.splice(i, 1);
+  clampSel();
+  return true;
+}
+function addItem(it) {
+  q().items.push({ ...it });
+  selIdx = q().items.length - 1;
+}
+function itemLine(it) {
+  return `${it.label} → ${isFolder(it) ? "文件夹" : "程序"}　${it.target}`;
+}
+
+// ---------------------------------------------------------------------------
+// ① 行内操作列表
+// ---------------------------------------------------------------------------
+function queueBar(compact) {
+  const list = queues.map((qq, i) =>
+    `<option value="${i}" ${i === curQ ? "selected" : ""}>${esc(qq.name)}</option>`).join("");
+  return `<div class="qtop" data-zone="queue">
+      <select class="qfield qsel">${list}</select>
+      <button class="qnew" title="新建队列">新建</button>
+      <button class="qren" title="给当前队列改名">改名</button>
+      <button class="qdel" title="删除当前队列">删除</button>
+    </div>`;
+}
+function intervalRow() {
+  return `<div class="qbottom">
+      <span>间隔</span>
+      <input class="qfield qint" style="width:62px;text-align:center" value="${q().intervalMs}" inputmode="numeric">
+      <span class="sd">毫秒 · 相邻两项之间（0 = 同时启动，由执行器限速）</span>
+    </div>`;
+}
+function addButtons(idPrefix) {
+  return `<span class="addwrap">
+      <button class="addp" id="${idPrefix}-addp">添加程序…</button>
+      <div class="addpop-host"></div>
+    </span>
+    <span class="addwrap">
+      <button class="addf" id="${idPrefix}-addf">添加文件夹…</button>
+      <div class="addpop-host"></div>
+    </span>`;
+}
+function renderInline() {
+  const items = q().items;
+  const rows = items.length ? items.map((it, i) => `
+    <div class="rrow ${i === selIdx ? "sel" : ""} ${it.missing ? "miss" : ""}" data-i="${i}">
+      <span class="ico ${isFolder(it) ? "folder" : "app"}"></span>
+      <span class="rtxt">
+        <div class="nm">${esc(it.label)}${it.missing ? `<span class="tag-miss">目标不存在</span>` : ""}</div>
+        <div class="tp">${esc(it.target)}</div>
+      </span>
+      <span class="ops">
+        <button class="ib up" title="上移" ${i === 0 ? "disabled" : ""}>↑</button>
+        <button class="ib down" title="下移" ${i === items.length - 1 ? "disabled" : ""}>↓</button>
+        <button class="ib delrow" title="移除">✕</button>
+      </span>
+    </div>`).join("") : `<div class="qempty">还没有条目 —— 用下面两个按钮添加。</div>`;
+  return `<div class="grp qpanel">
+    <div class="gtitle">启动队列</div>
+    <div class="gdesc">一组要在同一节奏里打开的<b>程序与文件夹</b>。同一时间只跑一套；某项目标不存在只会跳过该项。</div>
+    <div style="padding:4px 14px 10px">
+      ${queueBar()}
+      <div class="qlist" style="margin-top:8px;border:1px solid #ffffff14;border-radius:6px;overflow:hidden">${rows}</div>
+      ${intervalRow()}
+      <div class="qbottom" data-zone="add">${addButtons("inline")}
+        <span class="sd addnote">${intervalNote || "点条目选中；行尾 ↑↓ 调整顺序。"}</span>
+      </div>
+    </div>
+  </div>`;
+}
+
+// ---------------------------------------------------------------------------
+// ② 主从两栏：左窄列只放名字（上/下移），右宽列是选中项的详情编辑
+// ---------------------------------------------------------------------------
+function renderMaster() {
+  const items = q().items;
+  const rows = items.map((it, i) => `
+    <div class="mrow ${i === selIdx ? "sel" : ""}" data-i="${i}">
+      <span class="ico ${isFolder(it) ? "folder" : "app"}" style="width:14px;height:14px"></span>
+      <span class="nm ${it.missing ? "miss" : ""}">${esc(it.label)}${it.missing ? " ⚠" : ""}</span>
+      <span class="mops">
+        <button class="ib up" style="width:17px;height:17px" title="上移" ${i === 0 ? "disabled" : ""}>↑</button>
+        <button class="ib down" style="width:17px;height:17px" title="下移" ${i === items.length - 1 ? "disabled" : ""}>↓</button>
+        <button class="ib delrow" style="width:17px;height:17px" title="移除">✕</button>
+      </span>
+    </div>`).join("") || `<div class="qempty" style="padding:8px">（空）</div>`;
+  const it = items[selIdx];
+  const detail = it ? `
+    <div class="dfield"><div class="dlab">名称</div>
+      <input class="qfield dinput dl" value="${esc(it.label)}"></div>
+    <div class="dfield"><div class="dlab">目标</div>
+      <input class="qfield dinput dt" value="${esc(it.target)}">
+      ${it.missing ? `<div class="sd miss" style="font-size:11px;margin-top:2px">目标不存在 —— 运行时跳过该项</div>` : ""}</div>
+    <div class="dfield"><div class="dlab">动作类型</div>
+      <div class="dseg">
+        <button class="dsegv ${isFolder(it) ? "" : "on"}" data-t="launch">启动程序</button>
+        <button class="dsegv ${isFolder(it) ? "on" : ""}" data-t="open">打开文件夹</button>
+      </div></div>
+    <div class="dfield"><div class="dlab">注释（可选，只给自己看）</div>
+      <input class="qfield dinput din" placeholder="例如：每天先开的三个"></div>
+    <div style="display:flex;gap:6px;margin-top:10px">
+      <button class="daddp">浏览程序…</button><button class="daddf">浏览文件夹…</button>
+      <button class="ib delrow detaildel" style="width:auto;padding:0 8px;margin-left:auto">移除选中</button>
+    </div>`
+    : `<div class="qempty">左侧选一个条目编辑</div>`;
+  // 左列每行也有移除（悬停显示）。用 delrow 而不是行内三连，是因为左列只有 150 宽，三个图标会挤掉名字
+  return `<div class="grp qpanel">
+    <div class="gtitle">启动队列</div>
+    <div class="gdesc">左列只放名字，右列编辑选中项 —— 404 宽里这个分区只占 508，左列压到 150 才留得下详情。</div>
+    <div style="padding:4px 14px 10px">
+      ${queueBar()}
+      <div class="master" style="margin-top:8px;border:1px solid #ffffff14;border-radius:6px;overflow:hidden">
+        <div class="mcol">${rows}</div>
+        <div class="detail">${detail}</div>
+      </div>
+      ${intervalRow()}
+      <div class="qbottom" data-zone="add">${addButtons("master")}
+        <span class="sd addnote">${intervalNote || "点左列选中；悬停行尾 ↑↓ 调序。"}</span>
+      </div>
+    </div>
+  </div>`;
+}
+
+// ---------------------------------------------------------------------------
+// ③ 卡片摘要式：两行小卡（名称 + 类型徽标 / 目标），操作收进悬浮；队列操作在分区头部工具行
+// ---------------------------------------------------------------------------
+function renderCards() {
+  const items = q().items;
+  const cards = items.map((it, i) => `
+    <div class="ccard ${i === selIdx ? "sel" : ""} ${it.missing ? "miss" : ""}" data-i="${i}">
+      <div class="c1">
+        <span class="ico ${isFolder(it) ? "folder" : "app"}"></span>
+        <span class="nm">${esc(it.label)}</span>
+        ${it.missing ? `<span class="tag-miss">目标不存在</span>` : `<span class="badge ${isFolder(it) ? "open" : ""}">${isFolder(it) ? "文件夹" : "程序"}</span>`}
+      </div>
+      <div class="tp">${esc(it.target)}</div>
+      <span class="ops">
+        <button class="ib up" title="上移" ${i === 0 ? "disabled" : ""}>↑</button>
+        <button class="ib down" title="下移" ${i === items.length - 1 ? "disabled" : ""}>↓</button>
+        <button class="ib delrow" title="移除">✕</button>
+      </span>
+    </div>`).join("") || `<div class="qempty">还没有条目</div>`;
+  return `<div class="grp qpanel">
+    <div class="gtitle" style="display:flex;align-items:center;justify-content:space-between"
+         data-zone="queue">
+      <span>启动队列</span>
+      <span style="display:flex;gap:4px">
+        <button class="qnew">＋队列</button><button class="qren">改名</button><button class="qdel">删除</button>
+      </span>
+    </div>
+    <div class="gdesc cdesc">当前：${esc(q().name)}　·　${items.length} 项 · 间隔 ${q().intervalMs}ms</div>
+    <div class="ctools" data-zone="add">${addButtons("cards")}
+      <button class="ib delrow qdelitem" style="margin-left:auto;width:auto;padding:0 8px" title="移除选中项">移除选中</button>
+    </div>
+    <div class="ccards">${cards}</div>
+    <div style="padding:0 14px 10px">${intervalRow()}<div class="sd addnote" style="margin-top:2px">${intervalNote}</div></div>
+  </div>`;
+}
+
+const CANDS = [
+  { id:"inline", row:"rrow", name:"① 行内操作列表", level:"low",
+    line:"顶部队列下拉（新建/改名/删除行内）→ 一行一项（图标+名称+目标灰字+行尾 ↑↓✕）→ 底部添加与间隔",
+    src:"与设置面板现状行样式最贴近；操作全在行上，一眼能看到全部条目",
+    render: renderInline },
+  { id:"master", row:"mrow", name:"② 主从两栏", level:"mid",
+    line:"左窄列 150 只放名字（可调序），右列显示并编辑选中项：名称/目标/动作类型/注释",
+    src:"出处：macOS 系统设置、VS「列表-属性」式布局；代价是 508 宽里塞两栏，目标路径两栏都折行、注释只能一行",
+    render: renderMaster },
+  { id:"cards", row:"ccard", name:"③ 卡片摘要式", level:"low",
+    line:"两行小卡（名称+类型徽标 / 目标），↑↓✕ 收进悬浮；队列操作挪到分区头部工具行",
+    src:"出处：WinUI SettingsCard 的紧凑变体 + 移动端列表卡；代价是一屏可见条目最少",
+    render: renderCards },
+];
+
+// ---------------------------------------------------------------------------
+// 界面骨架
+// ---------------------------------------------------------------------------
+let current = CANDS[0];
+const stageW = 640;
+const SIDE_TITLES = ["热键", "外观", "行为", "菜单", "启动", "启动队列"];
+
+function shell(body) {
+  return `<div class="panel" style="width:${stageW}px">
+    <div class="side">
+      ${SIDE_TITLES.map((t, i) => `<div class="si ${i === SIDE_TITLES.length - 1 ? "on" : ""}">${t}</div>`).join("")}
+    </div>
+    <div class="main"><div class="inner" style="padding:12px 16px 14px">
+      <div class="titlebar"><span class="t">设置</span><button class="xbtn">✕</button></div>
+      ${body}
+      <div class="sd" style="color:var(--muted);font-size:11.5px;margin-top:12px;min-height:18px">改动即时生效并自动保存。（其它分区未渲染）</div>
+    </div></div>
+  </div>`;
+}
+
+function buildList() {
+  $("#list").innerHTML = CANDS.map(c => `
+    <div class="card" data-c="${c.id}">
+      ${thumb(c.id)}
+      <div>
+        <div class="name">${c.name}</div>
+        <div class="line">${c.line}</div>
+        <div class="cost ${c.level}">改动量：${c.level === "low" ? "小（行/卡样式 + 现有按钮接线）" : "中（要新增详情编辑面与选中同步）"}</div>
+        <div class="src">${c.src}</div>
+        <div class="src" data-vc="${c.id}">实测可见：—</div>
+      </div>
+    </div>`).join("");
+  document.querySelectorAll(".card").forEach(el =>
+    el.addEventListener("click", () => select(el.dataset.c)));
+}
+
+// 左列缩略图：只画轮廓（不填色），三档的差别就在轮廓上
+function thumb(id) {
+  const L = (x, y, w, h) => `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="2" fill="none" stroke="#ffffff40"/>`;
+  let inner = "";
+  if (id === "inline") {
+    inner = `<g>${L(8, 10, 44, 6)}`;                       // 队列下拉行
+    for (let i = 0; i < 4; i++) inner += L(8, 19 + i * 7, 44, 5); // 条目行
+    inner += `${L(8, 47, 20, 5)}${L(31, 47, 21, 5)}</g>`;  // 底部两个按钮
+  } else if (id === "master") {
+    inner = `<g>${L(8, 10, 44, 6)}
+      <rect x="8" y="19" width="17" height="30" rx="2" fill="none" stroke="#8ab4ffa0"/>
+      ${L(27, 19, 25, 30)}
+      ${L(11, 22, 11, 3)}${L(11, 27, 11, 3)}${L(11, 32, 11, 3)}
+      ${L(30, 22, 19, 3)}${L(30, 27, 19, 3)}${L(30, 32, 10, 3)}</g>`;
+  } else {
+    inner = `<g>${L(8, 10, 30, 6)}${L(41, 10, 11, 6)}`;    // 头部工具行
+    for (let i = 0; i < 2; i++) inner += L(8, 19 + i * 16, 44, 14);
+    inner += `${L(11, 22, 16, 3)}${L(30, 22, 9, 4)}${L(11, 28, 34, 3)}`
+           + `${L(11, 38, 16, 3)}${L(30, 38, 9, 4)}${L(11, 44, 34, 3)}</g>`;
+  }
+  return `<svg width="60" height="60" viewBox="0 0 60 60" style="flex:0 0 auto">
+    <rect x="4" y="6" width="52" height="48" rx="6" fill="none" stroke="#ffffff30"/>${inner}</svg>`;
+}
+
+function select(id) {
+  current = CANDS.find(c => c.id === id);
+  document.querySelectorAll(".card").forEach(el =>
+    el.classList.toggle("on", el.dataset.c === id));
+  rerender();
+  setStatus(`正在预览：${current.name}`);
+}
+
+function rerender() {
+  clampSel();
+  $("#panelWrap").innerHTML = shell(current.render());
+  wire();
+  measure();
+}
+
+// ---------------------------------------------------------------------------
+// 接线：所有操作都改 queues / selIdx，然后重绘 —— 三档共用同一份逻辑
+// ---------------------------------------------------------------------------
+function wire() {
+  const root = $("#panelWrap");
+
+  // 选中
+  root.querySelectorAll(".rrow, .mrow, .ccard").forEach(el => {
+    el.addEventListener("click", (e) => {
+      if (e.target.closest("button")) return;
+      if (e.target.closest("input,select")) return;
+      selectItem(+el.dataset.i);
+    });
+  });
+
+  // 上移 / 下移 / 移除
+  root.querySelectorAll(".up").forEach(b => b.addEventListener("click", (e) => {
+    e.stopPropagation(); const i = rowIndex(b);
+    if (moveItem(i, -1)) { after("上移"); }
+  }));
+  root.querySelectorAll(".down").forEach(b => b.addEventListener("click", (e) => {
+    e.stopPropagation(); const i = rowIndex(b);
+    if (moveItem(i, 1)) { after("下移"); }
+  }));
+  root.querySelectorAll(".delrow").forEach(b => b.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const i = rowIndex(b);
+    if (removeItem(i)) { after("移除"); }
+  }));
+  root.querySelectorAll(".qdelitem").forEach(b => b.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const i = current.id === "master" ? selIdx : rowIndex(b);
+    if (removeItem(i)) after("移除选中");
+  }));
+
+  // 队列：下拉切换 / 新建 / 改名 / 删除
+  const qsel = root.querySelector(".qsel");
+  if (qsel) qsel.addEventListener("change", () => { curQ = +qsel.value; selIdx = 0; rerender(); setStatus(`切换队列：${q().name}`); });
+  root.querySelectorAll(".qnew").forEach(b => b.addEventListener("click", () => {
+    queues.push({ id:"q" + (queues.length + 1), name:`新队列 ${queues.length + 1}`, intervalMs:500, items:[] });
+    curQ = queues.length - 1; selIdx = 0; rerender(); setStatus(`已新建「${q().name}」—— 用「改名」起个名字`);
+  }));
+  root.querySelectorAll(".qren").forEach(b => b.addEventListener("click", () => {
+    const name = prompt("队列名称", q().name);
+    if (name && name.trim()) { q().name = name.trim(); rerender(); setStatus(`已改名：${q().name}`); }
+  }));
+  root.querySelectorAll(".qdel").forEach(b => b.addEventListener("click", () => {
+    if (queues.length <= 1) { setStatus("至少保留一套队列"); return; }
+    const gone = q().name;
+    queues.splice(curQ, 1); curQ = 0; selIdx = 0; rerender(); setStatus(`已删除「${gone}」`);
+  }));
+
+  // 间隔：输入即时反映到说明文字
+  root.querySelectorAll(".qint").forEach(inp => inp.addEventListener("input", () => {
+    const v = parseInt(inp.value, 10);
+    if (!Number.isNaN(v) && v >= 0) {
+      q().intervalMs = v;
+      intervalNote = `间隔已改为 ${v}ms —— ${v === 0 ? "同时启动，由执行器自己限速" : `相邻两项之间等 ${v}ms`}（${q().items.length} 项约需 ${Math.max(0, q().items.length - 1) * v}ms 启动完）`;
+      const note = root.querySelector(".addnote");
+      if (note) note.textContent = intervalNote;
+      const d = root.querySelector(".cdesc");
+      if (d) d.textContent = `当前：${q().name}　·　${q().items.length} 项 · 间隔 ${v}ms`;
+      measure();
+    }
+  }));
+
+  // ② 详情编辑：名称 / 目标 / 动作类型
+  const it = q().items[selIdx];
+  const dl = root.querySelector(".dl"), dt = root.querySelector(".dt");
+  if (it && dl) dl.addEventListener("input", () => { it.label = dl.value; rerender(); });
+  if (it && dt) dt.addEventListener("input", () => {
+    it.target = dt.value; it.missing = /不存在|gone/i.test(dt.value);
+    const nm = root.querySelector(".mrow.sel .nm");
+    if (nm) nm.className = "nm" + (it.missing ? " miss" : "");
+  });
+  root.querySelectorAll(".dsegv").forEach(b => b.addEventListener("click", () => {
+    if (!it) return; it.type = b.dataset.t; rerender();
+  }));
+
+  // 添加：弹出内联的「选程序 / 选文件夹」假面板
+  root.querySelectorAll(".addp, .daddp").forEach(b => b.addEventListener("click", (e) => { e.stopPropagation(); openPicker(b, "program"); }));
+  root.querySelectorAll(".addf, .daddf").forEach(b => b.addEventListener("click", (e) => { e.stopPropagation(); openPicker(b, "folder"); }));
+}
+
+function rowIndex(b) {
+  const host = b.closest("[data-i]");
+  return host ? +host.dataset.i : selIdx;
+}
+function selectItem(i) {
+  selIdx = i; rerender();
+  setStatus(`选中：${q().items[i].label}`);
+}
+function after(what) {
+  rerender();
+  // 间隔说明是「上一动作的即时反馈」，下一次列表操作后就不再成立 —— 清掉，免得言过其实
+  intervalNote = "";
+  setStatus(`${what}后：${q().items.map(x => x.label).join(" → ")}`);
+}
+
+// 弹层挂在按钮旁边的 .addwrap 里（面内绝对定位）。已开则关闭。
+function openPicker(btn, kind) {
+  const host = btn.closest(".addwrap");
+  const slot = host.querySelector(".addpop-host");
+  if (slot.firstChild) { slot.innerHTML = ""; return; }
+  document.querySelectorAll(".addpop-host").forEach(s => s.innerHTML = "");
+  const list = PICKERS[kind].map((p, i) =>
+    `<div class="pi" data-k="${i}">
+       <span class="ico ${kind === "folder" ? "folder" : "app"}"></span>
+       <span>${esc(p.label)}</span>
+       <span class="sd ${p.missing ? "miss" : ""}">${p.missing ? "找不到" : "已找到"}</span>
+     </div>`).join("");
+  slot.innerHTML = `<div class="addpop">
+      <div class="pt">${kind === "folder" ? "选一个文件夹" : "选一个程序"}（真实实现走系统文件对话框）</div>
+      ${list}
+    </div>`;
+  slot.querySelectorAll(".pi").forEach(el => el.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const p = PICKERS[kind][+el.dataset.k];
+    addItem({ label: p.label, type: kind === "folder" ? "open" : "launch", target: p.target, missing: !!p.missing });
+    slot.innerHTML = "";
+    rerender();
+    setStatus(`已添加：${p.label}${p.missing ? "（目标不存在，运行时会跳过）" : ""}`);
+  }));
+}
+
+function setStatus(t) {
+  const el = $("#status");
+  el.classList.remove("bad");
+  el.textContent = t;
+}
+
+// ---------------------------------------------------------------------------
+// 指标：每档「一屏可见条目数」（按真实几何算，不靠翻页）
+// ---------------------------------------------------------------------------
+// 「一屏可见条目数」按真实布局算：WPF 面板是 SizeToContent + MinHeight，一屏放得下的就是
+// 面板底边以上的行。这里把舞台底边当作面板底边，行底边不超过它的算可见。
+function visibleItems() {
+  const stage = $("#stage").getBoundingClientRect();
+  const rows = document.querySelectorAll("#panelWrap .rrow, #panelWrap .mrow, #panelWrap .ccard");
+  let n = 0;
+  rows.forEach(el => { if (el.getBoundingClientRect().bottom <= stage.bottom) n++; });
+  return { n, total: rows.length };
+}
+function measure() {
+  const p = $("#panelWrap .panel");
+  if (!p) return;
+  const pr = p.getBoundingClientRect();
+  const items = q().items.length;
+  const vis = visibleItems();
+  // 右列可用高度 = 面板高度 - 顶部标题(约 28) - 底部保存行(约 34) - 内边距
+  const usable = Math.round(pr.height - 28 - 34 - 30);
+  $("#metrics").innerHTML =
+    `本档实测：面板 <b>${Math.round(pr.width)}×${Math.round(pr.height)}</b>`
+    + `　条目 <b>${vis.n}/${vis.total}</b> 可见（列表区可用高度约 ${usable}px）`
+    + `　队列 ${esc(q().name)}：${items} 项 · 间隔 ${q().intervalMs}ms`;
+  const vc = document.querySelector(`[data-vc="${current.id}"]`);
+  if (vc) vc.textContent = `实测：一屏可见 ${vis.n}/${vis.total} 条目（面板高 ${Math.round(pr.height)}px）`;
+}
+
+// ============================================================================
+// 页内自检（能失败）
+// ============================================================================
+function selfCheck() {
+  const out = [];
+  const savedQ = curQ, savedSel = selIdx;
+  curQ = 0; selIdx = 0;
+
+  // ① 三档都能切换并渲染出条目
+  const notes = []; let ok = true;
+  for (const c of CANDS) {
+    select(c.id);
+    const sel = `#panelWrap .${c.row}`;
+    const rows = document.querySelectorAll(sel).length;
+    const cardOn = document.querySelector(`.card.on[data-c="${c.id}"]`) !== null;
+    notes.push(`${c.id}:${rows} 行${cardOn ? "" : "(未选中!)"}`);
+    if (rows !== q().items.length || !cardOn) ok = false;
+  }
+  out.push(["三档都能切换、卡片选中态与列表条目数一致", ok, notes.join("　")]);
+
+  // ② 上移真的改了 DOM：第二行文本跑到第一行
+  const moveNotes = []; let moveOk = true;
+  for (const c of CANDS) {
+    select(c.id);
+    const sel = `#panelWrap .${c.row}`;
+    const secondLabel = q().items[1].label;
+    document.querySelectorAll(sel)[1].querySelector(".up").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    const first = document.querySelectorAll(sel)[0].textContent;
+    const changed = q().items[0].label === secondLabel && first.includes(secondLabel) && selIdx === 0;
+    moveNotes.push(`${c.id}:${changed ? "首行变为「" + secondLabel + "」" : "未变化"}`);
+    if (!changed) moveOk = false;
+    // 复原（下移回来）
+    document.querySelectorAll(sel)[0].querySelector(".down").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    if (q().items[0].label === secondLabel) moveOk = false;
+  }
+  out.push(["上移/下移真的改了列表顺序（改后复原）", moveOk, moveNotes.join("　")]);
+
+  // ③ 移除真的删了条目。每档删两次：② 的详情面板里也有一个「移除选中」（作用在 selIdx 上），
+  // 第一次删完之后选中项变了，第二次点它删掉的是别的一项 —— 只删一次抵不过两次绑定。
+  const delNotes = []; let delOk = true;
+  for (const c of CANDS) {
+    queues = seedQueues(); curQ = savedQ; selIdx = savedSel;   // 每档从同一份种子出发，结果可比
+    select(c.id);
+    const sel = `#panelWrap .${c.row}`;
+    const before = q().items.length;
+    for (let k = 0; k < 2; k++)
+      document.querySelectorAll(sel)[0].querySelector(".delrow").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    const after = document.querySelectorAll(sel).length;
+    const good = q().items.length === before - 2 && after === before - 2;
+    delNotes.push(`${c.id}:${before}→${after}`);
+    if (!good) delOk = false;
+  }
+  out.push(["移除按钮真的删掉一行", delOk, delNotes.join("　")]);
+  queues = seedQueues(); curQ = savedQ; selIdx = savedSel;
+
+  // ④ 添加按钮弹出选择层，点候选项真的加入
+  const addNotes = []; let addOk = true;
+  for (const c of CANDS) {
+    select(c.id);
+    const before = q().items.length;
+    const pbtn = document.querySelector("#panelWrap .addp");
+    pbtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    const pop = document.querySelector("#panelWrap .addpop");
+    const opened = !!pop && pop.querySelectorAll(".pi").length === PICKERS.program.length;
+    if (pop) pop.querySelectorAll(".pi")[1].dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    const added = q().items.length === before + 1 && q().items.at(-1).label === PICKERS.program[1].label;
+    const closed = !document.querySelector("#panelWrap .addpop");
+    addNotes.push(`${c.id}:${opened ? "弹出" : "没弹出"}·${added ? "已添加" : "未添加"}·${closed ? "已关闭" : "未关闭"}`);
+    if (!(opened && added && closed)) addOk = false;
+  }
+  out.push(["添加程序：弹出选择层 → 点候选 → 入列并关闭", addOk, addNotes.join("　")]);
+  queues = seedQueues(); curQ = savedQ; selIdx = savedSel;
+
+  // ⑤ 间隔输入即时反映到说明文字
+  select("inline");
+  const inp = document.querySelector("#panelWrap .qint");
+  inp.value = "1500"; inp.dispatchEvent(new Event("input", { bubbles: true }));
+  const note = document.querySelector("#panelWrap .addnote").textContent;
+  const ivOk = q().intervalMs === 1500 && note.includes("1500");
+  out.push(["间隔输入即时改写条说明", ivOk, `间隔 ${q().intervalMs}ms；说明「${note.slice(0, 28)}…」`]);
+  q().intervalMs = 800; intervalNote = "";
+
+  // ⑥ 每档一屏可见条目数（实测几何）
+  const visNotes = [];
+  for (const c of CANDS) {
+    select(c.id);
+    const v = visibleItems();
+    visNotes.push(`${c.name.split(" ")[0]}:${v.n}/${v.total}`);
+  }
+  out.push(["各档可见条目数（实测，仅供参考不比大小）", true, visNotes.join("　")]);
+  for (const c of CANDS) document.querySelector(`.card[data-c="${c.id}"]`).dataset.vis = "";
+
+  // ⑦ 404 宽度与字号：与 settings-preview 抄的参数一致
+  select("inline");
+  const panel = document.querySelector("#panelWrap .panel");
+  const pr = panel.getBoundingClientRect();
+  const bodyFs = getComputedStyle(panel).fontSize;
+  const sideW = Math.round(panel.querySelector(".side").getBoundingClientRect().width);
+  const titleFs = getComputedStyle(panel.querySelector(".gtitle")).fontSize;
+  const geoOk = Math.round(pr.width) === 640 && sideW === 132 && bodyFs === "13px" && titleFs === "13px";
+  out.push(["面板几何 = 设置面板 ④ 档（640 / 侧栏 132 / 正文 13px）", geoOk,
+    `${Math.round(pr.width)} 宽 / 侧栏 ${sideW} / 正文 ${bodyFs}`]);
+
+  // ⑧ 状态行显示预览档名
+  const stOk = $("#status").textContent.includes("正在预览") && $("#status").textContent.includes("①");
+  out.push(["状态行显示「正在预览：第 X 档」", stOk, $("#status").textContent]);
+
+  select(current.id);
+  const pass = out.filter(r => r[1]).length;
+  $("#selfcheck").innerHTML = `<b>页内自检：${pass}/${out.length} 通过</b>`
+    + out.map(r => `<div class="${r[1] ? "ok" : "bad"}">${r[1] ? "✓" : "✗"} ${r[0]}　`
+      + `<span class="hint">${r[2]}</span></div>`).join("");
+}
+
+window.addEventListener("error", (e) => {
+  const s = $("#status");
+  if (s) { s.classList.add("bad"); s.textContent = `页面脚本出错：${e.message}`; }
+  const b = $("#selfcheck");
+  if (b) b.innerHTML = `<span class="bad">页面脚本出错：${e.message}</span>`;
+});
+
+try {
+  buildList();
+  select("inline");
+  selfCheck();
+} catch (err) {
+  $("#status").classList.add("bad");
+  $("#status").textContent = `初始化失败：${err.message}`;
+  $("#selfcheck").innerHTML = `<span class="bad">初始化失败：${err.message}</span>`;
+}
+</script>
+</body>
+</html>

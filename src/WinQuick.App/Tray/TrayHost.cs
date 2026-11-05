@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Controls;
 using H.NotifyIcon;
 using WinQuick.App.Hosting;
+using WinQuick.Core.Config;
 using Windows.Win32;
 using Windows.Win32.UI.WindowsAndMessaging;
 
@@ -23,6 +24,7 @@ public sealed class TrayHost : IDisposable
     /// <summary>点「设置…」时调用。由常驻装配注入，托盘本身不认识设置窗口。</summary>
     public Action? OpenSettings { get; set; }
     private MenuItem _autoStartItem = null!;
+    private readonly MenuItem _queueMenuItem = new() { Header = "启动队列" };
     private bool _disposed;
 
     public TrayHost(OverlayController overlay)
@@ -124,6 +126,7 @@ public sealed class TrayHost : IDisposable
         var menu = new ContextMenu();
 
         menu.Items.Add(MakeItem("唤出轮盘", () => _overlay.Show()));
+        menu.Items.Add(_queueMenuItem);
         menu.Items.Add(new Separator());
 
         _autoStartItem = MakeItem("开机自启", ToggleAutoStart);
@@ -140,6 +143,33 @@ public sealed class TrayHost : IDisposable
         menu.Items.Add(MakeItem("退出", ExitApplication));
 
         return menu;
+    }
+
+    /// <summary>
+    /// 重建「启动队列」子菜单。
+    ///
+    /// **必须在 UI 线程调用**：这里直接改 WPF 的 Items 集合。调用链来自
+    /// 配置热重载的 DispatcherTimer 与 ResidentHost.Start()，两者都在 UI 线程上，
+    /// 所以没有再加一次调度 —— 但也不要把这里当成可随意在后台调用的方法。
+    /// </summary>
+    public void SetLaunchQueues(IReadOnlyList<LaunchQueueSpec> queues, Action<LaunchQueueSpec> onRun)
+    {
+        var items = _queueMenuItem.Items;
+        items.Clear();
+
+        if (queues.Count == 0)
+        {
+            // 放一个禁用项而不是留空：空子菜单在托盘上要么完全展不开、要么是一条空框，
+            // 用户看不出是「没配」还是「配坏了」。一句说明比空白有用。
+            items.Add(new MenuItem { Header = "（还没有配置队列）", IsEnabled = false });
+            return;
+        }
+
+        foreach (var queue in queues)
+        {
+            // 带上项数：用户看图标的目的是选哪一套，而「有 5 项还是 1 项」直接决定它是不是他想要的那套。
+            items.Add(MakeItem($"{queue.Name}（{queue.Items.Count} 项）", () => onRun(queue)));
+        }
     }
 
     private static MenuItem MakeItem(string header, Action onClick)

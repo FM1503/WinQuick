@@ -666,6 +666,9 @@ public sealed class OverlayController : IDisposable
         // 约定：**窗口处于停放状态时，它里面装的必须是空的环。**
         _radial.ResetForDormancy();
         _radial.ShowActivated = true;
+        // 这一笔属性回改正是冲掉 TOOLWINDOW 的地方（句柄已存在，WPF 会整体重算扩展样式），
+        // 所以必须紧接着补回来 —— 否则停放中的轮盘会出现在任务视图（Win+Tab）里。
+        _radial.EnsureToolWindowStyle();
 
         // 操作条同样先渲染一次：它的首次映射（创建渲染目标、量文字）否则会落在
         // 显示那一刻 —— 而那正是全流程最拥挤的一帧（见 Show 里的说明）。
@@ -1408,6 +1411,12 @@ public sealed class OverlayController : IDisposable
                 // 退出全屏游戏、插拔显示器、改分辨率都会走到这里。
                 Hide();
                 RebuildDimWindows();
+                break;
+
+            case PInvoke.WM_STYLECHANGED:
+                // 自愈：任何来源（WPF 的属性重算、DPI 变更）冲掉 TOOLWINDOW 时补回。
+                // 方法幂等，自己写回触发的那次 WM_STYLECHANGED 会发现位已存在而立即返回，不会循环。
+                _radial.EnsureToolWindowStyle();
                 break;
 
             case PInvoke.WM_KILLFOCUS:

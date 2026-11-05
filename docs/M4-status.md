@@ -1677,3 +1677,29 @@ SV 圆点与色相滑块的**基准对齐**默认是居中，而位移公式按�
 两个指示器都改成左上对齐（`HorizontalAlignment=Left`，圆点再加 `VerticalAlignment=Top`），
 位移公式从此与坐标系一致。属于「渲染坐标系的两个约定没对齐」这类典型错误，
 单测锁不住（纯 XAML 布局），只能实测发现。
+
+## 任务视图里出现空窗口（2026-11-05）
+
+### 现象
+
+常驻挂在后台时按 Win+Tab，任务视图里出现一个空窗口，每个虚拟桌面都会列出。
+实测枚举进程的全部顶层窗口后定位到根因：停放中的轮盘窗口 exstyle=`0x00080008`
+（LAYERED|TOPMOST，缺 WS_EX_TOOLWINDOW），而同进程的操作条与遮罩窗口都带
+TOOLWINDOW（`0x08080088`）。
+
+### 根因
+
+`RadialWindow` 在 `SourceInitialized` 时设置过 TOOLWINDOW，但 Prewarm 预热序列
+在句柄已创建后把 `ShowActivated` 从 `false` 改回 `true` —— WPF 对句柄之后的属性变更
+会按内部样式整体重算并覆写 `GWL_EXSTYLE`，手工加的 TOOLWINDOW 位被丢弃；
+原来的 `ApplyExtendedStyles` 又有一次性守卫（`_stylesApplied`），此后不再补。
+
+### 修法与验证
+
+- `ApplyExtendedStyles` 重做为幂等的 `EnsureToolWindowStyle()`：已含该位则直接返回，
+  句柄未创建也直接返回；
+- Prewarm 属性回改后紧接补打一次；
+- `OverlayController.OnRadialMessage` 新增 `WM_STYLECHANGED` 分支做自愈：任何来源
+  （WPF 属性重算、DPI 变更）冲掉该位时补回；幂等保证自己触发的消息不会再写、不会循环。
+
+发布后实测：新进程轮盘窗口 exstyle=`0x00080088`（含 TOOLWINDOW），崩溃日志无新增条目。

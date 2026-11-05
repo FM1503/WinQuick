@@ -67,7 +67,6 @@ public sealed class RadialWindow : Window
 
     private readonly DispatcherTimer _pointerPoll;
     private Point? _lastPointer;
-    private bool _stylesApplied;
 
     public RadialWindow(MenuSpec menu)
     {
@@ -119,7 +118,7 @@ public sealed class RadialWindow : Window
 
         WireViewEvents(_view);
 
-        SourceInitialized += (_, _) => ApplyExtendedStyles();
+        SourceInitialized += (_, _) => EnsureToolWindowStyle();
 
         MouseMove += OnMouseMove;
         MouseLeave += OnMouseLeave;
@@ -182,13 +181,24 @@ public sealed class RadialWindow : Window
     /// <summary>诊断用句柄值。</summary>
     internal nint HandleValue => new WindowInteropHelper(this).Handle;
 
-    private void ApplyExtendedStyles()
+    /// <summary>
+    /// 给窗口补上 WS_EX_TOOLWINDOW（幂等，可反复调用）。
+    ///
+    /// 为什么不能只在 SourceInitialized 里设一次：句柄存在之后 WPF 再改
+    /// ShowActivated / Topmost 这类属性，会按内部记下的那份样式整体重算并覆写
+    /// GWL_EXSTYLE —— 手工加的 TOOLWINDOW 位就被冲掉了。预热序列（Prewarm）
+    /// 里就有一笔 `ShowActivated = true` 的回改，正好落在句柄创建之后。
+    /// 实测后果：停放中的轮盘漏进任务视图（Win+Tab），每个虚拟桌面都会列出它。
+    /// 所以入口处要先读、已含该位就直接返回（不发 SetWindowLong），
+    /// 这样各处随时调用都无成本，自愈补样式也不会自己把自己无限触发。
+    /// </summary>
+    internal void EnsureToolWindowStyle()
     {
-        if (_stylesApplied) return;
-        _stylesApplied = true;
-
         var hwnd = (HWND)new WindowInteropHelper(this).Handle;
+        if (hwnd.IsNull) return;   // 还没建句柄：SourceInitialized 会再来一次
+
         var ex = (WINDOW_EX_STYLE)(uint)PInvoke.GetWindowLong(hwnd, WINDOW_LONG_PTR_INDEX.GWL_EXSTYLE);
+        if (ex.HasFlag(WINDOW_EX_STYLE.WS_EX_TOOLWINDOW)) return;
 
         // WS_EX_TOOLWINDOW 是唯一能可靠把窗口排除出 Alt+Tab 的样式。
         // 这里刻意**不**加 WS_EX_NOACTIVATE：轮盘需要键盘焦点（Esc、方向键），
@@ -223,7 +233,7 @@ public sealed class RadialWindow : Window
     /// </summary>
     public void PlaceAt(int x, int y, int width, int height)
     {
-        ApplyExtendedStyles();
+        EnsureToolWindowStyle();
 
         var monitor = MonitorLayout.AtCursor();
         Left = x / monitor.Scale;
@@ -240,7 +250,7 @@ public sealed class RadialWindow : Window
 
     public void PlaceAtCursor()
     {
-        ApplyExtendedStyles();
+        EnsureToolWindowStyle();
 
         if (!MonitorLayout.TryGetCursorPosition(out var cursorX, out var cursorY))
         {
@@ -423,12 +433,12 @@ public sealed class RadialWindow : Window
         {
             // 光晕/几何那类结构差异走不通就地更新时，它自己会返回 false，落到下面的重建。
             SurfaceOps.MenuRebuild(swapped: false);
-            ApplyExtendedStyles();
+            EnsureToolWindowStyle();
             return;
         }
 
         ApplyMenu(_menu);
-        ApplyExtendedStyles();
+        EnsureToolWindowStyle();
     }
 
     /// <summary>

@@ -1,0 +1,73 @@
+{
+  "slug": "fix-badgefill-token-and-about-theme",
+  "tier": "S",
+  "dimensions": {
+    "compliance": {
+      "status": "pass",
+      "detail": "三处补丁与变更单 P1/P2/P3 逐字符一致：TokenResources.cs:60-61 补 Color.BadgeFill 注册（含注释）、SettingsPanel.xaml:546 补 Foreground DynamicResource、WinQuick.App.csproj 版本 1.1.0→1.1.1。git status 仅 3 个 code-files 改动（另含变更单文档自身），无范围外改动、无占位符。机器预检不可用（scripts/review-lint.mjs 不存在），fileset/行数上限已人工核验：3 文件与 code-files 清单一致，净 +4/-1 < 30 行，无新建代码文件。"
+    },
+    "tier_compliance": {
+      "status": "fail",
+      "detail": "S 级判据要求 ≤2 文件且无接口/依赖/配置变更；实际 3 个文件（TokenResources.cs、SettingsPanel.xaml、WinQuick.App.csproj），且 csproj <Version> 属项目配置变更，双重超出 S 判据。应升级为 M 流程（或将版本发布拆为独立变更单）重走。代码内容本身正确，此为流程分级问题而非缺陷。"
+    },
+    "defects": {
+      "status": "pass",
+      "checks": [
+        "键存在性：ColorTokens.BadgeFill=#000000 / BadgeFillAlpha=0.35 存在于 WinQuick.Core/Design/DesignTokens.cs:286-287；TokenBrushes.Brush(string hex, double alpha = 1.0)（TokenStore.cs:151）与调用 TokenBrushes.Brush(color.BadgeFill, color.BadgeFillAlpha) 签名匹配，返回冻结核享画刷。",
+        "换肤链路闭环：design/skins.json 五处皮肤均含 badgeFill/badgeFillAlpha 覆盖键（53-54 行 #FFFFFF/0.45 等），csproj:63-66 将该文件原样嵌入为 WinQuick.skins.json；ApplySkin（TokenStore.cs:65-83）→ Load=Parse(Merge(基线+皮肤)) → _current 更新 → TokenResources.Install(force:true)（TokenStore.cs:80）重跑全部 Set，Color.BadgeFill 取合并后令牌，皮肤覆盖确实流经注册。JSON badgeFill→BadgeFill 映射由 PropertyNameCaseInsensitive=true（DesignTokens.cs:28-30）保证，且已被 RadialRingVisual.cs:981 的轮盘角标通道在生产验证。",
+        "DynamicResource 时效性：Install(force:true) 直接重写 app.Resources['Wq.*'] 值，WPF 对资源字典值替换会通知全部 DynamicResource 引用；TokenBrushes 缓存按 (hex, alpha) 键控，换肤产生新 hex 即生成新画刷实例（同值则同一不可变实例、无需视觉变化），无陈旧缓存陷阱。Wq.Color.Text 已注册（TokenResources.cs:55），AutoUpdateBox 前景引用可解析；变更单引用的 TokenResources.cs:30 注释（换肤重写资源即跟随）与实际机制相符。",
+        "全仓键对齐（d 项）：代码侧 TokenResources.Brush/Get 引用 13 个键（Color.Text/TextMuted/Stroke/BadgeFill/Accent/Success/Danger、Font.Family/SmallSize/BodySize、Size.ControlCornerRadius、Motion.Easing/Duration）+ FindResource(\"Wq.Font.Family\") + XAML 侧 DynamicResource 13 个键（Font.Family/BodySize/SmallSize、Color.Text/Stroke/TextMuted/SurfaceSolid/FieldBackground/Accent、Size.CornerRadius/ControlCornerRadius/FieldPadding/FooterMinHeight），全部在 Install 注册清单内，未发现第三个未注册键。"
+      ]
+    },
+    "security_performance": {
+      "status": "pass",
+      "detail": "无新网络/文件/输入面；注册调用复用既有 (hex,alpha) 画刷缓存，无重复构造。1.1.1 为三段 semver2，符合 csproj:10 注释所述 Velopack 约束，在线更新链路无新风险。"
+    },
+    "test_quality": {
+      "status": "pass-with-notes",
+      "detail": "S 级采信执行回报 dotnet build 0 error 与 312 基线全绿（未复跑）。本次为纯补键/资源引用/版本号改动，无断言可抽查项；验收标准 1/2 已静态核实（缺键异常源消除 + 主题键注册且换肤重装），标准 3 的发布闭环属 CI/用户实测项。"
+    }
+  },
+  "issues": [
+    {
+      "severity": "P1",
+      "title": "改动规模超出 tier S 判据，要求升级流程",
+      "detail": "S 级要求 ≤2 文件且无接口/依赖/配置变更；本变更单实际 3 个文件（code-files 第 6 行自列 3 项），且 WinQuick.App.csproj <Version> 1.1.0→1.1.1 属项目配置变更，双重超出 S 判据。代码内容正确，但流程应升级为 M（或拆分版本发布为独立变更单）重走。",
+      "file": "docs/changes/fix-badgefill-token-and-about-theme.md",
+      "line": 6,
+      "dim": "分级合规",
+      "suggestion": "将该变更单升级为 tier M 重走审批，或拆分为「BadgeFill+About 主题修复（S，2 文件）」与「1.1.1 发版（独立发版单）」两单。"
+    },
+    {
+      "severity": "P2",
+      "title": "变更单根因低估缺键影响面：漏列第二个消费点",
+      "detail": "根因段仅引 SystemLocationPicker.BuildPlaceholder（SystemLocationPicker.xaml.cs:299），但 SettingsPanel.xaml.cs:998（设置面板队列行无图标占位圆）同样引用 Color.BadgeFill，修复前该路径也会抛资源不存在。本次注册已一并覆盖、无功能遗漏，仅变更单叙述不完整。",
+      "file": "docs/changes/fix-badgefill-token-and-about-theme.md",
+      "line": 14,
+      "dim": "符合度",
+      "suggestion": "根因段补记 SettingsPanel.xaml.cs:998 同源受影响，便于回溯崩溃面。"
+    },
+    {
+      "severity": "P3",
+      "title": "缺『引用键 vs 注册键』对齐护栏",
+      "detail": "本类缺陷（引用未注册 Color.* 键，运行时才炸）已是第二次出现（变更单自述『上轮队列模式新代码引用了未注册键』）。TokenResources.Get 抛异常的防御只在运行时生效，编译期与测试期均无拦截。",
+      "file": "src/WinQuick.App/Design/TokenResources.cs",
+      "line": 99,
+      "dim": "测试",
+      "suggestion": "可选：在 WinQuick.Core.Tests 补一条对齐测试——用反射枚举 Install 全部注册键，与仓内 grep 得到的引用键集合比对（或至少硬编码断言常用键清单），防止第三个缺键进入运行时。"
+    }
+  ],
+  "verdict": "pass-with-issues",
+  "summary": {
+    "p0": 0,
+    "p1": 1,
+    "p2": 1,
+    "p3": 1,
+    "checked": [
+      "AC1 启动队列「添加…」弹出选择面板：通过（静态）——缺键根因消除，Color.BadgeFill 已注册（TokenResources.cs:61），SystemLocationPicker.xaml.cs:299 取键不再抛，PickMenuItemForAdd 不再进 catch 兜底",
+      "AC2 「启动时自动检查更新」文字颜色随主题：通过（静态）——SettingsPanel.xaml:546 Foreground={DynamicResource Wq.Color.Text}，键已注册且 ApplySkin→Install(force:true) 换肤重装（TokenStore.cs:80）",
+      "AC3 v1.1.1 发布更新闭环：代码侧通过——csproj <Version> 已改 1.1.1（三段 semver2 合规），线上 CI/更新链路待发版实测",
+      "附加 d 项 全仓键对齐：通过——代码+XAML 全部引用键均在 Install 注册清单内，无第三个未注册键"
+    ]
+  }
+}

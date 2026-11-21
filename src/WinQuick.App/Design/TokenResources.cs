@@ -57,6 +57,8 @@ public static class TokenResources
         Set("Color.FieldBackground", TokenBrushes.Brush(color.DeadZoneFill));
         Set("Color.DeadZone", TokenBrushes.Brush(color.DeadZoneFill));
         Set("Color.DeadZoneStroke", TokenBrushes.Brush(color.DeadZoneStroke, color.DeadZoneStrokeAlpha));
+        // 角标底色：SystemLocationPicker 无图标项的占位块用，与轮盘角标同源、换肤跟随。
+        Set("Color.BadgeFill", TokenBrushes.Brush(color.BadgeFill, color.BadgeFillAlpha));
 
         // 状态色：成功/警告。不放进 tokens —— 它们是语义色，与设计基线无关。
         Set("Color.Success", new SolidColorBrush(Color.FromRgb(0x8C, 0xC8, 0x8C)));

@@ -1,0 +1,7 @@
+{
+  "records": [
+    { "item": "构建：编译 0 error 0 warning", "command": "dotnet build src/WinQuick.App/WinQuick.App.csproj -c Release --nologo", "durationMs": 1500, "result": "pass" },
+    { "item": "回归：全量单测 312/312（键注册无既有单测，由 reviewer 全仓键对齐核查代证：代码侧 13 键 + XAML 侧 13 键 + FindResource 1 键全部已注册）", "command": "dotnet test tests/WinQuick.Core.Tests --nologo", "durationMs": 60000, "result": "pass" }
+  ],
+  "summary": { "passed": 2, "failed": 0 }
+}

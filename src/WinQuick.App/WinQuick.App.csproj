@@ -9,7 +9,7 @@
     <RootNamespace>WinQuick.App</RootNamespace>
     <AssemblyName>WinQuick</AssemblyName>
     <!-- Velopack 要求 semver2 三段版本（不支持 1.0.0.0 四段），assembly 版本随之走。 -->
-    <Version>1.1.3</Version>
+    <Version>1.1.4</Version>
     <!-- 自定义入口（Program.cs）：Velopack 引导必须先于任何 WPF 初始化。 -->
     <StartupObject>WinQuick.App.Program</StartupObject>
     <ApplicationManifest>app.manifest</ApplicationManifest>

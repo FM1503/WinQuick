@@ -112,7 +112,7 @@ public sealed partial class RadialRingView
 
         var colors = tokens.Color;
         var fill = TokenBrushes.Brush(colors.SectorFill, colors.SectorFillAlpha);
-        var stroke = TokenBrushes.Brush(colors.SectorStroke, colors.SectorStrokeAlpha);
+        var stroke = CreateSectorStroke(colors, tokens.Radius.WindowSize);
 
         // 编辑态标识：子环也有自己的一圈虚线，与第一层那圈同形。
         // 用户反馈"从子环进入编辑也要像一级环一样有虚线描边" ——
@@ -386,7 +386,7 @@ public sealed partial class RadialRingView
             : TokenBrushes.Brush(colors.SectorFill, colors.SectorFillAlpha);
         _childSectors[index].Stroke = hovered
             ? TokenBrushes.Brush(colors.HoverStroke, colors.HoverStrokeAlpha)
-            : TokenBrushes.Brush(colors.SectorStroke, colors.SectorStrokeAlpha);
+            : CreateSectorStroke(colors, _tokens.Radius.WindowSize);
 
         _childLabels[index].SetHover(hovered, TokenBrushes.Brush(colors.HoverLabel));
         _childIcons[index].Opacity = hovered ? 1.0 : 0.94;

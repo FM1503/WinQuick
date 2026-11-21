@@ -282,7 +282,7 @@ public sealed partial class RadialRingView
             : TokenBrushes.Brush(colors.SectorFill, colors.SectorFillAlpha);
         _sectors[index].Stroke = hovered
             ? TokenBrushes.Brush(colors.HoverStroke, colors.HoverStrokeAlpha)
-            : TokenBrushes.Brush(colors.SectorStroke, colors.SectorStrokeAlpha);
+            : CreateSectorStroke(colors, _tokens.Radius.WindowSize);
 
         // 悬停时的文字色单独一个令牌：纯色块（黄/红）当底时必须换成深色字，
         // 否则读不出来 —— 这条有校验锁着（亮度差不足会被 Validate 拦下）。
@@ -346,7 +346,7 @@ public sealed partial class RadialRingView
         _tokens = next;
 
         var baseFill = TokenBrushes.Brush(colors.SectorFill, colors.SectorFillAlpha);
-        var baseStroke = TokenBrushes.Brush(colors.SectorStroke, colors.SectorStrokeAlpha);
+        var baseStroke = CreateSectorStroke(colors, _tokens.Radius.WindowSize);
         var haloBrush = colors.HaloPx > 0
             ? TokenBrushes.Brush(colors.HaloColor, colors.HaloAlpha)
             : null;
@@ -392,6 +392,33 @@ public sealed partial class RadialRingView
         RefreshChildHighlight();
 
         return true;
+    }
+
+    /// <summary>
+    /// 扇区描边的唯一来源（skin-revamp fix1）：平色或玻璃拟态渐变（strokeGradient）。
+    /// 全部赋值点（构造/就地换肤/悬停恢复/子环）都必须走这里 ——
+    /// 曾只接一条路径导致重启、重建、悬停过后、子环的渐变静默丢失（reviewer P1）。
+    /// 静态 + 窗口高参数：Build/AddPlaceholder 等静态构造路径也要同一来源。
+    /// </summary>
+    private static Brush CreateSectorStroke(ColorTokens colors, double windowSize)
+    {
+        var stroke = TokenBrushes.Brush(colors.SectorStroke, colors.SectorStrokeAlpha);
+        if (!colors.StrokeGradient) return stroke;
+
+        // 整窗垂直渐变：上亮下暗。MappingMode 必须 Absolute——相对 boundingBox 会让
+        // 顶部/底部扇区各自截到渐变的不同段。窗口高读令牌（预览 sizeOverride 场景才不会错位）。
+        var gradient = new LinearGradientBrush
+        {
+            MappingMode = BrushMappingMode.Absolute,
+            StartPoint = new Point(0, 0),
+            EndPoint = new Point(0, windowSize),
+        };
+        gradient.GradientStops.Add(new GradientStop(
+            TokenBrushes.Parse(colors.SectorStroke, colors.SectorStrokeAlpha), 0));
+        gradient.GradientStops.Add(new GradientStop(
+            TokenBrushes.Parse(colors.SectorStroke, colors.SectorStrokeAlpha * 0.24), 1));
+        gradient.Freeze();
+        return gradient;
     }
 
     /// <summary>
@@ -481,7 +508,7 @@ public sealed partial class RadialRingView
 
         var colors = tokens.Color;
         var fill = TokenBrushes.Brush(colors.SectorFill, colors.SectorFillAlpha);
-        var stroke = TokenBrushes.Brush(colors.SectorStroke, colors.SectorStrokeAlpha);
+        var stroke = CreateSectorStroke(colors, radius.WindowSize);
 
         // 光晕：垫在扇区下面的一圈更粗描边（0 = 不画，绝大多数皮肤是 0）。
         // 用几何而不是 WPF Effect —— Effect 让元素每帧走位图渲染，代价与面积相关。
@@ -979,7 +1006,7 @@ public sealed partial class RadialRingView
             Width = iconSize,
             Height = iconSize,
             Fill = TokenBrushes.Brush(tokens.Color.BadgeFill, tokens.Color.BadgeFillAlpha),
-            Stroke = TokenBrushes.Brush(tokens.Color.SectorStroke, tokens.Color.SectorStrokeAlpha),
+            Stroke = CreateSectorStroke(tokens.Color, tokens.Radius.WindowSize),
             StrokeThickness = 1,
         };
 

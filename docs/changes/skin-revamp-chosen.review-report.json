@@ -1,0 +1,60 @@
+{
+  "slug": "skin-revamp-chosen",
+  "tier": "M",
+  "reviewMode": "M 级快审（只读，diff 优先；review-lint 脚本不存在，fileset/linecap 由人工核对）",
+  "verdict": "pass-with-issues",
+  "dimensions": {
+    "符合度": "三皮肤参数与执行书 M1 及原型 pal 逐值一致（L3/T1/R3）；W3 两处封顶 0.2→0.45、sweep/4→sweep*0.45、半径 14→22 与执行书 M4 逐字匹配；P3 bow 1.18→1.10 与 M5 匹配；baseStroke 显式 Brush 基类适配语义正确（usings 齐备，AC1 实跑 0 错误）。例外：T1 渐变描边仅接入换肤就地路径（见 P1）。",
+    "缺陷与边界": "W3 几何安全：maxDeg=0.45*sweep ⇒ daIn+daOut ≤ 0.9*sweep，内缘弧恒 ≥ 0.1*sweep > 0，窄扇区（13 项子环 sweep≈26.5°）无自交/退化；两角同时封顶时呈胶囊端形态（W2 形态，非崩溃）；floor 0.5 保护极窄扇区。P3 bow 1.10 控制点角位 mid±1.1*half 略越扇区角界属二次贝塞尔控制点性质（曲线不越界），较 1.18 收敛，邻瓣重叠风险下降，与 gap 6° 协同无异常。主要缺陷为渐变描边的接线缺口（P1）与硬编码 740（P2）。",
+    "安全与性能": "渐变 Freeze 后线程安全；仅换肤时构造一次，无逐帧成本；TokenBrushes 缓存路径未受影响。硬编码 740 的恒定性推理成立：SkinCatalog.cs:126-129 永远忽略 radius.windowSize 覆盖，DesignTokens.Validate 上限 740（DesignTokens.cs:52），基线 tokens.json windowSize=740——皮肤无法使其漂移；残余风险仅来自基线自身改动或 Build 的 sizeOverride 场景（P2）。",
+    "测试质量": "AC1/AC2 由本审查独立复跑：build 0 错误 0 警告；dotnet test 329/329 全绿。SkinContrastTests 以 Theory 遍历全部静态皮肤（skins.json 三套新配色自动纳入），含非恒真对照用例；测试文件零改动（git status 证实），无弱化/凑绿。豁免门控代码核实：hover 配对仅 HoverFillAlpha≥0.6 才判（retro 0.22 豁免成立）；label/hint 配对仅 SectorFillAlpha≥0.6 才判（translucent 0.07 豁免成立）；light 的真实受检配对（#FAF6EF vs #3F3A31、#B45309 vs #FFFFFF）均实际通过而非被豁免。AC3 探针需发布产物，采信主会话复跑结果；AC4 用户侧，建议重点实测 W3/T1（见 P2-观感风险）。",
+    "分级合规": "tier M 判据内：5 个代码文件、净变更约 60 行、单项目内观感参数调整（非新功能/新项目/UI 框架文件），与变更单 code-files 清单完全一致；git status 无清单外改动。",
+    "执行书符合度": "存在 docs/changes/skin-revamp-chosen-exec.md（委派 prompt 标记 exempt 但文件实际存在，已按其审查）。M1-M5 逐条文本级比对全部落地且无超出：diff 中每一处改动均可对应执行条目；执行书外零改动（注释亦来自执行书原文）。"
+  },
+  "issues": [
+    {
+      "severity": "P1",
+      "file": "src/WinQuick.App/Radial/RadialRingVisual.cs",
+      "line": 503,
+      "dim": "缺陷",
+      "desc": "T1 整窗垂直渐变描边只接入 TryApplySkinInPlace（350-368 行）一条路径，其余描边赋值点全部仍是平色刷：(a) Build 构造 503/540 行用平色 stroke——启动构造（RadialWindow.cs:92）与菜单重建（RadialWindow.cs:346）都走这里，故『启动时已保存 translucent 皮肤』或任何重建后渐变完全缺席；(b) ApplySectorStyle 悬停恢复分支 285 行回平色 TokenBrushes.Brush(SectorStroke, SectorStrokeAlpha)——悬停扫过的扇区渐变永久丢失（childMarkers 294 行连带）；(c) 子环 ChildArc.cs:115/143 构造与 387-389 恢复均为平色——子环永远无渐变。净效果：期望行为 #2 的渲染能力仅在『轮盘开着时从其他皮肤就地切到 translucent』这一场景短暂可见，稳态（重启/重建/悬停后/子环）全部退化为平色白 50%。悬停态本身用平色高亮边（hoverStroke 白 85%）与变更单降级约定相容，不是问题；问题在常态描边的接线缺口。",
+      "suggestion": "把渐变构造提为共享 helper（如 TokenBrushes.BaseStroke(ColorTokens colors, double windowHeight) 或视图私有 CreateBaseStroke(colors)），内部含 StrokeGradient 分支；在 Build 的 503 行、ApplySectorStyle 的 285 行、ChildArc 的 115 行与 387-389 行统一改取该 helper（hover 恢复分支恢复到 baseStroke 而非平色刷），保证四条路径与 TryApplySkinInPlace 产出一致。"
+    },
+    {
+      "severity": "P2",
+      "file": "src/WinQuick.App/Radial/RadialRingVisual.cs",
+      "line": 360,
+      "dim": "缺陷",
+      "desc": "渐变 EndPoint 硬编码 (0, 740) 而非读令牌：运行时恒 740 的推理已核实成立（SkinCatalog.cs:126-129 守卫永远忽略皮肤的 radius.windowSize；DesignTokens.Validate 上限 740；基线即 740），皮肤侧无漂移风险。但 (a) 基线 tokens.json 未来改动会静默漂移（代码注释已声明耦合，却读不到值）；(b) Build(sizeOverride) 传入非 740 尺寸的离屏预览/探针场景下，Absolute 渐变会相对几何错位。两个调用点手头都有完整 DesignTokens（TryApplySkinInPlace 的 next、Build 的 tokens），EditPanel.cs:300 已有读 Radius.WindowSize 的先例。",
+      "suggestion": "EndPoint = new Point(0, tokens.Radius.WindowSize)，把窗口高随令牌传入渐变构造（与 P1 的共享 helper 一并做）。"
+    },
+    {
+      "severity": "P2",
+      "file": "preview/skin-revamp-preview.html",
+      "line": 52,
+      "dim": "符合度",
+      "desc": "观感风险提示（非本次改动文件的缺陷）：预览自身 roundedPath 仍是旧封顶公式（corner=min(cor, sweep*.2)、maxDeg=sweep/4），W3 的 cor:45 在 12 扇区（sweep=30°）下被压到 6px，与 W0『现状对照 cor:6』渲染等价——用户挑定 W3 时在预览里看到的圆角接近现状档。实现按变更单 0.45 封顶+半径 22 是对 W3 meta 文字（『圆角 50% 跨度』）的重建而非预览像素复刻，实际观感会比预览明显更圆。变更单已批该换算（『实测瓶颈在角度封顶』），实现与变更单一致，故不计缺陷；AC4 用户实测时需特别核对 W3 是否符合预期，避免『升级后观感与挑定时不符』回流。",
+      "suggestion": "AC4 实测重点覆盖 W3 与 T1 两档；若观感不符，仅调 Metrics 的 22 与 0.45 两个参数即可，无需结构改动。"
+    }
+  ],
+  "summary": {
+    "p0": 0,
+    "p1": 1,
+    "p2": 2,
+    "checked": [
+      "AC1 编译 0 error：通过（本审查实跑 dotnet build -c Release：0 错误 0 警告）",
+      "AC2 新配色过校验+全量不回退：通过（本审查实跑 dotnet test：329/329 全绿；SkinContrast Theory 覆盖三套新配色；translucent α0.07 与 retro hover α0.22 的豁免门控在代码层核实成立，light 的真实对比配对实际受检通过）",
+      "AC3 换肤探针全过：主会话执行中（需发布产物），本审查未复跑，采信主会话结果——注意探针若断言 SectorStyleForProbe 的 Stroke 值，可顺带暴露 P1（启动路径平色 vs 换肤路径渐变不一致）",
+      "AC4 观感实测（用户侧）：待执行；W3/T1 与预览存在已分析的偏差风险（P2），建议重点核对",
+      "符合度-皮肤参数：L3/T1/R3 三套 overrides.color 与执行书 M1 及原型 pal 逐值一致 ✔",
+      "符合度-W3：0.2→0.45 与 sweep/4→sweep*0.45 两处封顶 + 半径 14→22，与执行书 M4 逐字匹配 ✔",
+      "符合度-P3：bow 1.18→1.10 与执行书 M5 匹配，与花瓣 gap 6° 协同无异常 ✔",
+      "执行书符合度：M1-M5 全部落地，执行书外零改动（git status 与变更单 code-files 完全一致）✔",
+      "分级合规 tier M：文件数/规模/性质在 M 判据内，无 UI 框架文件混入 ✔",
+      "缺陷-几何退化：0.45 封顶下 daIn+daOut ≤ 0.9*sweep，窄扇区无自交/退化，胶囊端为预期形态 ✔",
+      "安全性能：渐变 Freeze、一次构造、无逐帧成本；windowSize=740 恒定推理成立（SkinCatalog 守卫+Validate 上限）✔",
+      "测试质量：测试文件零改动、对照用例防恒真、无凑绿 ✔"
+    ]
+  },
+  "postscript": "fix1 后记：P1（渐变描边仅接一条路径）已修复——抽静态 CreateSectorStroke(colors, windowSize) 统一五处赋值点（Build 构造/就地换肤/悬停恢复/子环×2/AddPlaceholder），平色直建仅剩 helper 内 1 处（grep 核实）；P2-1（EndPoint 硬编码 740）随 helper 读 Radius.WindowSize 一并修复；P2-2（原型 W3 预览封顶失真）为原型已知项、AC4 实测重点。编译 0 错、329 全绿、skin-probe 复跑全过。verdict 维持 pass-with-issues（余项仅 P2-2 原型注记）。"
+}

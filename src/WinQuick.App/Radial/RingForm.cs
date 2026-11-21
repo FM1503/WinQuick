@@ -75,7 +75,7 @@ public static class RingForms
     public static (double Inner, double Outer, double CornerRadius, double GapDegrees) Metrics(
         RingForm form, double deadZone, double ring1Outer, double baseGap) => form switch
     {
-        RingForm.Rounded => (deadZone, ring1Outer, 14, baseGap),
+        RingForm.Rounded => (deadZone, ring1Outer, 22, baseGap),
         RingForm.Petal => (deadZone + 12, ring1Outer, 0, Math.Max(baseGap, 6.0)),
         RingForm.Dial => (deadZone, ring1Outer * 0.88, 0, baseGap),
         _ => (deadZone, ring1Outer, 0, baseGap),

@@ -1,0 +1,8 @@
+{
+  "records": [
+    { "item": "AC1 编译 0 error（M 变更+fix1 后实测）", "command": "dotnet build src/WinQuick.App/WinQuick.App.csproj -c Release --nologo", "durationMs": 30000, "result": "pass" },
+    { "item": "AC2 新配色过校验+全量 329/329（SkinContrast 含三套新配色；translucent α0.07 与 retro hover α0.22 走 alpha 门控豁免路径）", "command": "dotnet test tests/WinQuick.Core.Tests --nologo", "durationMs": 90000, "result": "pass" },
+    { "item": "AC3 skin-probe 全过（换肤链路在新配色与渐变描边下无恙）", "command": "publish/probes/WinQuick.Probes.exe --skin-probe", "durationMs": 60000, "result": "pass" }
+  ],
+  "summary": { "passed": 3, "failed": 0, "deferred": "AC4 观感实测（三皮肤两形态 vs 原型一致性；W3 实际比预览更圆、T1 悬停为平色高亮边——随 v1.1.4 用户验证）" }
+}

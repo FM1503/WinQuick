@@ -307,6 +307,12 @@ public sealed record ColorTokens
     public double HintAlpha { get; init; } = 0.55;
     public string BadgeFill { get; init; } = "#000000";
     public double BadgeFillAlpha { get; init; } = 0.35;
+
+    /// <summary>
+    /// 玻璃拟态描边（skin-revamp T1）：整窗垂直渐变描边替代平色边。
+    /// SectorStroke/SectorStrokeAlpha 此时作为渐变的两端基色（上端亮、下端暗）。
+    /// </summary>
+    public bool StrokeGradient { get; init; }
 }
 
 public sealed record RadiusTokens

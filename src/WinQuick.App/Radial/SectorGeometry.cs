@@ -101,11 +101,13 @@ public static class SectorGeometry
         double startDeg, double endDeg, double cornerRadius)
     {
         var sweep = endDeg - startDeg;
-        var corner = Math.Max(0.5, Math.Min(cornerRadius, sweep * 0.2));
+        var corner = Math.Max(0.5, Math.Min(cornerRadius, sweep * 0.45));
 
         // 角在角度上的占位：弧长 = r·θ，所以 θ = corner / r（弧度）。
         // 上限取 1/4 跨度，防止窄扇区上两个角撞在一起导致图形退化。
-        var maxDeg = sweep / 4;
+        // W3 大圆角（skin-revamp 用户挑定）：角度封顶从 sweep/4 放宽到 0.45 倍 ——
+        // 实测瓶颈在角度封顶而非传入的半径值（14px 早已被 7.5° 封死）。
+        var maxDeg = sweep * 0.45;
         var daIn = Math.Min(corner / innerRadius * 180.0 / Math.PI, maxDeg);
         var daOut = Math.Min(corner / outerRadius * 180.0 / Math.PI, maxDeg);
         var isLarge = sweep > 180;
@@ -145,7 +147,8 @@ public static class SectorGeometry
         var mid = (startDeg + endDeg) / 2;
         var half = (endDeg - startDeg) / 2;
         var waist = innerRadius + ((outerRadius - innerRadius) * 0.5);
-        var bow = half * 1.18;
+        // P3 柔化（skin-revamp 用户挑定）：外凸从 1.18 收到 1.10 —— 叶感保留、臃肿感去掉。
+        var bow = half * 1.10;
         var isLarge = (endDeg - startDeg) > 180;
 
         var figure = new PathFigure

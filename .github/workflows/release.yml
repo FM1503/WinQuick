@@ -37,8 +37,6 @@ jobs:
         # 公开仓库默认 GITHUB_TOKEN 即可（permissions 已声明 contents: write）。
         run: |
           dotnet tool install -g vpk
-          vpk download github --repoUrl https://github.com/FM1503/WinQuick
+          vpk download github --repoUrl https://github.com/FM1503/WinQuick --token ${{ secrets.GITHUB_TOKEN }}
           vpk pack -u WinQuick -v ${{ steps.ver.outputs.version }} -p publish --channel win-x64 --mainExe WinQuick.exe
-          vpk upload github --repoUrl https://github.com/FM1503/WinQuick --publish --releaseName "WinQuick ${{ steps.ver.outputs.version }}" --tag $env:GITHUB_REF_NAME
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          vpk upload github --repoUrl https://github.com/FM1503/WinQuick --publish --releaseName "WinQuick ${{ steps.ver.outputs.version }}" --tag $env:GITHUB_REF_NAME --token ${{ secrets.GITHUB_TOKEN }}

@@ -97,6 +97,18 @@ public sealed record DesignTokens
                 "悬停时文字读不出来 —— 纯色块底要配深色字");
         }
 
+        // 皮肤对比度全配对（spec skin-formalization §6）：浅色皮肤暴露出「只查 hover 一对」的缺口 ——
+        // 正文/次级文字贴着扇区底，任一配对亮度太接近都是「内容读不出来」。
+        // 半透明填充（alpha<0.6）下文字的实际底色由桌面/下层决定，校验无从判断 ——
+        // 与 hover 块同一门控豁免（translucent 玻璃皮肤的白字渲染无碍，不属误报范围）。
+        // badge（角标）经核实为纯色块无文字（RadialRingVisual.cs:981 仅 Fill），无文字配对可查，如实豁免。
+        if (Color.SectorFillAlpha >= 0.6 && ContrastIsLow(Color.SectorFill, Color.Label))
+            problems.Add(
+                $"color.sectorFill（{Color.SectorFill}）与 color.label（{Color.Label}）亮度太接近 —— 正文读不出来");
+        if (Color.SectorFillAlpha >= 0.6 && ContrastIsLow(Color.SectorFill, Color.Hint))
+            problems.Add(
+                $"color.sectorFill（{Color.SectorFill}）与 color.hint（{Color.Hint}）亮度太接近 —— 次级文字读不出来");
+
         // 缓动曲线必须能解析，否则动画会静默退化成默认曲线。
         // 用一张表遍历而不是逐个 if：漏掉一条（曾经就漏过 childArcEasing）不会有任何报错，
         // 而"某个通道悄悄用了别的曲线"正是肉眼看得出来、代码上却不显眼的那类问题。
@@ -113,6 +125,16 @@ public sealed record DesignTokens
         foreach (var (name, value) in easings)
             if (!MotionTokens.IsValidEasing(value))
                 problems.Add($"motion.{name} 无法解析: {value}");
+
+        // 动效过冲上限（M3 规矩规则化，spec §3）：可见过冲是 M3 expressive 的官方档位 ——
+        // 基线入场 Y1=1.56、霓虹 1.8 都在「可见过冲」的等效区间（damping≈0.8 对应贝塞尔 y1≈1.5-2.0），
+        // 属用户已实测定稿的既有动画，规则不得否决它们；上限 2.0 拦的是「弹飞」级极端。
+        // 过冲只应出现在 transform 类通道（Scale/Rotate/Bulge/Slide）；透明度通道必须临界阻尼。
+        foreach (var (name, value) in easings)
+        {
+            if (MotionTokens.TryParseEasing(value, out var p) && (p.Y1 > 2.0 || p.Y2 > 2.0))
+                problems.Add($"motion.{name}（{value}）过冲超出上限（控制点 y ≤ 2.0）—— M3 expressive 的可见过冲档不含这种幅度");
+        }
 
         // 子项错开的相位差：上限取 80ms —— 再多就不是"依次"而是"一个一个慢慢来"了。
         if (Motion.ChildStaggerMs is < 0 or > 80)

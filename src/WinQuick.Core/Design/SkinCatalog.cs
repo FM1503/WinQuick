@@ -93,10 +93,19 @@ public sealed class SkinCatalog
         var spec = Find(skinId);
         if (spec?.Overrides is null) return baseTokensJson;
 
+        return MergeWithOverrides(baseTokensJson, spec.Overrides);
+    }
+
+    /// <summary>
+    /// 把指定 overrides 合并到基线 JSON —— Merge 的后半段（接受 JsonObject），
+    /// 供 App 侧运行时合成的皮肤（「跟随系统」，spec §5）复用，与静态皮肤同一条路径。
+    /// </summary>
+    public string MergeWithOverrides(string baseTokensJson, JsonObject overrides)
+    {
         var root = JsonNode.Parse(baseTokensJson) as JsonObject
             ?? throw new InvalidOperationException("tokens.json 解析结果不是 JSON 对象");
 
-        ApplyOverrides(root, spec.Overrides);
+        ApplyOverrides(root, overrides);
         return root.ToJsonString();
     }
 

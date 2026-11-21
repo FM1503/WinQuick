@@ -52,6 +52,7 @@ public sealed class ResidentHost : IDisposable
     private readonly HotkeyManager _hotkeys;
     private readonly OverlayController _overlay;
     private readonly SessionWatcher _session;
+    private readonly SystemThemeWatcher _systemTheme;
     private readonly TrayHost _tray;
 
     /// <summary>更新检查器。「关于与更新」分区与启动静默检查共用一份（含已下载状态）。</summary>
@@ -71,6 +72,20 @@ public sealed class ResidentHost : IDisposable
         _overlay = new OverlayController(_menu);
         _overlay.ApplyDimOpacity(_config.Config.Appearance.DimOpacity);
         _session = new SessionWatcher();
+        _systemTheme = new SystemThemeWatcher();
+        // 「跟随系统」皮肤在系统切明暗/强调色时即时重应用（spec §5）。
+        // 只有当前皮肤就是 system 时才动 —— 别的皮肤不该被系统主题打断。
+        _systemTheme.ThemeChanged += (_, _) =>
+        {
+            if (TokenStore.CurrentSkinId != SystemSkin.Id) return;
+            RunOnUi(() =>
+            {
+                TokenStore.ApplySkin(SystemSkin.Id);
+                // 轮盘把令牌缓存在自己身上，必须显式重建（同 OnSkinChanged）；
+                // 形态从配置取，与 ApplyConfiguredAppearance 同一条路径。
+                _overlay.RebuildForAppearance(RingForms.Parse(_config.Config.Appearance.Form));
+            });
+        };
         _tray = new TrayHost(_overlay);
 
         // 托盘「设置…」的回调在这条装配线上注入：托盘自己不认识设置窗口，
@@ -877,6 +892,7 @@ public sealed class ResidentHost : IDisposable
         ActionExecutor.Completed -= OnActionCompleted;
         _hotkeys.Dispose();
         _session.Dispose();
+        _systemTheme.Dispose();
         _tray.Dispose();
         _overlay.Dispose();
         _singleInstance.Dispose();

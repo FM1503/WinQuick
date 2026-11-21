@@ -521,7 +521,7 @@ public partial class SettingsPanel : Window
             Margin = new Thickness(2),
             CornerRadius = new CornerRadius(4),
             Background = TokenBrushes.Brush(hex),
-            BorderBrush = TokenBrushes.Brush("#FFFFFF", 0.15),
+            BorderBrush = TokenResources.Brush("Color.Outline"),
             BorderThickness = new Thickness(1),
             Cursor = Cursors.Hand,
             ToolTip = hex,
@@ -538,8 +538,8 @@ public partial class SettingsPanel : Window
             Width = 22,
             Height = 22,
             CornerRadius = new CornerRadius(4),
-            Background = TokenBrushes.Brush("#2A2F3A"),
-            BorderBrush = TokenBrushes.Brush("#FFFFFF", 0.15),
+            Background = TokenResources.Brush("Color.SurfaceSolid"),
+            BorderBrush = TokenResources.Brush("Color.Outline"),
             BorderThickness = new Thickness(1),
             Cursor = Cursors.Hand,
             ToolTip = "默认（清掉自定义色）",
@@ -548,7 +548,7 @@ public partial class SettingsPanel : Window
         {
             Width = 26,
             Height = 2,
-            Fill = TokenBrushes.Brush("#E08A7A"),
+            Fill = TokenResources.Brush("Color.Danger"),
             RenderTransform = new System.Windows.Media.RotateTransform(-32),
         };
         cell.Child = slash;
@@ -965,7 +965,7 @@ public partial class SettingsPanel : Window
         // 悬停底色靠一个铺满的 Border（Grid 本身没有背景可言，设了也拿不到鼠标事件的视觉反馈）。
         row.Children.Add(new Border
         {
-            Background = TokenBrushes.Brush("#FFFFFF", 0.045),
+            Background = TokenResources.Brush("Color.HoverSurface"),
             CornerRadius = new CornerRadius(3),
             Visibility = Visibility.Collapsed,
             IsHitTestVisible = false,
@@ -1070,7 +1070,7 @@ public partial class SettingsPanel : Window
             {
                 Height = 1,
                 VerticalAlignment = VerticalAlignment.Bottom,
-                Background = TokenBrushes.Brush("#FFFFFF", 0.05),
+                Background = TokenResources.Brush("Color.HoverSurface"),
                 IsHitTestVisible = false,
             };
             Grid.SetColumnSpan(separator, 3);

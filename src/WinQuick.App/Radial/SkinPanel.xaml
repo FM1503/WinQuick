@@ -86,21 +86,21 @@
                            FontFamily="{DynamicResource Wq.Font.Family}"
                            FontSize="{DynamicResource Wq.Font.BodySize}"
                            FontWeight="SemiBold" VerticalAlignment="Center" />
-                <Button Grid.Column="1" Style="{StaticResource FlatButton}" Content="✕"
+                <Button Grid.Column="1" Style="{DynamicResource FlatButton}" Content="✕"
                         Click="OnCloseClick" />
             </Grid>
 
             <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="560">
                 <StackPanel>
-                    <TextBlock Text="皮肤（材质 + 动效）" Style="{StaticResource Section}" />
+                    <TextBlock Text="皮肤（材质 + 动效）" Style="{DynamicResource Section}" />
                     <StackPanel x:Name="SkinList" />
 
-                    <TextBlock Text="盘面形态" Style="{StaticResource Section}" />
+                    <TextBlock Text="盘面形态" Style="{DynamicResource Section}" />
                     <StackPanel x:Name="FormList" />
-                    <TextBlock Style="{StaticResource Hint}"
+                    <TextBlock Style="{DynamicResource Hint}"
                                Text="形态与皮肤正交：皮肤换材质与动效，形态换单元的外形。四种形态共用同一套角度区间，命中与交互不变。" />
 
-                    <TextBlock x:Name="FooterStatus" Style="{StaticResource Hint}" Margin="0,12,0,0" />
+                    <TextBlock x:Name="FooterStatus" Style="{DynamicResource Hint}" Margin="0,12,0,0" />
                 </StackPanel>
             </ScrollViewer>
         </StackPanel>

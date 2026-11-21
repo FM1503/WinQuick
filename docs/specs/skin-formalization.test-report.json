@@ -1,0 +1,9 @@
+{
+  "records": [
+    { "item": "AC1 编译 0 error（App/Probes/Core 三工程，R1-R3+fix1-3 多轮实测）", "command": "dotnet build src/WinQuick.App/WinQuick.App.csproj -c Release --nologo", "durationMs": 60000, "result": "pass" },
+    { "item": "AC2 皮肤对比度单测 8/8（7 套 Theory+1 可失败对照；alpha 门控豁免半透明皮肤）", "command": "dotnet test tests/WinQuick.Core.Tests --filter SkinContrast --nologo", "durationMs": 60000, "result": "pass" },
+    { "item": "AC3 全量单测 329/329 基线不回退", "command": "dotnet test tests/WinQuick.Core.Tests --nologo", "durationMs": 90000, "result": "pass" },
+    { "item": "AC4 skin-probe 全过（明暗翻转/派生键翻转/system 两态校验/强调色映射/ApplySkin 识别/对照成立；过程含两轮真拦截→修复：#4CC2FF 白字→深字→按强调色亮度自动取色，数据 artifacts/m4/skin.txt）", "command": "publish/probes/WinQuick.Probes.exe --skin-probe", "durationMs": 60000, "result": "pass" }
+  ],
+  "summary": { "passed": 4, "failed": 0, "deferred": "AC5 浅色皮肤实测、AC6 面板跟随换肤实测、AC7 跟随系统联动实测——随 v1.1.3 发布后用户验证" }
+}

@@ -131,6 +131,10 @@ internal static class ProbesHost
                 RunDetached(app, () => LevelProbe.RunAsync(cli));
                 break;
 
+            case "--skin-probe":
+                RunDetached(app, () => SkinProbe.RunAsync(cli));
+                break;
+
             case "--render-preview":
                 RenderPreview.Run(cli);
                 ExitSoon(app);
@@ -211,6 +215,7 @@ internal static class ProbesHost
 
         面板、标签与动画
           --settings-probe          设置界面：XAML 加载、保存路径、留空语义、非法输入反馈
+          --skin-probe              换肤链路：资源翻转、system 两态合成、default→default 对照
           --label-probe             标签：超长文本的截断方式、悬停是否位移、中心读出完整文字
           --perf-probe              帧间隔分布：扫过扇区与子弧动画，测流畅度的可比值
               --ms=N                每个扇区停留毫秒，默认 90

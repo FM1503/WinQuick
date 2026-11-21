@@ -82,7 +82,9 @@ public partial class SkinPanel : Window
             _skinRows.Clear();
             _formRows.Clear();
             SkinList.Children.Clear();
-            foreach (var skin in _catalog.All)
+            // 第八项「跟随系统」：静态目录之外的运行时合成皮肤，只挂名（spec §5）。
+            var items = _catalog.All.Append(SystemSkin.Spec()).ToList();
+            foreach (var skin in items)
             {
                 var (row, swatches) = BuildSkinRow(skin);
                 SkinList.Children.Add(row);
@@ -231,7 +233,7 @@ public partial class SkinPanel : Window
         Margin = new Thickness(left, 0, 0, 0),
         CornerRadius = new CornerRadius(4),
         Background = TokenBrushes.Brush(hex, alpha),
-        BorderBrush = TokenBrushes.Brush("#FFFFFF", 0.18),
+        BorderBrush = TokenResources.Brush("Color.Outline"),
         BorderThickness = new Thickness(1),
     };
 
@@ -263,7 +265,7 @@ public partial class SkinPanel : Window
         // 选中态本来只改若干 Border 的画刷，没有任何新元素需要创建。
         UpdateSelectionVisuals();
 
-        FooterStatus.Text = $"已切换到「{_catalog.Find(skinId)?.Name ?? SkinCatalog.DefaultId}」" +
+        FooterStatus.Text = $"已切换到「{(skinId == SystemSkin.Id ? SystemSkin.Spec().Name : _catalog.Find(skinId)?.Name ?? SkinCatalog.DefaultId)}」" +
                             $"·形态「{RingForms.NameOf(form)}」，立刻生效并已自动保存。";
     }
 

@@ -125,11 +125,11 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#08FFFFFF" />
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Wq.Color.HoverSurface}" />
                                 <Setter Property="Foreground" Value="{DynamicResource Wq.Color.Text}" />
                             </Trigger>
                             <Trigger Property="IsSelected" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#10FFFFFF" />
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Wq.Color.HoverSurface}" />
                                 <Setter TargetName="Bd" Property="BorderBrush"
                                         Value="{DynamicResource Wq.Color.Accent}" />
                                 <Setter Property="Foreground" Value="{DynamicResource Wq.Color.Text}" />
@@ -163,7 +163,7 @@
                     CornerRadius="8,0,0,8">
                 <ListBox x:Name="NavList"
                          Background="Transparent" BorderThickness="0"
-                         ItemContainerStyle="{StaticResource NavItem}"
+                         ItemContainerStyle="{DynamicResource NavItem}"
                          Margin="0,10,0,10"
                          SelectionChanged="OnNavChanged">
                     <ListBoxItem>热键</ListBoxItem>
@@ -191,22 +191,23 @@
                     CornerRadius="{DynamicResource Wq.Size.CornerRadius}" Padding="12">
                 <StackPanel>
                     <StackPanel x:Name="FlyPalette">
-                        <TextBlock x:Name="FlyRecentLabel" Style="{StaticResource Hint}"
+                        <TextBlock x:Name="FlyRecentLabel" Style="{DynamicResource Hint}"
                                    Text="最近使用" Visibility="Collapsed" />
                         <UniformGrid x:Name="FlyRecent" Columns="8" Margin="0,4,0,0" Visibility="Collapsed" />
-                        <TextBlock Style="{StaticResource Hint}" Text="常用颜色" Margin="0,2,0,4" />
+                        <TextBlock Style="{DynamicResource Hint}" Text="常用颜色" Margin="0,2,0,4" />
                         <UniformGrid x:Name="FlyGrid" Columns="8" />
                         <Grid Margin="0,10,0,0">
                             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                 <ContentControl x:Name="FlyDefaultHost" />
-                                <TextBlock Style="{StaticResource Hint}" Margin="8,0,0,0"
+                                <TextBlock Style="{DynamicResource Hint}" Margin="8,0,0,0"
                                            Text="默认（清掉自定义色）" VerticalAlignment="Center" />
                             </StackPanel>
                             <Button x:Name="FlyMore" HorizontalAlignment="Right"
-                                    Style="{StaticResource FlatButton}" Content="更多颜色…"
+                                    Style="{DynamicResource FlatButton}" Content="更多颜色…"
                                     Click="OnFlyMoreClick" />
                         </Grid>
                     </StackPanel>
+                    <!-- 功能色（HSV 拾色器的色相环/饱和度轨/游标描边）：表达的是色彩空间本身，不随皮肤明暗翻转 —— 刻意不令牌化（spec skin-formalization 边界）。 -->
                     <StackPanel x:Name="FlyHsv" Visibility="Collapsed">
                         <Grid x:Name="SvSquare" Width="242" Height="118" ClipToBounds="True" Cursor="Cross">
                             <Rectangle x:Name="SvBase" Fill="#FF0000" />
@@ -263,14 +264,14 @@
                         <Grid Margin="0,10,0,0">
                             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                 <ContentControl x:Name="FlyDefaultHost2" />
-                                <TextBlock Style="{StaticResource Hint}" Margin="8,0,0,0"
+                                <TextBlock Style="{DynamicResource Hint}" Margin="8,0,0,0"
                                            Text="默认（清掉自定义色）" VerticalAlignment="Center" />
                             </StackPanel>
                             <Button x:Name="FlyBack" HorizontalAlignment="Right"
-                                    Style="{StaticResource FlatButton}" Content="返回色板"
+                                    Style="{DynamicResource FlatButton}" Content="返回色板"
                                     Click="OnFlyBackClick" />
                         </Grid>
-                        <TextBox x:Name="FlyHex" Style="{StaticResource Field}" Width="100"
+                        <TextBox x:Name="FlyHex" Style="{DynamicResource Field}" Width="100"
                                  Margin="0,8,0,0" HorizontalAlignment="Left" FontFamily="Consolas"
                                  ToolTip="#RRGGBB；输完整才生效" />
                     </StackPanel>
@@ -289,8 +290,8 @@
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <TextBlock x:Name="PageHeader" Grid.Column="0" Text="热键"
-                               Style="{StaticResource PageTitle}" VerticalAlignment="Center" />
-                    <Button Grid.Column="1" Style="{StaticResource FlatButton}"
+                               Style="{DynamicResource PageTitle}" VerticalAlignment="Center" />
+                    <Button Grid.Column="1" Style="{DynamicResource FlatButton}"
                             Padding="9,2" Content="✕" Click="OnCloseClick"
                             ToolTip="关闭设置（Esc）" />
                 </Grid>
@@ -305,12 +306,12 @@
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <Button Grid.Column="0" Style="{StaticResource FlatButton}"
+                        <Button Grid.Column="0" Style="{DynamicResource FlatButton}"
                                 Content="打开配置文件夹" Click="OnOpenFolderClick" />
-                        <Button Grid.Column="2" Style="{StaticResource FlatButton}"
+                        <Button Grid.Column="2" Style="{DynamicResource FlatButton}"
                                 Content="恢复默认" Click="OnResetClick" />
                     </Grid>
-                    <TextBlock x:Name="FooterStatus" Style="{StaticResource Hint}" Margin="0,10,0,0"
+                    <TextBlock x:Name="FooterStatus" Style="{DynamicResource Hint}" Margin="0,10,0,0"
                                MinHeight="{DynamicResource Wq.Size.FooterMinHeight}"
                                Text="改动即时生效并自动保存。" />
                 </StackPanel>
@@ -322,43 +323,43 @@
                     <Grid>
                         <!-- ============ 热键 ============ -->
                         <StackPanel x:Name="PageHotkey">
-                            <TextBlock Style="{StaticResource PageDesc}"
+                            <TextBlock Style="{DynamicResource PageDesc}"
                                        Text="唤出轮盘的组合键。选一个预设，或选「自定义…」后直接按下组合键。" />
-                            <Border Style="{StaticResource GroupCard}" Margin="0,10,0,0">
+                            <Border Style="{DynamicResource GroupCard}" Margin="0,10,0,0">
                                 <StackPanel Margin="14,10,14,12">
-                                    <TextBlock Style="{StaticResource CardTitle}" Text="预设" />
+                                    <TextBlock Style="{DynamicResource CardTitle}" Text="预设" />
                                     <ComboBox x:Name="PresetBox" Margin="0,7,0,0"
                                               HorizontalAlignment="Left" MinWidth="180"
                                               SelectionChanged="OnPresetChanged"
                                               ToolTip="挑一个不易与系统或其他软件冲突的组合" />
                                 </StackPanel>
                             </Border>
-                            <Border Style="{StaticResource GroupCard}" Margin="0,8,0,0">
+                            <Border Style="{DynamicResource GroupCard}" Margin="0,8,0,0">
                                 <StackPanel Margin="14,10,14,12">
-                                    <TextBlock Style="{StaticResource CardTitle}" Text="自定义" />
+                                    <TextBlock Style="{DynamicResource CardTitle}" Text="自定义" />
                                     <Grid Margin="0,7,0,0">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*" />
                                             <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
-                                        <TextBox x:Name="HotkeyBox" Grid.Column="0" Style="{StaticResource Field}"
+                                        <TextBox x:Name="HotkeyBox" Grid.Column="0" Style="{DynamicResource Field}"
                                                  IsReadOnly="True" FontSize="15"
                                                  PreviewKeyDown="OnHotkeyKeyDown"
                                                  GotKeyboardFocus="OnHotkeyFocused"
                                                  ToolTip="点这里然后按下想要的组合键" />
-                                        <Button x:Name="TestButton" Grid.Column="1" Style="{StaticResource FlatButton}"
+                                        <Button x:Name="TestButton" Grid.Column="1" Style="{DynamicResource FlatButton}"
                                                 Margin="8,0,0,0" Content="测试" Click="OnTestHotkeyClick" />
                                     </Grid>
-                                    <TextBlock x:Name="HotkeyStatus" Style="{StaticResource Hint}" Margin="0,6,0,0" />
+                                    <TextBlock x:Name="HotkeyStatus" Style="{DynamicResource Hint}" Margin="0,6,0,0" />
                                 </StackPanel>
                             </Border>
                         </StackPanel>
 
                         <!-- ============ 外观 ============ -->
                         <StackPanel x:Name="PageLook" Visibility="Collapsed">
-                            <TextBlock Style="{StaticResource PageDesc}"
+                            <TextBlock Style="{DynamicResource PageDesc}"
                                        Text="材质与遮罩。改动立刻在旁边的轮盘上可见。" />
-                            <Border Style="{StaticResource GroupCard}" Margin="0,10,0,0">
+                            <Border Style="{DynamicResource GroupCard}" Margin="0,10,0,0">
                                 <Grid Margin="14,10,14,10">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
@@ -366,29 +367,29 @@
                                         <ColumnDefinition Width="Auto" MinWidth="52" />
                                     </Grid.ColumnDefinitions>
                                     <StackPanel>
-                                        <TextBlock Style="{StaticResource CardTitle}" Text="遮罩深浅" />
-                                        <TextBlock Style="{StaticResource CardDesc}"
+                                        <TextBlock Style="{DynamicResource CardTitle}" Text="遮罩深浅" />
+                                        <TextBlock Style="{DynamicResource CardDesc}"
                                                    Text="唤出时压暗背景的程度；40% 是默认值" />
                                     </StackPanel>
                                     <Slider x:Name="DimSlider" Grid.Column="1" Width="150" Margin="14,0"
                                             Minimum="0" Maximum="0.9" TickFrequency="0.05"
                                             IsSnapToTickEnabled="True" ValueChanged="OnDimChanged" />
-                                    <TextBlock x:Name="DimValue" Grid.Column="2" Style="{StaticResource Caption}"
+                                    <TextBlock x:Name="DimValue" Grid.Column="2" Style="{DynamicResource Caption}"
                                                TextAlignment="Right" />
                                 </Grid>
                             </Border>
-                            <Border Style="{StaticResource GroupCard}" Margin="0,8,0,0">
+                            <Border Style="{DynamicResource GroupCard}" Margin="0,8,0,0">
                                 <Grid Margin="14,10,14,10">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <StackPanel>
-                                        <TextBlock Style="{StaticResource CardTitle}" Text="悬停高亮色" />
-                                        <TextBlock Style="{StaticResource CardDesc}"
+                                        <TextBlock Style="{DynamicResource CardTitle}" Text="悬停高亮色" />
+                                        <TextBlock Style="{DynamicResource CardDesc}"
                                                    Text="点色块选颜色；「默认」= 沿用设计基线" />
                                     </StackPanel>
-                                    <Button x:Name="AccentButton" Grid.Column="1" Style="{StaticResource FlatButton}"
+                                    <Button x:Name="AccentButton" Grid.Column="1" Style="{DynamicResource FlatButton}"
                                             Padding="4,3" Click="OnAccentButtonClick"
                                             ToolTip="点击选择颜色">
                                         <StackPanel Orientation="Horizontal">
@@ -404,18 +405,18 @@
                                     </Button>
                                 </Grid>
                             </Border>
-                            <Border Style="{StaticResource GroupCard}" Margin="0,8,0,0">
+                            <Border Style="{DynamicResource GroupCard}" Margin="0,8,0,0">
                                 <Grid Margin="14,10,14,10">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <StackPanel>
-                                        <TextBlock Style="{StaticResource CardTitle}" Text="皮肤与形态" />
-                                        <TextBlock Style="{StaticResource CardDesc}"
+                                        <TextBlock Style="{DynamicResource CardTitle}" Text="皮肤与形态" />
+                                        <TextBlock Style="{DynamicResource CardDesc}"
                                                    Text="换皮肤同时改材质与动效；形态换单元外形" />
                                     </StackPanel>
-                                    <Button Grid.Column="1" Style="{StaticResource FlatButton}"
+                                    <Button Grid.Column="1" Style="{DynamicResource FlatButton}"
                                             Content="打开…" Click="OnSkinClick" />
                                 </Grid>
                             </Border>
@@ -423,32 +424,32 @@
 
                         <!-- ============ 行为 ============ -->
                         <StackPanel x:Name="PageBehavior" Visibility="Collapsed">
-                            <TextBlock Style="{StaticResource PageDesc}"
+                            <TextBlock Style="{DynamicResource PageDesc}"
                                        Text="（悬停展开/收起延迟两项已随「点击展开」移除 —— 悬停不再展开子菜单。）" />
-                            <Border Style="{StaticResource GroupCard}" Margin="0,10,0,0">
+                            <Border Style="{DynamicResource GroupCard}" Margin="0,10,0,0">
                                 <Grid Margin="14,10,14,10">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <StackPanel>
-                                        <TextBlock Style="{StaticResource CardTitle}" Text="动画" />
-                                        <TextBlock Style="{StaticResource CardDesc}"
+                                        <TextBlock Style="{DynamicResource CardTitle}" Text="动画" />
+                                        <TextBlock Style="{DynamicResource CardDesc}"
                                                    Text="跟随系统「显示动画」设置，或强制开/关" />
                                     </StackPanel>
                                     <ComboBox x:Name="AnimationsBox" Grid.Column="1" Width="120"
                                               SelectionChanged="OnAnimationsChanged" />
                                 </Grid>
                             </Border>
-                            <Border Style="{StaticResource GroupCard}" Margin="0,8,0,0">
+                            <Border Style="{DynamicResource GroupCard}" Margin="0,8,0,0">
                                 <Grid Margin="14,10,14,10">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <StackPanel>
-                                        <TextBlock Style="{StaticResource CardTitle}" Text="失去焦点时关闭" />
-                                        <TextBlock Style="{StaticResource CardDesc}"
+                                        <TextBlock Style="{DynamicResource CardTitle}" Text="失去焦点时关闭" />
+                                        <TextBlock Style="{DynamicResource CardDesc}"
                                                    Text="点别的窗口时轮盘自动收起" />
                                     </StackPanel>
                                     <CheckBox x:Name="HideOnFocusLossBox" Grid.Column="1"
@@ -459,33 +460,33 @@
 
                         <!-- ============ 菜单 ============ -->
                         <StackPanel x:Name="PageMenu" Visibility="Collapsed">
-                            <TextBlock Style="{StaticResource PageDesc}"
+                            <TextBlock Style="{DynamicResource PageDesc}"
                                        Text="加项/建分组都在轮盘上操作，这里只留说明与配置文件入口。" />
-                            <Border Style="{StaticResource GroupCard}" Margin="0,10,0,0">
+                            <Border Style="{DynamicResource GroupCard}" Margin="0,10,0,0">
                                 <StackPanel Margin="14,10,14,12">
-                                    <TextBlock Style="{StaticResource CardTitle}" Text="怎么加项" />
-                                    <TextBlock Style="{StaticResource CardDesc}" Margin="0,3,0,0"
+                                    <TextBlock Style="{DynamicResource CardTitle}" Text="怎么加项" />
+                                    <TextBlock Style="{DynamicResource CardDesc}" Margin="0,3,0,0"
                                                Text="编辑态下点外圈末尾的「＋」选程序；子环里的「＋」加进该子菜单。" />
-                                    <TextBlock Style="{StaticResource CardTitle}" Text="怎么建分组" Margin="0,9,0,0" />
-                                    <TextBlock Style="{StaticResource CardDesc}" Margin="0,3,0,0"
+                                    <TextBlock Style="{DynamicResource CardTitle}" Text="怎么建分组" Margin="0,9,0,0" />
+                                    <TextBlock Style="{DynamicResource CardDesc}" Margin="0,3,0,0"
                                                Text="点「＋」后选「新建分组…」；子环里的「＋」也能建 —— 建出来的是更深一级。点开分组还能继续往下。" />
-                                    <TextBlock Style="{StaticResource CardTitle}" Text="改名 / 移除" Margin="0,9,0,0" />
-                                    <TextBlock Style="{StaticResource CardDesc}" Margin="0,3,0,0"
+                                    <TextBlock Style="{DynamicResource CardTitle}" Text="改名 / 移除" Margin="0,9,0,0" />
+                                    <TextBlock Style="{DynamicResource CardDesc}" Margin="0,3,0,0"
                                                Text="在扇区上点右键。改动立刻生效，覆盖层不会关闭。" />
                                 </StackPanel>
                             </Border>
-                            <Border Style="{StaticResource GroupCard}" Margin="0,8,0,0">
+                            <Border Style="{DynamicResource GroupCard}" Margin="0,8,0,0">
                                 <Grid Margin="14,10,14,10">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <StackPanel>
-                                        <TextBlock Style="{StaticResource CardTitle}" Text="menus.json" />
-                                        <TextBlock Style="{StaticResource CardDesc}"
+                                        <TextBlock Style="{DynamicResource CardTitle}" Text="menus.json" />
+                                        <TextBlock Style="{DynamicResource CardDesc}"
                                                    Text="手动批量编辑配置文件；改坏了不影响已生效的那份" />
                                     </StackPanel>
-                                    <Button Grid.Column="1" Style="{StaticResource FlatButton}"
+                                    <Button Grid.Column="1" Style="{DynamicResource FlatButton}"
                                             Content="打开" Click="OnOpenMenuFileClick" />
                                 </Grid>
                             </Border>
@@ -493,7 +494,7 @@
 
                         <!-- ============ 启动 ============ -->
                         <StackPanel x:Name="PageStartup" Visibility="Collapsed">
-                            <Border Style="{StaticResource GroupCard}" Margin="0,0,0,0">
+                            <Border Style="{DynamicResource GroupCard}" Margin="0,0,0,0">
                                 <StackPanel Margin="14,10,14,12">
                                     <Grid>
                                         <Grid.ColumnDefinitions>
@@ -501,8 +502,8 @@
                                             <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
                                         <StackPanel>
-                                            <TextBlock Style="{StaticResource CardTitle}" Text="开机自启" />
-                                            <TextBlock Style="{StaticResource CardDesc}"
+                                            <TextBlock Style="{DynamicResource CardTitle}" Text="开机自启" />
+                                            <TextBlock Style="{DynamicResource CardDesc}"
                                                        Text="登录后自动驻留（热键随时唤出）" />
                                         </StackPanel>
                                         <CheckBox x:Name="AutoStartBox" Grid.Column="1"
@@ -514,8 +515,8 @@
                                             <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
                                         <StackPanel>
-                                            <TextBlock Style="{StaticResource CardTitle}" Text="文件右键菜单" />
-                                            <TextBlock Style="{StaticResource CardDesc}"
+                                            <TextBlock Style="{DynamicResource CardTitle}" Text="文件右键菜单" />
+                                            <TextBlock Style="{DynamicResource CardDesc}"
                                                        Text="Win11 在「显示更多选项」里（或 Shift+F10）—— 新版紧凑菜单不接受这种注册方式" />
                                         </StackPanel>
                                         <CheckBox x:Name="ShellMenuBox" Grid.Column="1"
@@ -528,17 +529,17 @@
                         <!-- ============ 关于与更新 ============
                              版式沿用 GroupCard 分区；状态行文案由宿主注入的检查接缝给出。 -->
                         <StackPanel x:Name="PageAbout" Visibility="Collapsed">
-                            <Border Style="{StaticResource GroupCard}" Margin="0,0,0,0">
+                            <Border Style="{DynamicResource GroupCard}" Margin="0,0,0,0">
                                 <StackPanel Margin="14,10,14,12">
-                                    <TextBlock Style="{StaticResource CardTitle}" Text="WinQuick" />
-                                    <TextBlock x:Name="AboutVersion" Style="{StaticResource CardDesc}"
+                                    <TextBlock Style="{DynamicResource CardTitle}" Text="WinQuick" />
+                                    <TextBlock x:Name="AboutVersion" Style="{DynamicResource CardDesc}"
                                                Text="版本（未知）" />
-                                    <TextBlock x:Name="UpdateStatus" Style="{StaticResource Hint}"
+                                    <TextBlock x:Name="UpdateStatus" Style="{DynamicResource Hint}"
                                                Margin="0,10,0,0" Text="（尚未检查）" />
                                     <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
-                                        <Button x:Name="CheckUpdateButton" Style="{StaticResource FlatButton}"
+                                        <Button x:Name="CheckUpdateButton" Style="{DynamicResource FlatButton}"
                                                 Content="检查更新" Click="OnCheckUpdateClick" />
-                                        <Button x:Name="RestartUpdateButton" Style="{StaticResource FlatButton}"
+                                        <Button x:Name="RestartUpdateButton" Style="{DynamicResource FlatButton}"
                                                 Margin="10,0,0,0" Visibility="Collapsed"
                                                 Content="立即更新并重启" Click="OnRestartUpdateClick" />
                                     </StackPanel>
@@ -554,9 +555,9 @@
                              条目列表由代码建行（每行带闭包要吃当前下标，纯 XAML 的 ItemsControl
                              光靠模板表达不了"上移/下移/移除"，见 RenderQueuePage）。 -->
                         <StackPanel x:Name="PageQueues" Visibility="Collapsed">
-                            <TextBlock Style="{StaticResource PageDesc}"
+                            <TextBlock Style="{DynamicResource PageDesc}"
                                        Text="一组按间隔依次打开的程序与文件夹。同一时间只跑一套；某一项目标不存在只会跳过该项。改动即时保存。" />
-                            <Border Style="{StaticResource GroupCard}" Margin="0,10,0,0">
+                            <Border Style="{DynamicResource GroupCard}" Margin="0,10,0,0">
                                 <StackPanel Margin="14,10,14,12">
 
                                     <!-- 头部：队列选择（与改名框叠在同一格里，二选一显示） -->
@@ -569,20 +570,20 @@
                                             <ComboBox x:Name="QueueSelect" MinWidth="140"
                                                       HorizontalAlignment="Left"
                                                       SelectionChanged="OnQueueSelected" />
-                                            <TextBox x:Name="QueueNameBox" Style="{StaticResource Field}"
+                                            <TextBox x:Name="QueueNameBox" Style="{DynamicResource Field}"
                                                      HorizontalAlignment="Left" MinWidth="140" MaxWidth="320"
                                                      Visibility="Collapsed"
                                                      KeyDown="OnQueueNameKeyDown"
                                                      LostFocus="OnQueueNameLostFocus" />
                                         </Grid>
                                         <StackPanel Grid.Column="1" Orientation="Horizontal">
-                                            <Button Style="{StaticResource FlatButton}" Padding="9,4"
+                                            <Button Style="{DynamicResource FlatButton}" Padding="9,4"
                                                     Margin="8,0,0,0" Content="新建"
                                                     Click="OnQueueNewClick" ToolTip="新建一套空队列" />
-                                            <Button x:Name="QueueRenameButton" Style="{StaticResource FlatButton}"
+                                            <Button x:Name="QueueRenameButton" Style="{DynamicResource FlatButton}"
                                                     Padding="9,4" Margin="6,0,0,0" Content="改名"
                                                     Click="OnQueueRenameClick" ToolTip="给当前队列改名" />
-                                            <Button x:Name="QueueDeleteButton" Style="{StaticResource FlatButton}"
+                                            <Button x:Name="QueueDeleteButton" Style="{DynamicResource FlatButton}"
                                                     Padding="9,4" Margin="6,0,0,0" Content="删除"
                                                     Click="OnQueueDeleteClick" ToolTip="删除当前队列" />
                                         </StackPanel>
@@ -591,17 +592,17 @@
                                     <!-- 空状态两档（第三档"不可用"复用 QueueNoQueues 的文案位，由代码改字）：
                                          没有任何队列 / 当前队列没有条目 -->
                                     <StackPanel x:Name="QueueNoQueues" Margin="0,16,0,10" Visibility="Collapsed">
-                                        <TextBlock x:Name="QueueNoQueuesLabel" Style="{StaticResource CardDesc}"
+                                        <TextBlock x:Name="QueueNoQueuesLabel" Style="{DynamicResource CardDesc}"
                                                    HorizontalAlignment="Center" Text="还没有队列" />
-                                        <Button x:Name="QueueNoQueuesButton" Style="{StaticResource FlatButton}"
+                                        <Button x:Name="QueueNoQueuesButton" Style="{DynamicResource FlatButton}"
                                                 Margin="0,10,0,0" Padding="20,8" FontSize="15"
                                                 HorizontalAlignment="Center" Content="新建"
                                                 Click="OnQueueNewClick" />
                                     </StackPanel>
-                                    <TextBlock x:Name="QueueNoItems" Style="{StaticResource CardDesc}"
+                                    <TextBlock x:Name="QueueNoItems" Style="{DynamicResource CardDesc}"
                                                Margin="0,16,0,10" Visibility="Collapsed"
                                                Text="还没有队列" />
-                                    <TextBlock x:Name="QueueEmptyItems" Style="{StaticResource Hint}"
+                                    <TextBlock x:Name="QueueEmptyItems" Style="{DynamicResource Hint}"
                                                Margin="0,10,0,4" Visibility="Collapsed"
                                                Text="点「添加…」把要启动的程序与文件夹加进来" />
 
@@ -621,16 +622,16 @@
 
                                     <!-- 底部：添加 + 间隔 -->
                                     <StackPanel x:Name="QueueAddRow" Orientation="Horizontal" Margin="0,10,0,0">
-                                        <Button x:Name="QueueAddButton" Style="{StaticResource FlatButton}"
+                                        <Button x:Name="QueueAddButton" Style="{DynamicResource FlatButton}"
                                                 Content="添加…" Click="OnQueueAddClick"
                                                 ToolTip="选一个系统位置、文件或文件夹加进队列末尾" />
-                                        <TextBlock Style="{StaticResource Caption}" Margin="14,0,6,0" Text="间隔" />
-                                        <TextBox x:Name="QueueIntervalBox" Style="{StaticResource Field}"
+                                        <TextBlock Style="{DynamicResource Caption}" Margin="14,0,6,0" Text="间隔" />
+                                        <TextBox x:Name="QueueIntervalBox" Style="{DynamicResource Field}"
                                                  Width="62" TextAlignment="Center"
                                                  KeyDown="OnQueueIntervalKeyDown"
                                                  LostFocus="OnQueueIntervalLostFocus"
                                                  ToolTip="相邻两项之间等待的毫秒数，0–5000" />
-                                        <TextBlock x:Name="QueueIntervalNote" Style="{StaticResource Hint}"
+                                        <TextBlock x:Name="QueueIntervalNote" Style="{DynamicResource Hint}"
                                                    Margin="8,0,0,0" VerticalAlignment="Center" />
                                     </StackPanel>
                                 </StackPanel>

@@ -235,7 +235,7 @@
       "name": "复古像素",
       "tagline": "硬边 + 等宽字 + 阶梯动效（一格一格跳）",
       "cost": "中（离散阶梯要构造离散关键帧）",
-      "src": "出处：Winamp 时代的换肤传统（皮肤同时改外观与行为）+ 8-bit 语汇；CSS 的 steps(n) 在 WPF 里对应 DiscreteDoubleKeyFrame。字体回退链里放 Consolas 是因为并非每台机器都有 Cascadia Mono。",
+      "src": "出处：Winamp 时代的换肤传统（皮肤同时改外观与行为）+ 8-bit 语汇；CSS 的 steps(n) 在 WPF 里对应 DiscreteDoubleKeyFrame。字体回退链里放 Consolas 是因为并非每台机器都有 Cascadia Mono；steps(4) 阶梯为复古像素风格化动效，属 M3 规矩的风格例外（spec §3）",
       "overrides": {
         "typography": {
           "labelFontFamily": "Cascadia Mono, Consolas, Courier New, monospace"

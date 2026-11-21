@@ -60,6 +60,13 @@ public static class TokenResources
         // 角标底色：SystemLocationPicker 无图标项的占位块用，与轮盘角标同源、换肤跟随。
         Set("Color.BadgeFill", TokenBrushes.Brush(color.BadgeFill, color.BadgeFillAlpha));
 
+        // 材质派生键（spec skin-formalization §1）：面板的白系描边/悬停底在浅色皮肤下必须翻成黑系，
+        // 否则就是「深色块贴在浅色面板上」。按 SectorFill 明暗自动派生，皮肤不必逐套声明。
+        var fillIsLight = Luminance(color.SectorFill) > 0.5;
+        var materialBase = fillIsLight ? "#000000" : "#FFFFFF";
+        Set("Color.Outline", TokenBrushes.Brush(materialBase, 0.16));
+        Set("Color.HoverSurface", TokenBrushes.Brush(materialBase, 0.05));
+
         // 状态色：成功/警告。不放进 tokens —— 它们是语义色，与设计基线无关。
         Set("Color.Success", new SolidColorBrush(Color.FromRgb(0x8C, 0xC8, 0x8C)));
         Set("Color.Danger", new SolidColorBrush(Color.FromRgb(0xF0, 0x8A, 0x8A)));
@@ -102,5 +109,14 @@ public static class TokenResources
     {
         if (!MotionTokens.TryParseEasing(easing, out var p)) p = (0, 0, 0, 1);
         return new KeySpline(new Point(p.X1, p.Y1), new Point(p.X2, p.Y2));
+    }
+
+    /// <summary>Rec.709 相对亮度（与 DesignTokens.Validate 的判据同源，仅此处为派生键服务）。</summary>
+    private static double Luminance(string hex)
+    {
+        var r = Convert.ToInt32(hex.Substring(1, 2), 16) / 255.0;
+        var g = Convert.ToInt32(hex.Substring(3, 2), 16) / 255.0;
+        var b = Convert.ToInt32(hex.Substring(5, 2), 16) / 255.0;
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b;
     }
 }

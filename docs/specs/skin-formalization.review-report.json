@@ -1,0 +1,104 @@
+{
+  "slug": "skin-formalization",
+  "stage": "R1-R3 合并审查",
+  "dimensions": {
+    "符合度": {
+      "R1": [
+        "S1 TokenResources 增派 Color.Outline/Color.HoverSurface + 私有 Luminance —— 与执行书逐字一致（TokenResources.cs:63-68,114-121）",
+        "S2 两面板 StaticResource→DynamicResource 全量替换 —— 实测 83 处（与委派口径一致），两文件剩余 StaticResource=0",
+        "S3 硬编码材质色替换 —— 执行书 9 处逐条落地（SkinPanel.cs:236 Outline；SettingsPanel.cs:524/536/539 Outline+SurfaceSolid、548 Danger、965/1070 HoverSurface；SettingsPanel.xaml:128/132 HoverSurface），Radial 目录 *.cs 内 Brush(\"# 剩余 0（验证项 3 通过）",
+        "S4 HSV 功能色注释（SettingsPanel.xaml:210）+ retro src 风格例外声明（design/skins.json）均已落",
+        "S5 perspective _comment 预留标注已追加（design/tokens.json:125）"
+      ],
+      "R2": [
+        "S1 label/hint↔sectorFill 配对落地，并加 SectorFillAlpha≥0.6 门控 —— 相对执行书为必要适配：translucent（sectorFill #FFFFFF/α0.1、label #FFFFFF）无门控必红，门控语义与既有 hover 配对一致（DesignTokens.cs:100-109）",
+        "S2 过冲上限落地，阈值由执行书 1.25 调整为 2.0 —— 经独立核验必要：tokens.json 基线 entranceScaleEasing y1=1.56、skins.json neon y1=1.8，1.25 会否决用户已实测定稿的既有动画；代码注释已说明，主会话委派口径亦为 2.0",
+        "S3 SkinContrastTests 与执行书逐字一致（7 皮肤 Theory + 1 对照）",
+        "S4 spec §6 badge 半句已如实修正（skin-formalization.md:40）"
+      ],
+      "R3": [
+        "T1 SystemThemeWatcher 与执行书全文一致（消息窗口照 SessionWatcher 范式；注册表只读）",
+        "T2 SystemSkin.Compose 键集合与 light 皮肤逐键比对一致（hoverFill 换为强调色参数）",
+        "T3 TokenStore 特判三处 + LoadWithOverrides 抽取 + SkinCatalog.MergeWithOverrides（Core 侧）—— 两处授权现场适配独立核验：CurrentSkinId 先 Contains 后修正 system，同同步方法内无可见中间态；Merge 重构后 Load 原语义不变（Overrides null 提前返回基线）",
+        "T4 ResidentHost 监听 + Dispose 补齐；T5 SkinProbe 四用例+对照 + ProbesHost 注册/帮助行"
+      ],
+      "spec对照": [
+        "§1-§4 全部落地；§5 落地但缺 ColorizationColor 回退（见 issues P2-1）；§6 落地（badge 豁免已核实 RadialRingVisual 角标仅 Fill 无文字）",
+        "边界三条遵守：HSV 功能色未令牌化仅注释声明；托盘不随肤（spec 边界已注明）；高对比主题未自动映射"
+      ]
+    },
+    "缺陷与边界": [
+      "启动恢复链（重点核查项 b）核验无缺陷：OnSkinChanged 把 skinId=\"system\" 原样存入 config（with 表达式，ResidentHost.cs:802-804）→ 下次启动 ApplyConfiguredAppearance→ApplySkin(\"system\")（ResidentHost.cs:824）→ ApplySkin 首段校验已特判 system 跳过「没有名为 system」分支（TokenStore.cs:70）→ LoadWithOverrides 运行时合成 → CurrentSkinId 修正为 system（TokenStore.cs:81）——不会退回默认、无警告气泡",
+      "ThemeChanged 线程（重点核查项 c）安全：消息窗口在 UI 线程创建（ResidentHost 构造于 UI 线程，SessionWatcher 同范式），WndProc 即 UI 线程；RunOnUi 为 CheckAccess 直执/否则 BeginInvoke（ResidentHost.cs:627-633），同线程内联执行无嵌套/死锁风险",
+      "派生键正确性（重点核查项 a）：TokenResources.Luminance 与 DesignTokens.ContrastIsLow 内嵌 Luminance 公式逐项一致（0.2126/0.7152/0.0722，同样不做 gamma 线性化）；light（#F3F3F3，亮度≈0.90>0.5）→黑系材质正确；translucent（#FFFFFF/α0.1）按 hex 亮度翻成黑系 —— 因两面板窗体底色用的是 Wq.Color.SurfaceSolid（纯色 sectorFill），translucent 下面板实为纯白底，黑系 Outline/HoverSurface 与面板实际底色一致，翻转正确（spec §1 明文规定按 SectorFill 亮度派生，实现忠实）",
+      "SkinProbe 可失败性（重点核查项 e）：default→light SurfaceSolid（#202020 vs #F3F3F3）与 HoverSurface（白系 vs 黑系）均可失败；system 伪装明/暗两态 Validate + hoverFill==#0078D4 可失败；default→default 对照含与初始值相等断言，防恒真成立",
+      "DynamicResource 同文件局部样式引用（重点核查项 f）：83 处均为既有键的引用方式替换，DynamicResource 运行期按元素树解析、无 StaticResource 的前向引用限制，行为无回归（编译 0 错误 + 既有 DynamicResource 用法先例）",
+      "d) 形态取值：ThemeChanged 用 _config.Config.Appearance.Form（执行书指定），换形态后存在 ≤500ms 防抖+落盘窗口（见 P2-4）；RebuildForAppearance 其余路径与 OnSkinChanged/ApplyConfiguredAppearance 同构",
+      "SystemSkin 后续修正（AccentLabelText 自适应悬停字色，SystemSkin.cs:33/52/69-75）：审查期间实现会话并发合入（首次构建恰逢半写态报 CS0103，终态复建 0 错误）。该修正在执行书 T2 全文之外，但为满足 T5 用例3/ApplySkin 不抛的必要修正 —— 未修正时浅强调色（如 #E8E8E8，亮度差 0.13<0.35）会使 LoadWithOverrides 抛异常、system 皮肤选中/主题切换即崩；自适应取色对任意强调色恒过校验。判定为 T2/T5 范围内的必要收敛而非私自发挥，如实披露供主会话仲裁"
+    ],
+    "安全与性能": [
+      "注册表仅 OpenSubKey 只读（SystemThemeWatcher.cs:43,54），无写操作",
+      "消息窗口 1x1 离屏 WS_POPUP 常驻成本可忽略；WM_SETTINGCHANGE 仅 lParam==ImmersiveColorSet 放行，且仅当前皮肤为 system 时才重装",
+      "system 明暗切换频率为用户手动操作级；Install(force) 全量重装约 30 个资源键且 TokenBrushes 按 (hex,alpha) 缓存画刷，无重复构建压力",
+      "探针读 ConfigStore.DefaultDirectory 仅取 Menu，无写盘"
+    ],
+    "测试质量": [
+      "SkinContrastTests 8/8 全绿：7 套静态皮肤 Theory 锁整体 Validate；对照用例取 All[0]=default（sectorFillAlpha=0.92≥0.6 在门控内），Label←SectorFill 后断言含 \"label\" 的问题串 —— 配对校验非恒真，断言强度达标",
+      "spec AC2「≥9 组」口径：单测 8 组 + 探针 system 明/暗两态 Validate 共 2 组，语义覆盖齐（system 两态未进单测属执行书既定分工，单测进程读注册表亦可行，可选增强）",
+      "全量 329/329（321 基线+8 新增）不回退",
+      "AC4 探针按委派由主会话另行执行记录；本审查对探针代码做静态断言强度核验（见缺陷维度），未复跑 GUI"
+    ],
+    "执行书符合度": [
+      "R1 S1-S5 / R2 S1-S4 / R3 T1-T5 逐条文本级比对全部落地，无遗漏项",
+      "已授权适配 2 处（CurrentSkin 时序、Core 层 MergeWithOverrides）核验正确",
+      "必要但未预先授权的适配 3 处，均有代码注释与实测依据、主会话委派口径可佐证知情：①alpha≥0.6 门控（否则 translucent 必红）②过冲阈值 1.25→2.0（否则否决基线/neon 既有动画）③SystemSkin.AccentLabelText（否则浅强调色崩溃路径）",
+      "执行书清单外文件零触碰；git status 其余改动均为 docs 文档与既有无关项"
+    ]
+  },
+  "issues": [
+    {
+      "severity": "P2",
+      "file": "src/WinQuick.App/Design/SystemThemeWatcher.cs",
+      "line": 55,
+      "dim": "符合度",
+      "desc": "spec §5 要求强调色读 AccentColor 且「ColorizationColor 回退」，实现（及执行书 T1）读不到时直接回退 Fluent 官方默认（#0078D4/#4CC2FF），未接 ColorizationColor。用户未自定义强调色的机器上 DWM\\AccentColor 可能不存在，此时 system 皮肤 hoverFill 用官方默认色而非系统实际玻璃色，属 spec 字面缺口（执行书层面即未含，主会话裁量范围），视觉差异轻微",
+      "suggestion": "低优先：AccentColor 读不到时补读 HKCU\\...\\DWM\\ColorizationColor（0xAABBGGRR，取低三字节）作二级回退，再落官方默认；或在 spec 边界注明「不接 ColorizationColor，默认场景即官方默认色」"
+    },
+    {
+      "severity": "P2",
+      "file": "src/WinQuick.Core/Design/DesignTokens.cs",
+      "line": 129,
+      "dim": "符合度",
+      "desc": "spec §3 的规则是「过冲（y>1）仅允许出现在 transform 类令牌」，实现为全通道统一 y≤2.0 上限：transform 通道比 spec 更严（spec 未设上限），透明度/通用通道更松（spec 禁任何过冲，现 ≤2.0 可过）。现状各皮肤天然满足、无行为影响，「防未来越线」意图部分达成。阈值 2.0 本身经核验必要（1.25 会否决基线 1.56 与 neon 1.8）",
+      "suggestion": "低优先：如需完全对齐 spec，可按 easings 表中的通道名白名单（entranceScaleEasing/entranceRotateEasing/childSlideEasing/levelShiftEasing 允许 y>1）区分判定，其余通道沿用临界阻尼判据"
+    },
+    {
+      "severity": "P2",
+      "file": "src/WinQuick.App/Radial/SkinPanel.xaml.cs",
+      "line": 268,
+      "dim": "缺陷",
+      "desc": "选「跟随系统」后页脚文案显示「已切换到「default」」——_catalog.Find(\"system\") 返回 null，回退分支取 SkinCatalog.DefaultId（id 字面量）而非皮肤名。第八项皮肤切换的实际链路（选中态/换肤/持久化）均正常，纯文案错误",
+      "suggestion": "Find 为 null 时先查 SystemSkin：var name = _catalog.Find(skinId)?.Name ?? (skinId == SystemSkin.Id ? SystemSkin.Spec().Name : SkinCatalog.DefaultId)"
+    },
+    {
+      "severity": "P2",
+      "file": "src/WinQuick.App/Hosting/ResidentHost.cs",
+      "line": 86,
+      "dim": "缺陷",
+      "desc": "ThemeChanged 重建用 _config.Config.Appearance.Form：换形态经 OnSkinChanged→500ms 防抖→PersistSettings→SaveConfig→Reload 才更新内存 Config，窗口期内（≤500ms+落盘）系统切明暗会以旧形态重建轮盘，用户刚选的形态被临时回退（下次交互不自动纠正，需再点一次形态或重启）。执行书指定「形态从配置取」，属设计固有边缘，触发条件苛刻（换形态后 0.5 秒内切系统主题）",
+      "suggestion": "低优先：ThemeChanged 分支改为读轮盘实际形态（如 _overlay 暴露当前 Form），或在 OnSkinChanged 里同步更新一份内存形态快照供该分支使用"
+    }
+  ],
+  "counts": { "p0": 0, "p1": 0, "p2": 4 },
+  "checked": [
+    "AC1 dotnet build WinQuick.App -c Release → 0 错误（Probes/Core 同过）【通过】（注：审查中工作区被实现会话并发修改，首次构建恰逢 SystemSkin.cs 半写态报 CS0103，终态复建 0 错误并以 md5 快照确认稳定）",
+    "AC2 dotnet test --filter SkinContrast → 8/8 全绿（7 皮肤+1 对照）【通过】",
+    "AC3 dotnet test 全量 → 329/329 全绿（321 基线+8 新增）【通过】",
+    "AC4 --skin-probe → 主会话已执行（另行记录）；探针代码静态核验：4 用例+对照均可失败、无弱断言【通过】",
+    "AC5/AC6/AC7 用户侧实测 → 不在本次审查范围【不适用】",
+    "R1 验证项3：Radial 目录 *.cs 硬编码 Brush(\"# → 0 处【通过】"
+  ],
+  "verdict": "pass-with-issues",
+  "summary": "三执行书（R1/R2/R3）逐条比对全部落地，编译与 329 全量测试均绿。重点核查五项独立核验结论：①启动恢复链无缺陷（config 存 system → ApplySkin 特判 → 合法恢复，不退默认不告警）；②ThemeChanged 线程安全（UI 线程消息泵内 CheckAccess 直执）；③派生键 Luminance 公式与 Validate 判据同源，light/translucent 翻转均正确（面板底为纯色 SurfaceSolid，hex 亮度派生与实际底色一致）；④SkinProbe 四用例均可失败、对照防恒真成立；⑤83 处 DynamicResource 替换无剩余、无行为回归。三处相对执行书的适配（alpha 门控、阈值 2.0、AccentLabelText）均经独立核验为必要且有注释与实测依据，其中 AccentLabelText 修复了浅强调色下的潜在崩溃路径（属执行书外改动，已如实披露供仲裁）。遗留 4 项 P2：ColorizationColor 回退缺失（spec 字面）、过冲规则未按通道区分（防未来层）、system 选中页脚文案错显 default、ThemeChanged 形态取值 500ms 陈旧窗口。无 P0/P1。另注：审查期间实现会话仍并发修改工作区，本报告基于终态快照（md5 一致性确认）。",
+  "postscript": "fix3 后记：P2-1（AccentColor 补 ColorizationColor 二级回退，取值链写法）与 P2-3（system 页脚文案特判）已修复（docs/tasks/skin-formalization-r3-fix3-exec.md），编译 0 错、329 全绿；P2-2（过冲规则未分通道，阈值 2.0 经核必要）与 P2-4（ThemeChanged 重建 500ms 窗口期旧形态，边缘极窄）留档。另：审查范围外的 fix1/fix2（SystemSkin 悬停字色两轮修正，终态为按强调色亮度自动取黑/白——Win11 官方机制）经仲裁为必要收敛，skin-probe 全过。verdict 维持 pass-with-issues。"
+}

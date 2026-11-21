@@ -65,15 +65,20 @@ public static class TokenStore
     public static string? ApplySkin(string? skinId)
     {
         string? problem = null;
-        if (!string.IsNullOrWhiteSpace(skinId) && !Skins.Contains(skinId))
+        // system 不在静态目录（overrides 是运行时合成的），校验与装配都要走特判，
+        // 否则会被误报成「没有名为 system 的皮肤」并退回默认。
+        if (!string.IsNullOrWhiteSpace(skinId) && skinId != SystemSkin.Id && !Skins.Contains(skinId))
         {
             problem = $"没有名为「{skinId}」的皮肤，已退回默认皮肤";
             skinId = SkinCatalog.DefaultId;
         }
 
-        var next = Load(skinId);
+        var next = skinId == SystemSkin.Id
+            ? LoadWithOverrides(SystemSkin.Compose(SystemThemeWatcher.IsLightMode(), SystemThemeWatcher.AccentColor()))
+            : Load(skinId);
 
         CurrentSkinId = Skins.Contains(skinId) ? skinId! : SkinCatalog.DefaultId;
+        if (skinId == SystemSkin.Id) CurrentSkinId = SystemSkin.Id; // Contains 认不出 system，在其后修正
         _current = next;
 
         // 面板与托盘那侧的资源要跟着换。XAML 全部走 DynamicResource，所以一次重装就够。
@@ -89,7 +94,29 @@ public static class TokenStore
     /// 而用户正是要拿这些色板做选择。
     /// </summary>
     public static DesignTokens PreviewTokens(string? skinId) =>
-        DesignTokens.Parse(Skins.Merge(BaseJson, skinId));
+        skinId == SystemSkin.Id
+            ? LoadWithOverrides(SystemSkin.Compose(SystemThemeWatcher.IsLightMode(), SystemThemeWatcher.AccentColor()))
+            : DesignTokens.Parse(Skins.Merge(BaseJson, skinId));
+
+    /// <summary>
+    /// 合并运行时合成的 overrides 并校验（「跟随系统」皮肤入口，spec §5）。
+    /// 即 Load 的「拿 Overrides 合并」那半段接受任意 JsonObject —— 走同一套
+    /// Parse + Validate，动态合成的皮肤与静态皮肤受同一组不变量约束。
+    /// </summary>
+    internal static DesignTokens LoadWithOverrides(System.Text.Json.Nodes.JsonObject overrides)
+    {
+        var tokens = DesignTokens.Parse(Skins.MergeWithOverrides(BaseJson, overrides));
+
+        var problems = tokens.Validate();
+        if (problems.Count > 0)
+        {
+            throw new InvalidOperationException(
+                $"{TokensResource}（皮肤：{SystemSkin.Id}）未通过校验：\n  - " +
+                string.Join("\n  - ", problems));
+        }
+
+        return tokens;
+    }
 
     private static DesignTokens Load(string? skinId)
     {

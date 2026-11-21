@@ -80,7 +80,7 @@
             </Grid>
 
             <TextBlock Style="{StaticResource Hint}" Margin="0,8,0,2"
-                       Text="选一个系统位置，或浏览文件、文件夹。" />
+                       Text="点一处轮盘菜单或系统位置，或浏览文件、文件夹。" />
 
             <!-- 两个「浏览…」并排：系统位置列表只覆盖已知位置，任意文件夹得单独给个入口。 -->
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">

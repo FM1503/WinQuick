@@ -1,0 +1,38 @@
+{
+  "slug": "fix-skin-form-persistence",
+  "tier": "S",
+  "dimensions": {
+    "compliance": {
+      "status": "pass",
+      "detail": "两个 hunk 与执行书 new 块逐字符一致（ConfigStore.cs 模板补 skin/form 渲染；SettingsPanel.xaml.cs BuildConfig 补 Skin/Form 沿用 _original），diff 范围外无任何改动。tier 合规：2 个修改文件、无新建文件、净 +12/-1 行、无 UI 类型文件（.xaml.cs 代码后置不在 S 级禁入清单）、无接口/依赖/配置变更。变更单已知限制（面板打开期间换肤用旧快照）与实际行为一致：OnSkinChanged 不调 SetSettingsSource，面板在打开时以 new SettingsPanel(_settings) 取当时快照（OverlayController.cs:1081），下次打开经 ResidentHost.cs:692 传入 Reload 后的最新 Config。"
+    },
+    "defects": {
+      "status": "pass",
+      "checks": [
+        "JSON 合法性：'recentAccentColors': [...] 之后的逗号是对象成员分隔符，随后 'skin'/'form' 两个成员、无尾逗号后闭合，结构合法；Str(null) 渲染为不带引号的 null（ConfigStore.cs:360），'skin': null 与 'skin': \"xxx\" 均为合法 JSON；解析端另有 AllowTrailingCommas+ReadCommentHandling.Skip 双保险（AppConfig.cs:48-49）。",
+        "解析端闭环：AppConfig.cs:47 PropertyNameCaseInsensitive=true，camelCase skin/form 映射 Skin/Form 属性（AppConfig.cs:125/132，均可空 string?）；UnmappedMemberHandling.Skip 保证旧配置无此二键时正常解析。键名读写两端一致。",
+        "无遗漏第三处写入点：全仓 'new AppearanceConfig' 仅 SettingsPanel.xaml.cs:1369（本次已修）与 AppConfig.cs:30 属性默认值 new()（有意为默认 null）；Appearance 替换仅 ResidentHost.cs:733 一处 with 表达式（显式携带 Skin/Form，with 保留其余字段）。config.json 全部写入均经 RenderConfig（ConfigStore.cs:575 与 :110 DefaultConfigJson），无绕过模板的写入点。",
+        "换肤落盘链路完整：OnSkinChanged（ResidentHost.cs:723-740）→ 500ms 去抖 → PersistSettings（:777）→ SaveConfig（ConfigStore.cs:569）→ File.WriteAllText(RenderConfig) → Reload 回读更新内存 Config（ConfigStore.cs:151），皮肤/形态在整条链路无丢失点。"
+      ]
+    },
+    "security_performance": {
+      "status": "pass",
+      "detail": "无新网络/文件面，无新增循环或阻塞。Str() 不做引号/反斜杠转义属既有模式，且 skin 值来源为皮肤面板的内置 skins.json id、form 值为 RingForms.IdOf 枚举 id，均非用户自由文本，与既有 hotkey/accentColor 同信任级别，本次未引入新注入面。"
+    },
+    "test_quality": {
+      "status": "pass-with-notes",
+      "detail": "S 级采信执行回报 dotnet build 0 error；仓内无针对 RenderConfig 模板形状的既有测试，本次改动不破坏任何既有测试。验收标准 1/3 已静态核实（链路闭环 + Str(null) 渲染合法），标准 2 为运行时项、链路已逐行追通，可由用户实测确认。"
+    }
+  },
+  "issues": [
+    {
+      "severity": "P3",
+      "title": "皮肤/形态持久化无自动化回归测试",
+      "detail": "本次修复依赖用户手动验收；SettingsPanel.xaml.cs:1464 已有 BuildConfigForTest 测试钩子，可低成本补一条『BuildConfig 沿用 _original.Appearance.Skin/Form』及『RenderConfig 输出含 skin/form 键』的回归测试，防止未来模板或构造器再丢字段。属可选改进，不阻塞。",
+      "file": "src/WinQuick.App/Radial/SettingsPanel.xaml.cs",
+      "line": 1464
+    }
+  ],
+  "verdict": "pass-with-issues",
+  "summary": "快审通过。两处改动与执行书逐字符一致、范围未越界（tier S 合规）；换肤→去抖→PersistSettings→SaveConfig→RenderConfig→Reload 全链路无丢失点，skin/form 读写键名一致，null 渲染合法，无第三处遗漏的 AppearanceConfig 构造点；已知限制描述与实际行为相符。唯一问题为可选的自动化回归测试缺失（P3）。"
+}

@@ -1,0 +1,52 @@
+{
+  "slug": "fix-autostart-rollback-tray-settings",
+  "tier": "S",
+  "dimensions": {
+    "compliance": {
+      "result": "pass",
+      "details": [
+        "补丁 1 与执行书逐字符一致：ResidentHost.cs:71 `new TrayHost(_overlay)` 后于 :76 注入 `_tray.OpenSettings = OpenSettings;`（含执行书原文注释 :73-75）。",
+        "补丁 2 与执行书逐字符一致：ResidentHost.cs:777-790 PersistSettings 已删除 `AutoStart.SetEnabled` 回写、失败 `return;` 与失败气泡，替换为语义说明注释（:782-785）。",
+        "git diff 仅含上述两个 hunk，ResidentHost.cs 无执行书外改动；工作区其余未提交文件（OverlayController.cs / ProgramPicker.cs / SystemLocationPicker.xaml(.cs) / AGENTS.md / preview/skinpanel-preview.html / MenuCatalog.cs / MenuCatalogTests.cs）按委派界定为非本次范围，未计入。",
+        "tier S 合规：改动 1 个代码文件、无新建代码文件（docs/changes/*.md 为流程文档）、非 UI/LVGL 文件、净变更 +3 行（+9/-6，<30）、无接口/依赖/配置变更。"
+      ]
+    },
+    "defects": {
+      "result": "pass",
+      "details": [
+        "注册表写入路径收敛后闭环完整，共三条且各有失败反馈：(1) 首启种子 ResidentHost.cs:162（`DefaultsWereCreated` 由 ConfigStore.cs:99/111/117 置位，仅在首次创建默认配置时为真）；(2) 设置面板 SettingsPanel.xaml.cs:694-711 OnAutoStartChanged 直写注册表，写失败时回滚勾选并以页脚状态提示；(3) 托盘 TrayHost.cs:182-197 ToggleAutoStart 直写注册表，写失败时回滚勾选并弹 MessageBox。被删除的 PersistSettings 气泡只覆盖『回滚写』的失败，而回滚写本身已删，无反馈丢失。",
+        "无悬空引用：ResidentHost.cs 头部（:1-15）本就无 `using Microsoft.Win32;`；AutoStart 类定义于同命名空间 WinQuick.App.Hosting（SingleInstance.cs:114），且 ResidentHost.cs:162 仍在引用，不存在未使用 using 或残留死引用。TrayHost.cs / SettingsPanel.xaml.cs 各自继续使用 AutoStart，不受影响。",
+        "注入时序安全：`_config` 为字段初始化（ResidentHost.cs:36）、`_overlay` 在构造 :68 先于注入点 :76 完成；`OpenSettings`（:690-698）访问的 `_overlay`/`_config` 注入时均已就绪，且委托仅在用户点托盘菜单（TrayHost.cs:139）时延迟执行，无空引用风险。",
+        "去掉 `return;` 后方法体逻辑等价：原失败分支之后唯一语句是被删除的 autoStartOk 气泡，现失败分支后无任何语句，早退与否无差别。`_pendingSettings = null` 先于 SaveConfig 的既有行为未变。"
+      ]
+    },
+    "security_performance": {
+      "result": "pass",
+      "details": [
+        "『config 的 autoStart 仅首启种子』语义与既有文档化约定一致：ConfigStore.cs:418-422 模板注释『改这里不会立刻写入注册表——自启开关以托盘菜单和设置界面里的那个为准』；ResidentHost.cs:160-161 注释『开机自启只在首次运行时按配置写一次。之后注册表就是事实来源』。新实现使代码与两处注释首次真正吻合，用户手改 config.json 的 autoStart 在首启后无注册表副作用，非行为退化。",
+        "设置面板快照（SettingsPanel.xaml.cs:1389）仍会把勾选态（初值取自注册表 :282）写入 config.json，属记录性同步；首启后无任何路径再按 config 回写注册表，语义自洽。",
+        "安全面无变化：注册表写入仍仅 HKCU Run（SingleInstance.cs:114-165），无新增注入/越权面；每次去抖保存少一次同步注册表写，纯性能收益。"
+      ]
+    },
+    "test_quality": {
+      "result": "pass",
+      "details": [
+        "S 级快审不复跑测试/构建，采信变更单回报 `dotnet build src/WinQuick.App/WinQuick.App.csproj -c Release` 0 error；静态读改动文件语法自洽（方法组赋值 `Action?` 属性，引用均存在）。",
+        "验收标准 1（托盘「设置…」打开设置面板）：链路完整——TrayHost.cs:139 `OpenSettings?.Invoke()` → ResidentHost.cs:76 注入 → OpenSettings(:690) 先 SetSettingsSource 再唤出覆盖层再开面板，用户可实测。",
+        "验收标准 2（勾自启→换肤→reg query 项仍在→重启生效）：OnSkinChanged(:731) 构造的快照经 500ms 去抖进 PersistSettings 后已不再触碰注册表，回滚路径被根除，注册表仅剩用户操作与首启种子两条写入路径，用户可实测。",
+        "无凑绿/弱断言情形：本变更未声称任何自动化测试，验证依赖用户实测项，符合 S 级免量化验收约定。"
+      ]
+    }
+  },
+  "issues": [
+    {
+      "severity": "P3",
+      "title": "托盘「开机自启」勾选态仅在构造时读一次，不随注册表实际状态刷新",
+      "detail": "TrayHost.cs:134 `_autoStartItem.IsChecked = AutoStart.IsEnabled;` 仅在 BuildMenu（构造）时执行一次。用户从设置面板切换自启（SettingsPanel.xaml.cs:698 直写注册表）后，托盘菜单勾选态保持旧值，形成与注册表实际状态不一致的界面显示（托盘侧切换有 :189 的回写，面板侧切换不会同步到托盘）。该问题为既有行为、非本次补丁引入，变更单叙述中已知晓并接受，留档待用户定夺。",
+      "file": "src/WinQuick.App/Tray/TrayHost.cs",
+      "line": 134
+    }
+  ],
+  "verdict": "pass-with-issues",
+  "summary": "两处补丁与执行书逐字符一致、范围严格限于 ResidentHost.cs，tier S 判据全部满足。缺陷一修复在静态层面闭环成立：PersistSettings 不再按配置回写注册表后，注册表仅由首启种子（ResidentHost.cs:162）与用户开关（TrayHost.cs:185、SettingsPanel.xaml.cs:698，均含失败反馈）写入，ConfigStore.cs:418-422 与 ResidentHost.cs:160-161 的既有注释证实『注册表是事实来源、config 仅首启种子』为既定语义。缺陷二修复注入点时序安全（_config/_overlay 均先于 :76 初始化，委托延迟调用）。无悬空引用、无未使用 using、方法体等价性成立。S 级采信执行回报的构建结果，两条验收标准均可由用户实测达成。唯一记录项为既有（非本次引入）的托盘勾选态不随面板切换刷新，P3 留档。"
+}

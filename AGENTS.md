@@ -79,6 +79,7 @@ diff <(之前备份的 crash.log) "%LOCALAPPDATA%\WinQuick\logs\crash.log"
 | `preview/wheel2-preview.html` | **两级滑动窗口 + 中心对半返回（保留轮盘形态，改层级怎么走）**：`环1 = 父层整圈、环2 = 当前层子弧`，点环 2 的分组项就再进一层（旧环 2 整层搬到环 1），中心两半 = 返回上一层/第一层。四档过渡 × 四档中心形态 × 三档出现时机，全部可切换、可实操。**用户已选定：② 扇面展开 + 保持朝向；中心分工实测后重定为 左半=Esc 直接关闭 / 右半=返回上一层（第一层置灰）、每半一行字**（已实现，见 `docs/M4-status.md` 末节） |
 | `preview/settings-preview.html` | **设置面板密度四档 + 热键预设下拉**：①现状对照 / ②设置卡（SettingsCard）/ ③卡片+折叠 / ④侧栏分区，复刻真实宽度（404）与字号，实测每档的可见说明字数与面板高度。**用户已选定 ④ 侧栏分区，预设含 Ctrl+Shift+Z**（已实现，见 `docs/M4-status.md` 末节） |
 | `preview/colorpicker-preview.html` | **高亮色调色盘三档**：①预设色板 / ②HSV 拾色器 / ③色板+最近使用，全部可实操（点色块弹盘、选色即时生效）。**用户选定三者合并（HSV+色板+最近）**（已实现，见 `docs/M4-status.md` 末节） |
+| `preview/skinpanel-preview.html` | **皮肤面板密度三档**：①现状对照 / ②卡片化 / ③侧栏同款（与设置面板一致），真实皮肤数据（7 套 + 4 形态），行可点、选中态跟着变 |
 | `preview/_verify.mjs` | 上面这些原型的**逻辑**自检器：`node preview/_verify.mjs [file:///…]`（默认验 form-preview） |
 
 **用真实数据做原型**：`tree-preview.html` 与 `wheel2-preview.html` 里的树/菜单都是从

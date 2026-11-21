@@ -37,6 +37,16 @@ public partial class SystemLocationPicker : Window
     private readonly Action<string, MenuAction> _onChosen;
     private readonly Action? _modalOpening;
     private readonly Action? _modalClosed;
+
+    /// <summary>
+    /// 队列语境：文件框放「所有文件」第一档，且非程序类文件按 <c>open</c> 入队。
+    /// 与菜单语境（启动器）刻意分开 —— 菜单保持程序类过滤，队列来者不拒。
+    /// </summary>
+    private readonly bool _queueMode;
+
+    /// <summary>队列语境的来源清单（菜单里有动作的项）；非队列语境为 null。</summary>
+    private readonly IReadOnlyList<MenuCatalogEntry>? _menuEntries;
+
     private bool _closed;
 
     /// <summary>用户是否手动拖过（与两块面板同一套规则：拖过就不再自动摆位）。</summary>
@@ -47,20 +57,24 @@ public partial class SystemLocationPicker : Window
 
     /// <summary>用离屏方式构造（探针核对列表时用，不显示窗口）。</summary>
     internal SystemLocationPicker()
-        : this((_, _) => { }, null, null)
+        : this((_, _) => { })
     {
     }
 
     internal SystemLocationPicker(
         Action<string, MenuAction> onChosen,
         Action? modalOpening = null,
-        Action? modalClosed = null)
+        Action? modalClosed = null,
+        bool queueMode = false,
+        IReadOnlyList<MenuCatalogEntry>? menuEntries = null)
     {
         InitializeComponent();
 
         _onChosen = onChosen;
         _modalOpening = modalOpening;
         _modalClosed = modalClosed;
+        _queueMode = queueMode;
+        _menuEntries = menuEntries;
 
         SurfaceOps.Watch(this, SurfaceOwner.Panel);
         WindowDrag.Attach(this, TitleBar, onMoved: () => PlacedByUser = true);
@@ -88,6 +102,8 @@ public partial class SystemLocationPicker : Window
     private void BuildList()
     {
         var iconPx = IconPixels();
+        BuildMenuSection(iconPx);
+
         foreach (var location in Candidates())
         {
             var icon = ShellIcons.GetScaled(location.Target, iconPx);
@@ -96,6 +112,51 @@ public partial class SystemLocationPicker : Window
             LocationList.Children.Add(BuildRow(location.Label, icon,
                 () => Choose(location.Label, location.ToAction())));
         }
+    }
+
+    /// <summary>
+    /// 队列语境的「轮盘菜单」分组：把菜单里已有的项列在最前面，加队列项时不必重找路径。
+    ///
+    /// **图标取不到时画首字圆，而不是像系统位置那样跳过**：系统位置那套「解析不了就不显示」
+    /// 是为了不摆出打不开的位置；这里是用户菜单里真实存在、在轮盘上也点得到的项，
+    /// 因为一次图标解析失败就从清单里消失，等于让用户以为菜单里没有它。
+    /// </summary>
+    private void BuildMenuSection(int iconPx)
+    {
+        if (_menuEntries is not { Count: > 0 }) return;
+
+        LocationList.Children.Add(BuildSectionHeader("轮盘菜单"));
+        foreach (var entry in _menuEntries)
+        {
+            var icon = ShellIcons.GetScaled(entry.Item.IconPath ?? entry.Item.Action?.Target, iconPx);
+            // 动作原样传递：类型/参数/工作目录与在轮盘上点它完全一致。
+            LocationList.Children.Add(BuildRow(
+                entry.Item.Label,
+                entry.DisplayLabel,
+                icon,
+                () => Choose(entry.Item.Label, entry.Item.Action!)));
+        }
+    }
+
+    /// <summary>分组标题行：加粗小字、不可点 —— 与可点行的外观刻意拉开，避免被误当成候选。</summary>
+    private static Border BuildSectionHeader(string text)
+    {
+        var label = new TextBlock
+        {
+            Text = text,
+            VerticalAlignment = VerticalAlignment.Center,
+            Foreground = TokenResources.Brush("Color.TextMuted"),
+            FontFamily = TokenResources.Get<FontFamily>("Font.Family"),
+            FontSize = TokenResources.Get<double>("Font.SmallSize"),
+            FontWeight = FontWeights.SemiBold,
+        };
+
+        return new Border
+        {
+            Padding = new Thickness(6, 6, 6, 2),
+            Margin = new Thickness(0, 0, 0, 2),
+            Child = label,
+        };
     }
 
     /// <summary>
@@ -160,7 +221,11 @@ public partial class SystemLocationPicker : Window
         return Math.Max(16, (int)Math.Ceiling(20 * scale));
     }
 
-    private UIElement BuildRow(string label, ImageSource icon, Action onClick)
+    private UIElement BuildRow(string label, ImageSource icon, Action onClick) =>
+        BuildRow(label, subtitle: null, icon, onClick);
+
+    /// <param name="subtitle">副行文字（队列语境放层级路径）；为 null 时不占行高。</param>
+    private UIElement BuildRow(string label, string? subtitle, ImageSource? icon, Action onClick)
     {
         var row = new Border
         {
@@ -185,24 +250,66 @@ public partial class SystemLocationPicker : Window
         };
         RenderOptions.SetBitmapScalingMode(image, BitmapScalingMode.Linear);
         Grid.SetColumn(image, 0);
-        grid.Children.Add(image);
+        if (icon is not null) grid.Children.Add(image);
+        else grid.Children.Add(BuildPlaceholder(label, 20));
 
-        var text = new TextBlock
+        var texts = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        texts.Children.Add(new TextBlock
         {
             Text = label,
-            VerticalAlignment = VerticalAlignment.Center,
             Foreground = TokenResources.Brush("Color.Text"),
             FontFamily = TokenResources.Get<FontFamily>("Font.Family"),
             FontSize = TokenResources.Get<double>("Font.BodySize"),
-        };
-        Grid.SetColumn(text, 1);
-        grid.Children.Add(text);
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        });
+        if (subtitle is not null)
+        {
+            texts.Children.Add(new TextBlock
+            {
+                Text = subtitle,
+                Foreground = TokenResources.Brush("Color.TextMuted"),
+                FontFamily = TokenResources.Get<FontFamily>("Font.Family"),
+                FontSize = TokenResources.Get<double>("Font.SmallSize"),
+                TextTrimming = TextTrimming.CharacterEllipsis,
+            });
+        }
+
+        Grid.SetColumn(texts, 1);
+        grid.Children.Add(texts);
 
         row.Child = grid;
         row.MouseEnter += (_, _) => row.Background = TokenResources.Brush("Color.Stroke");
         row.MouseLeave += (_, _) => row.Background = Brushes.Transparent;
         row.MouseLeftButtonUp += (_, _) => onClick();
         return row;
+    }
+
+    /// <summary>图标占位圆：与设置面板/轮盘同一规则（徽标底色 + 淡描边 + 名称首字）。</summary>
+    private static UIElement BuildPlaceholder(string label, double size)
+    {
+        var host = new Grid
+        {
+            Width = size,
+            Height = size,
+            Margin = new Thickness(0, 0, 8, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        host.Children.Add(new System.Windows.Shapes.Ellipse
+        {
+            Fill = TokenResources.Brush("Color.BadgeFill"),
+            Stroke = TokenResources.Brush("Color.Stroke"),
+            StrokeThickness = 1,
+        });
+        host.Children.Add(new TextBlock
+        {
+            Text = string.IsNullOrEmpty(label) ? "?" : label[..1],
+            Foreground = TokenResources.Brush("Color.Text"),
+            FontFamily = TokenResources.Get<FontFamily>("Font.Family"),
+            FontSize = 9,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        return host;
     }
 
     private void Choose(string label, MenuAction action)
@@ -214,13 +321,37 @@ public partial class SystemLocationPicker : Window
         Close();
     }
 
-    /// <summary>「浏览文件…」：还是那条老路（文件选择框），只是现在它是选项之一。</summary>
+    /// <summary>
+    /// 「浏览文件…」：还是那条老路（文件选择框），只是现在它是选项之一。
+    ///
+    /// 队列语境下按扩展名分流：程序类仍走 launch；**其它文件走 open** ——
+    /// 文档交给系统关联打开。这与「浏览文件夹」选 open 是同一条语义
+    /// （文件夹与文件都是「shell 打开一个路径」），而 launch 的工作目录兜底
+    /// 对文档没有意义（文档不需要「从哪个目录启动」这个上下文）。
+    /// </summary>
     private void OnBrowseClick(object sender, RoutedEventArgs e)
     {
-        var path = ProgramPicker.Pick(this, _modalOpening, () => { });
+        var path = ProgramPicker.Pick(this, _modalOpening, () => { }, allFilesFirst: _queueMode);
         if (string.IsNullOrWhiteSpace(path)) return;
 
-        Choose(ShellNames.Get(path), MenuAction.Launch(path));
+        Choose(ShellNames.Get(path), ActionForPickedFile(path));
+    }
+
+    /// <summary>队列语境的扩展名分流；非队列语境保持原来的一律 launch。</summary>
+    private MenuAction ActionForPickedFile(string path)
+    {
+        if (!_queueMode) return MenuAction.Launch(path);
+
+        var ext = Path.GetExtension(path);
+        var isProgram =
+            string.Equals(ext, ".exe", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(ext, ".lnk", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(ext, ".bat", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(ext, ".cmd", StringComparison.OrdinalIgnoreCase);
+
+        return isProgram
+            ? MenuAction.Launch(path)
+            : new MenuAction { Type = "open", Target = path };
     }
 
     /// <summary>

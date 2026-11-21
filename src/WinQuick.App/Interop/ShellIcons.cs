@@ -53,11 +53,12 @@ public static class ShellIcons
         {
             var key = (path, targetPx);
             if (ScaledCache.TryGetValue(key, out var cached)) return cached;
-
-            var scaled = Bake(Get(path), targetPx);
-            ScaledCache[key] = scaled;
-            return scaled;
         }
+
+        // 同 Get：烘焙（RenderTargetBitmap）在锁外，只把字典读写留在锁内。
+        var scaled = Bake(Get(path), targetPx);
+        lock (Gate) { ScaledCache[(path, targetPx)] = scaled; }
+        return scaled;
     }
 
     private static readonly Dictionary<(string Path, int Px), BitmapSource?> ScaledCache = [];
@@ -102,11 +103,64 @@ public static class ShellIcons
         lock (Gate)
         {
             if (MemoryCache.TryGetValue(path, out var cached)) return cached;
-
-            var icon = LoadFromDiskCache(path) ?? ExtractFromShell(path);
-            MemoryCache[path] = icon;
-            return icon;
         }
+
+        // 抽取（磁盘+COM）刻意放在锁外：持锁跨 IO 会让后台抽取期间任何 UI 线程的
+        // 同步取图标在 lock 上排队（主环 GetScaled、面板），表现为「异步化了还卡」。
+        // 代价：同 key 并发可能重复抽取（MemoryCache 幂等、首展一次性成本，可接受；
+        // 子弧路径已由 GetOrBeginGet 的 _inflight 去重兜住）。
+        var icon = LoadFromDiskCache(path) ?? ExtractFromShell(path);
+        lock (Gate) { MemoryCache[path] = icon; }
+        return icon;
+    }
+
+    /// <summary>
+    /// 异步取图标（spec smart-panel-placement-childarc-asyncload §2.2）。
+    /// 缓存命中（含「上次抽取失败」的负缓存）**同步返回**（负命中以 pending=false 区分），行为与 <see cref="Get"/> 完全一致；
+    /// 未命中返回 null 并在后台线程抽取（<see cref="Get"/> 持锁、线程安全），
+    /// 就绪后把结果（可能为 null=抽取失败）投回**调用时的 UI 线程**再回调 ——
+    /// 调用方可以直接在回调里碰视觉树。
+    /// 同一路径的并发请求共享同一个进行中的 Task，不会重复抽取。
+    /// </summary>
+    /// <remarks>仅限 UI 线程调用：回调用 SynchronizationContext 投回调用线程。</remarks>
+    public static BitmapSource? GetOrBeginGet(string? path, Action<BitmapSource?> onReady, out bool pending)
+    {
+        // 缓存命中（含负缓存）都算「已定」：负命中返回 null 但 pending=false，
+        // 调用方据此走首字占位而不是 spinner —— 否则抽取失败项每次重展都是永久加载态。
+        if (string.IsNullOrWhiteSpace(path)) { pending = false; return null; }
+
+        lock (Gate)
+        {
+            if (MemoryCache.TryGetValue(path, out var cached)) { pending = false; return cached; }
+        }
+
+        var task = _inflight.GetOrAdd(path, p => Task.Run(() =>
+        {
+            var icon = Get(p);
+            // 完成后立刻摘除：后续请求走 MemoryCache（Get 已写入，含负缓存），不会复活旧任务。
+            lock (Gate) { _inflight.TryRemove(p, out _); }
+            return icon;
+        }));
+        _ = task.ContinueWith(
+            t => onReady(t.Result),
+            TaskScheduler.FromCurrentSynchronizationContext());
+        { pending = true; return null; }
+    }
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Task<BitmapSource?>> _inflight = new();
+
+    /// <summary>探针接缝：清空内存/磁盘图标缓存，供 --childarc-perf-probe 复现冷启动。</summary>
+    internal static bool ClearCachesForProbe()
+    {
+        lock (Gate)
+        {
+            MemoryCache.Clear();
+            ScaledCache.Clear();
+        }
+        if (!System.IO.Directory.Exists(CacheDirectory)) return true; // 目录不存在=本就空，冷段有效
+        try { System.IO.Directory.Delete(CacheDirectory, recursive: true); }
+        catch { return false; /* 被占用/权限：磁盘缓存删不掉，冷缓存段无效，由探针判定 */ }
+        return !System.IO.Directory.Exists(CacheDirectory);
     }
 
     private static string CacheKey(string path)

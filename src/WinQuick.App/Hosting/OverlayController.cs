@@ -460,6 +460,10 @@ public sealed class OverlayController : IDisposable
     /// <summary>诊断用：环 2 的父项在环 1 里的下标（-1 = 环 2 为空）。</summary>
     internal int ChildArcParentForProbe => _radial.ChildArcParentForProbe;
 
+    /// <summary>诊断用：子弧加载状态（有源图标数 / 图标总数 / 存活 spinner 数）。</summary>
+    internal (int IconsWithSource, int TotalIcons, int SpinnersAlive) ChildArcLoadStateForProbe() =>
+        _radial.ChildArcLoadStateForProbe;
+
     /// <summary>诊断用：环 1 当前各项的标签（按顺序）。</summary>
     internal IReadOnlyList<string> Ring1LabelsForProbe => _radial.Ring1LabelsForProbe;
 
@@ -1152,8 +1156,8 @@ public sealed class OverlayController : IDisposable
     }
 
     /// <summary>
-    /// 把面板摆在光标所在屏的**另一侧**，尽量避免压住轮盘
-    /// （轮盘跟着光标走，所以把面板放到光标的反方向最不容易重叠）。
+    /// 把面板摆到与轮盘**零重叠**的屏内空处（spec smart-panel-placement-childarc-asyncload §2.1）：
+    /// 候选锚位中零重叠者优先、取离光标最近；窄屏全重叠取最小重叠；并列取稳定序。
     ///
     /// 设置面板与皮肤面板共用这一份：两块面板不会同时在场（打开皮肤会收起设置），
     /// 所以它们用同一条摆位规则就是对的 —— 各写一份只会让"哪块摆哪儿"变得难以预期。
@@ -1181,19 +1185,22 @@ public sealed class OverlayController : IDisposable
             ? (int)Math.Round(measuredDips * scale0)
             : (int)Math.Round(panel.MaxHeight * scale0);
 
-        var cursorOnLeftHalf = !MonitorLayout.TryGetCursorPosition(out var cx, out _)
-                               || cx < monitor.X + monitor.Width / 2;
-
-        var left = cursorOnLeftHalf
-            ? monitor.Right - panelWidth - (int)Math.Round(margin * scale0)
-            : monitor.X + (int)Math.Round(margin * scale0);
-
-        var top = monitor.Y + (monitor.Height - panelHeight) / 2;
-
-        // 钳制在屏内。竖直方向尤其重要：面板是纵向表单，底部是最常用的按钮，
-        // 溢出屏幕就等于点不到 —— 用户已经因为"按钮点不到"报过一次问题了。
-        left = Math.Clamp(left, monitor.X, Math.Max(monitor.X, monitor.Right - panelWidth));
-        top = Math.Clamp(top, monitor.Y, Math.Max(monitor.Y, monitor.Bottom - panelHeight));
+        // 摆位策略：零重叠优先（spec smart-panel-placement-childarc-asyncload §2.1）。
+        // 轮盘矩形取常驻窗口的物理边界；拿不到时退化为点圆（全候选零重叠，按距离选）。
+        // 拿不到光标（罕见）才退回屏心；(0,0) 不是哨兵 —— 光标真在主屏左上角像素时是合法值。
+        if (!MonitorLayout.TryGetCursorPosition(out var cx, out var cy))
+        {
+            cx = monitor.X + monitor.Width / 2;
+            cy = monitor.Y + monitor.Height / 2;
+        }
+        var bounds = _radial.CurrentPhysicalBounds;
+        var choice = Diagnostics.PanelPlacement.Choose(new Diagnostics.PanelPlacement.Input(
+            monitor.X, monitor.Y, monitor.Width, monitor.Height,
+            bounds?.X ?? cx, bounds?.Y ?? cy, bounds?.Width ?? 0,
+            panelWidth, panelHeight, (int)Math.Round(margin * scale0),
+            cx, cy));
+        var left = choice.Left;
+        var top = choice.Top;
 
         // 用户手动拖过就不再自动摆位：面板挡住轮盘正是他拖开的动机，
         // 自动摆位会把它拽回原处 —— 等于白拖。（最大高度那段仍然照做，

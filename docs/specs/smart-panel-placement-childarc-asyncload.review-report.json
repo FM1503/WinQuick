@@ -1,0 +1,13 @@
+{
+  "slug": "smart-panel-placement-childarc-asyncload",
+  "stage": "合并终版（P 初审 → Q 初审 fail → fix1 复审 → fix2 终审）",
+  "verdict": "pass",
+  "history": [
+    { "round": "P 初审（摆位）", "verdict": "pass-with-issues", "issues": "P2×4（光标哨兵/注释/用例9/执行书分叉）", "resolution": "全部由 fix1 F10-F13 与 fix2 处理" },
+    { "round": "Q 初审（异步加载）", "verdict": "fail", "issues": "P0×1（spinner 未挂树）+P1×3（负缓存路由/探针恒真/锁跨IO）+P2×5", "resolution": "fix1 F1-F9 全部修复" },
+    { "round": "fix1 复审", "verdict": "pass-with-issues", "issues": "第一轮 P0/P1 全部真实闭环；新引入 P1×1（F12 裁定误删跟随候选，经独立模拟证伪）+P2×1（清缓存目录不存在误报）", "resolution": "fix2 G1-G3 修复" },
+    { "round": "fix2 终审", "verdict": "pass", "issues": "无", "resolution": "G1 恢复10候选与 spec 一致；G2 强断言 (24,100) 独立手算复核成立（624.0 vs 625.74 确定不可翻转）；G3 Exists 前置判断；321/321 复跑绿" }
+  ],
+  "issues": [],
+  "summary": "最终结论 pass：摆位算法（10 候选零重叠优先）与子环图标异步渐进加载（spinner 档②）经两轮修复后全部审查问题闭环；App+Probes 编译 0 错、全量单测 321/321、性能探针真校验通过。留档说明：spinner 旋转缓动为 Material 3「标准 easing」的二次近似（观感由用户 AC5 验收兜底）。"
+}

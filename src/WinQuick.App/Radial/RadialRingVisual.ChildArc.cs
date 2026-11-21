@@ -290,6 +290,12 @@ public sealed partial class RadialRingView
         _childAnimator.Collapse();
     }
 
+    /// <summary>探针接缝：子弧加载状态（有源图标数 / 图标总数 / 存活 spinner 数）。</summary>
+    internal (int IconsWithSource, int TotalIcons, int SpinnersAlive) ChildArcLoadStateForProbe() =>
+        (_childIcons.Count(i => i.Source is not null), _childIcons.Count,
+            _childExtraVisuals.OfType<FrameworkElement>()
+                .Count(e => e.Tag as string == "sector-spinner"));
+
     /// <summary>立即收起并移除子弧视觉，不播放动画。</summary>
     public void CollapseChildArcImmediate()
     {
@@ -444,6 +450,10 @@ public sealed partial class RadialRingView
             _childIcons[i].Opacity = opacity * (i == _hoveredChild ? 1.0 : 0.94);
             _childLabels[i].SetOpacity(opacity);
         }
+
+        // spinner 与图标/标签同款跟随进度淡入淡出，否则扇区还很薄时它就实体化了。
+        foreach (var s in _childExtraVisuals.OfType<FrameworkElement>())
+            if (s.Tag as string == "sector-spinner") s.Opacity = opacity;
     }
 
     /// <summary>按当前编辑态增删子环那圈虚线。可重复调用。</summary>
@@ -520,20 +530,56 @@ public sealed partial class RadialRingView
         RenderOptions.SetBitmapScalingMode(image, BitmapScalingMode.HighQuality);
         image.Opacity = _childArcProgress;
 
-        var source = ShellIcons.Get(child.IconPath);
+        var offset = Vec2.FromPolar(iconRadius, angleDeg);
+
+        UIElement? spinner = null;
+        var source = ShellIcons.GetOrBeginGet(child.IconPath, ready =>
+        {
+            // 回调已回到 UI 线程；但子弧可能已收起/重建 —— 元素离树就丢弃，
+            // 旧树的视觉由旧树自己的生命周期负责（RemoveChildVisuals）。
+            if (image.Parent is null) return;
+            if (ready is not null)
+            {
+                image.Source = ready;
+                if (spinner is { } s)
+                {
+                    _childExtraVisuals.Remove(s);
+                    Root.Children.Remove(s);
+                }
+            }
+            else
+            {
+                // 抽取失败：spinner 换成首字占位（与「无图标路径」同一落点）。
+                if (spinner is { } s)
+                {
+                    _childExtraVisuals.Remove(s);
+                    Root.Children.Remove(s);
+                }
+                AddPlaceholder(Root, _center, iconRadius, angleDeg, child.Label, iconSize,
+                    _childExtraVisuals);
+            }
+        }, out var pending);
         if (source is not null)
         {
             image.Source = source;
         }
-        else
+        else if (!pending)
         {
-            // 与第一层环一致：取不到图标就画首字占位，而不是留一块空白。
-            // 把占位图收进 _childExtraVisuals，否则收起时会残留在视觉树上。
+            // 已定且无图标（无路径，或此前抽取失败被负缓存）：画首字占位，而不是 spinner 永久转。
             AddPlaceholder(Root, _center, iconRadius, angleDeg, child.Label, iconSize,
                 _childExtraVisuals);
         }
-
-        var offset = Vec2.FromPolar(iconRadius, angleDeg);
+        else
+        {
+            // 有路径但未就绪：环形加载占位（spec §2.3 档②），就绪即换。
+            spinner = SectorSpinner.Create(iconSize, TokenBrushes.Brush(TokenStore.Current.Color.Label));
+            _childExtraVisuals.Add(spinner);
+            Root.Children.Add(spinner);
+            spinner.Opacity = _childArcProgress;
+            Canvas.SetLeft(spinner, _center.X + offset.X - iconSize / 2);
+            Canvas.SetTop(spinner, _center.Y + offset.Y - iconSize / 2);
+            Panel.SetZIndex(spinner, 0);
+        }
         Canvas.SetLeft(image, _center.X + offset.X - iconSize / 2);
         Canvas.SetTop(image, _center.Y + offset.Y - iconSize / 2);
 

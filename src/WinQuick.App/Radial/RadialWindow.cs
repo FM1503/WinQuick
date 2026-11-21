@@ -727,6 +727,9 @@ public sealed class RadialWindow : Window
     /// <summary>诊断用：环 2 的父项在环 1 里的下标。</summary>
     internal int ChildArcParentForProbe => _path.ParentIndexInRing1;
 
+    /// <summary>诊断用：子弧加载状态（有源图标数 / 图标总数 / 存活 spinner 数）。</summary>
+    internal (int, int, int) ChildArcLoadStateForProbe => _view.ChildArcLoadStateForProbe();
+
     /// <summary>诊断用：环 1 当前各项的标签（按顺序）。</summary>
     internal IReadOnlyList<string> Ring1LabelsForProbe => _view.Ring1Labels;
 

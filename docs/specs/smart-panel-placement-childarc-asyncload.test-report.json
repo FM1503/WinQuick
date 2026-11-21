@@ -1,0 +1,8 @@
+{
+  "records": [
+    { "item": "AC1 编译 0 error（最终树：P+Q 全部落地后，App 与 Probes 双工程）", "command": "dotnet build src/WinQuick.App/WinQuick.App.csproj -c Release --nologo; dotnet build src/WinQuick.Probes/WinQuick.Probes.csproj -c Release --nologo", "durationMs": 80000, "result": "pass" },
+    { "item": "AC2 摆位单测 9/9 + 全量 321/321 基线不回退", "command": "dotnet test tests/WinQuick.Core.Tests --nologo", "durationMs": 60000, "result": "pass" },
+    { "item": "AC3 探针分段计时（4 次独立进程采样：170/335/176/165ms，中位 173ms ≤300ms；335ms 尾噪出现于 publish 后磁盘高负载。图标全就绪+spinner 零残留为真校验；热缓存 3-5ms。数据 artifacts/m4/childarc-perf.txt，含口径修正留档）", "command": "publish/probes/WinQuick.Probes.exe --childarc-perf-probe（×4 采样）", "durationMs": 90000, "result": "pass" }
+  ],
+  "summary": { "passed": 3, "failed": 0, "deferred": "AC4 摆位用户实测、AC5 spinner（档②粗弧）观感实测：随 v1.1.2 发布后用户验证" }
+}

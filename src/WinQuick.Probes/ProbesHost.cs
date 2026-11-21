@@ -123,6 +123,10 @@ internal static class ProbesHost
                 RunDetached(app, () => OverlayProbe.RunAsync(cli));
                 break;
 
+            case "--childarc-perf-probe":
+                RunDetached(app, () => ChildArcPerfProbe.RunAsync(cli));
+                break;
+
             case "--level-probe":
                 RunDetached(app, () => LevelProbe.RunAsync(cli));
                 break;
@@ -203,6 +207,7 @@ internal static class ProbesHost
           --add-sector-probe        核对环里的「＋」扇区：命中、点击分派、12 项上限、加项后位置
           --flicker-probe           刷新闪烁：逐动作数窗口级操作，纯内容刷新应当一项都不涨
           --flash-probe             闪烁本身：抓屏幕像素，量某个动作到底闪不闪
+          --childarc-perf-probe     子环首展分段计时（冷缓存≤300ms，含热对照）
 
         面板、标签与动画
           --settings-probe          设置界面：XAML 加载、保存路径、留空语义、非法输入反馈

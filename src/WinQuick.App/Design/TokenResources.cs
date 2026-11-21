@@ -23,6 +23,64 @@ public static class TokenResources
 
     private static bool _installed;
 
+    /// <summary>面板派生键的结果（纯数据，供 Install 与单测共用）。</summary>
+    public sealed record PanelPalette(
+        string SurfaceSolid, string Surface, string FieldBackground,
+        string Outline, string HoverSurface, string Accent, string Danger, string Success);
+
+    /// <summary>
+    /// 面板配色的全部派生逻辑（skin-panel-readability，2026-11-21 审计后重建）。
+    ///
+    /// 语义：轮盘扇区是「原料叠桌面」（半透明原料在桌面上是暗底白字），
+    /// 面板是「自绘实色表面」—— 直接用原料会把 α0.07 的白实色化成纯白底配白字。
+    /// 所以面板键一律**先按 α 合成到暗基线**再派生；Outline/HoverSurface 基于合成后的底
+    /// 判明暗（修正此前按原料判定的顺序缺陷）。
+    /// 纯函数无 WPF 依赖 —— 可读性配对由此可被单测直接锁住。
+    /// </summary>
+    public static PanelPalette DerivePanelColors(Core.Design.ColorTokens c)
+    {
+        const string DarkBase = "#202020";
+        var surface = Composite(c.SectorFill, c.SectorFillAlpha, DarkBase);
+        var light = Luminance(surface) > 0.5;
+        // 输入框一档阶梯：混色而非乘法 —— 乘法在纯黑底（contrast）恒为 0，层次消失（reviewer P2）。
+        // Mix(a,b,t)=a·t+b·(1-t)：目标色（深灰/亮灰）占 12%、底占 88% —— 参数序反了会变成近纯白（实测教训）。
+        var field = light ? Mix("#3A3A3A", surface, 0.12) : Mix("#F0F0F0", surface, 0.12);
+        return new PanelPalette(
+            SurfaceSolid: surface,
+            Surface: surface,
+            FieldBackground: field,
+            Outline: light ? "#000000" : "#FFFFFF",
+            HoverSurface: light ? "#000000" : "#FFFFFF",
+            // 强调色取原色不透明：HoverFill 的 α 是「轮盘悬停高亮的半透明感」参数，
+            // 面板强调是实色语义 —— 按 α 合成会把 #33FF66/0.22 压成与底趋同的暗绿（SkinContrast 抓到）。
+            Accent: c.HoverFill,
+            Danger: light ? "#C42B1C" : "#F08A8A",
+            Success: light ? "#1B7F3A" : "#8CC88C");
+    }
+
+    /// <summary>按 α 把颜色合成到基色上（面板实色表面的语义核心）。</summary>
+    private static string Composite(string hex, double alpha, string overHex)
+    {
+        var a = Math.Clamp(alpha, 0, 1);
+        return Mix(hex, overHex, a);
+    }
+
+    private static string Mix(string aHex, string bHex, double t)
+    {
+        var (ar, ag, ab) = Rgb(aHex);
+        var (br, bg, bb) = Rgb(bHex);
+        var r = (int)Math.Round(ar * t + br * (1 - t));
+        var g = (int)Math.Round(ag * t + bg * (1 - t));
+        var b = (int)Math.Round(ab * t + bb * (1 - t));
+        return $"#{r:X2}{g:X2}{b:X2}";
+    }
+
+    private static (int, int, int) Rgb(string hex)
+    {
+        var body = hex.TrimStart('#');
+        return (Convert.ToInt32(body[..2], 16), Convert.ToInt32(body.Substring(2, 2), 16), Convert.ToInt32(body.Substring(4, 2), 16));
+    }
+
     /// <summary>
     /// 安装到应用资源。<paramref name="force"/> 为真时**重新**装一遍（换皮肤用）。
     ///
@@ -47,29 +105,27 @@ public static class TokenResources
         void Set(string key, object value) => app.Resources[Prefix + key] = value;
 
         // ---- 颜色 ----
-        Set("Color.Surface", TokenBrushes.Brush(color.SectorFill, color.SectorFillAlpha));
-        Set("Color.SurfaceSolid", TokenBrushes.Brush(color.SectorFill));
+        var panel = DerivePanelColors(color);
+        Set("Color.Surface", TokenBrushes.Brush(panel.Surface));
+        Set("Color.SurfaceSolid", TokenBrushes.Brush(panel.SurfaceSolid));
         Set("Color.Stroke", TokenBrushes.Brush(color.SectorStroke, color.SectorStrokeAlpha));
-        Set("Color.Accent", TokenBrushes.Brush(color.HoverFill));
+        Set("Color.Accent", TokenBrushes.Brush(panel.Accent));
         Set("Color.AccentStroke", TokenBrushes.Brush(color.HoverStroke, color.HoverStrokeAlpha));
         Set("Color.Text", TokenBrushes.Brush(color.Label));
         Set("Color.TextMuted", TokenBrushes.Brush(color.Hint, 0.72));
-        Set("Color.FieldBackground", TokenBrushes.Brush(color.DeadZoneFill));
+        Set("Color.FieldBackground", TokenBrushes.Brush(panel.FieldBackground));
         Set("Color.DeadZone", TokenBrushes.Brush(color.DeadZoneFill));
         Set("Color.DeadZoneStroke", TokenBrushes.Brush(color.DeadZoneStroke, color.DeadZoneStrokeAlpha));
         // 角标底色：SystemLocationPicker 无图标项的占位块用，与轮盘角标同源、换肤跟随。
         Set("Color.BadgeFill", TokenBrushes.Brush(color.BadgeFill, color.BadgeFillAlpha));
 
-        // 材质派生键（spec skin-formalization §1）：面板的白系描边/悬停底在浅色皮肤下必须翻成黑系，
-        // 否则就是「深色块贴在浅色面板上」。按 SectorFill 明暗自动派生，皮肤不必逐套声明。
-        var fillIsLight = Luminance(color.SectorFill) > 0.5;
-        var materialBase = fillIsLight ? "#000000" : "#FFFFFF";
-        Set("Color.Outline", TokenBrushes.Brush(materialBase, 0.16));
-        Set("Color.HoverSurface", TokenBrushes.Brush(materialBase, 0.05));
+        // 派生键来自 DerivePanelColors（基于合成底的明暗翻转，含半透明皮肤的正确方向）。
+        Set("Color.Outline", TokenBrushes.Brush(panel.Outline, 0.16));
+        Set("Color.HoverSurface", TokenBrushes.Brush(panel.HoverSurface, 0.05));
 
         // 状态色：成功/警告。不放进 tokens —— 它们是语义色，与设计基线无关。
-        Set("Color.Success", new SolidColorBrush(Color.FromRgb(0x8C, 0xC8, 0x8C)));
-        Set("Color.Danger", new SolidColorBrush(Color.FromRgb(0xF0, 0x8A, 0x8A)));
+        Set("Color.Success", TokenBrushes.Brush(panel.Success));
+        Set("Color.Danger", TokenBrushes.Brush(panel.Danger));
 
         // ---- 尺寸 ----
         Set("Radius.Window", (double)radius.WindowSize);

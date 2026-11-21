@@ -36,4 +36,51 @@ public class SkinContrastTests
         var bad = tokens with { Color = tokens.Color with { Label = tokens.Color.SectorFill } };
         Assert.Contains(bad.Validate(), p => p.Contains("label"));
     }
+
+    /// <summary>面板配对（skin-panel-readability）：面板是实色表面，派生键必须对每套皮肤可读。</summary>
+    public static IEnumerable<object[]> PanelStates()
+    {
+        foreach (var skin in TokenStore.Skins.All)
+            yield return new object[] { skin.Id };
+        yield return new object[] { "system-light" };
+        yield return new object[] { "system-dark" };
+    }
+
+    private static double Lum(string hex)
+    {
+        var r = Convert.ToInt32(hex.Substring(1, 2), 16) / 255.0;
+        var g = Convert.ToInt32(hex.Substring(3, 2), 16) / 255.0;
+        var b = Convert.ToInt32(hex.Substring(5, 2), 16) / 255.0;
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    }
+
+    [Theory]
+    [MemberData(nameof(PanelStates))]
+    public void 面板派生键_每套皮肤下正文与强调色都可读(string stateId)
+    {
+        // system 亮态用固定输入合成（P1：PreviewTokens(system) 读宿主注册表——非确定测试，
+        // 本机暗色模式下浅色配对从未被覆盖；固定 true + 官方默认强调色即确定性覆盖）。
+        var color = stateId switch
+        {
+            "system-light" => TokenStore.LoadWithOverrides(SystemSkin.Compose(true, "#0078D4")).Color,
+            _ => TokenStore.PreviewTokens(stateId).Color,
+        };
+        var panel = TokenResources.DerivePanelColors(color);
+        var surface = Lum(panel.SurfaceSolid);
+        Assert.True(Math.Abs(surface - Lum(color.Label)) >= 0.3,
+            $"{stateId}：正文与面板底亮度差不足（{panel.SurfaceSolid} vs {color.Label}）");
+        Assert.True(Math.Abs(surface - Lum(panel.Accent)) >= 0.2,
+            $"{stateId}：强调色与面板底亮度差不足（{panel.SurfaceSolid} vs {panel.Accent}）");
+        Assert.True(Math.Abs(Lum(panel.FieldBackground) - Lum(color.Label)) >= 0.15,
+            $"{stateId}：输入框底与正文亮度差不足（{panel.FieldBackground} vs {color.Label}）");
+    }
+
+    [Fact]
+    public void 半透明皮肤的面板底是暗色_回归对照()
+    {
+        // 修复前：α0.07 白实色化=纯白底配白字。这条锁死合成语义不再回退。
+        var merged = TokenStore.PreviewTokens("translucent");
+        var panel = TokenResources.DerivePanelColors(merged.Color);
+        Assert.True(Lum(panel.SurfaceSolid) < 0.3, $"应为暗面板，实为 {panel.SurfaceSolid}");
+    }
 }

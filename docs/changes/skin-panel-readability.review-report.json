@@ -1,0 +1,84 @@
+{
+  "slug": "skin-panel-readability",
+  "tier": "M",
+  "date": "2026-11-21",
+  "verdict": "pass-with-issues",
+  "dimensions": {
+    "符合度": "DerivePanelColors 纯函数族、Install 六处消费、九态配对用例+回归锁均落实，执行书 P1/P2/P3 逐条比对全部吻合（Shift 草稿行按执行书注记删除，无重复定义，上轮 P1 已清）。偏差：Accent 由变更单/执行书正文写的 α 合成改为原色、Accent 断言阈值 0.2（正文写 0.3）——经独立复算实属必要修正（见 issues），但基准文档未回写。",
+    "缺陷与边界": "合成公式（Mix α-over 线性插值、Clamp(0,1)、Round）正确；Shift 方向（暗底×1.12 亮化/亮底×0.88 压深）与变更单一致；Outline/HoverSurface 基于合成底判明暗，translucent 顺序缺陷修正确认。遗留：乘法阶梯在纯黑底（contrast）失效，FieldBackground==Surface；Shift 注释引用的『M3 海拔规律 ±0.06』查无出处且数值未参与计算。",
+    "安全与性能": "纯函数每次 Install 调用一次，Brush 有 (hex,alpha) 缓存，无循环成本，无注入/越权面。通过。",
+    "测试质量": "18/18、全量 339/339 复跑通过，回归锁（translucent<0.3）与可失败对照俱在。缺口：system-light 用例经 PreviewTokens(SystemSkin.Id) 读宿主机注册表取数——非确定测试（本机暗色模式下该条目实跑暗基线数据，浅色态从未覆盖，且特定系统强调色可致环境性失败，P1）；配对矩阵缺 Text↔FieldBackground 断言（P2）；死变量一行（P2）。",
+    "分级合规": "tier M 合规：2 文件与 code-files 一致，单仓内功能调整，无新建文件，无 web/LVGL 类 UI 文件，无接口/依赖/配置变更。",
+    "执行书符合度": "对照 docs/changes/skin-panel-readability-exec.md：P1（PanelPalette+DerivePanelColors+工具函数）、P2（Install 六处替换、DeadZone 保持原料）、P3（测试追加逐字一致）全部落实；唯一差异为 Accent 值来源（合成→原色），属有据修正且有单测证据链，非 worker 私自发挥，记文档漂移 P2 而非执行书违规。",
+    "机器预检": "scripts/review-lint.mjs 不存在（MODULE_NOT_FOUND），机器项跳过，全语义审查。"
+  },
+  "issues": [
+    {
+      "severity": "P1",
+      "file": "tests/WinQuick.Core.Tests/SkinContrastTests.cs",
+      "line": 63,
+      "dim": "测试",
+      "desc": "system-light 用例经 TokenStore.PreviewTokens(SystemSkin.Id) 取数，内部走 SystemThemeWatcher.IsLightMode()/AccentColor() 读 HKCU 注册表，测试数据随宿主机主题与强调色变化，非确定。实证（本审查）：本机 AppsUseLightTheme=0，复跑 18/18 绿中的 system-light 条目实际执行 Compose(false, #0078D4)=暗基线+官方蓝，与 default 条目同数据——浅色系统面板（#F3F3F3 底/#1B1B1B 字）的配对从未被覆盖，九态覆盖承诺名存实亡；且系统强调色为暗色调（Lum<0.3255，如 #C42B1C 实算 0.293）或浅色机器上极亮自定义强调色时，断言会环境性失败。",
+      "suggestion": "不走 PreviewTokens(SystemSkin.Id)：改为固定输入 SystemSkin.Compose(true, \"#0078D4\") 经 MergeWithOverrides 合并后断言（或直接内联浅色键集），使 system-light/system-dark 两态数据确定化，与注册表解耦。浅色数据经本审查手算（surface #E6E6E6/0.902 vs label #1B1B1B/0.106 差 0.796）固定输入下必绿，修复无风险。"
+    },
+    {
+      "severity": "P2",
+      "file": "docs/changes/skin-panel-readability.md",
+      "line": 18,
+      "dim": "符合度",
+      "desc": "基准文档漂移：变更单方案 1 写『Accent=HoverFill 同法合成』、方案 3 写『亮度差≥0.3』，实现为原色（TokenResources.cs:54）且 Accent 断言阈值 0.2（执行书 L33 同样写合成）。实现经独立复算正确且必要：translucent 合成版 Accent=#444444 与底 #303030 差仅 0.079（断言 0.2 必红）、retro 合成版 #24512F 差 0.200 临界、default 原色 #0078D4 差 0.271（按文档 0.3 亦必红）——按文档实现则 AC2 无法达标。但两份文档未回写，后续维护者按正文回退会引入回归或误判实现偏离。",
+      "suggestion": "回写变更单与执行书：Accent 语义改为『原色不透明（HoverFill 的 α 属轮盘悬停语义，面板强调为实色）』，断言阈值明确为 Text↔底 0.3 / Accent↔底 0.2。"
+    },
+    {
+      "severity": "P2",
+      "file": "tests/WinQuick.Core.Tests/SkinContrastTests.cs",
+      "line": 68,
+      "dim": "测试",
+      "desc": "配对矩阵缺 Text↔FieldBackground：SettingsPanel.xaml:21/103 输入框以 FieldBackground 为底、Color.Text 为字，但断言只锁 Text↔SurfaceSolid 与 Accent↔SurfaceSolid。间接下界 |Text−Field|≥0.3−0.11≈0.19（亮底压深 12% 的最大偏移）尚可读但未直接锁定，且 contrast 态 Field==Surface（见另一条）恰说明 Field 并非恒与 Surface 同 luminance 语义。",
+      "suggestion": "Theory 内补一条 Assert：Math.Abs(Lum(panel.FieldBackground) - Lum(color.Label)) >= 0.2，锁死输入框字/底配对。"
+    },
+    {
+      "severity": "P2",
+      "file": "src/WinQuick.App/Design/TokenResources.cs",
+      "line": 45,
+      "dim": "缺陷",
+      "desc": "乘法阶梯在纯黑底失效：contrast 皮肤 surface=#000000，Shift 结果 0×1.12=0，FieldBackground 与 Surface 完全相同（#000000），输入框失去底色层次，仅剩 0.16α 白描边兜底区分。观感可辨识但与『暗底亮一档』的声明不符（档差为零）。",
+      "suggestion": "暗端给最小绝对偏移（如 Math.Max(c*k, c+6)），或在代码注释声明 contrast 态接受描边区分的设计决定。"
+    },
+    {
+      "severity": "P2",
+      "file": "src/WinQuick.App/Design/TokenResources.cs",
+      "line": 76,
+      "dim": "缺陷",
+      "desc": "Shift 注释『±0.06 ≈ 一档容器阶梯，M3 海拔规律』查无出处：M3-status.md 与 M9-pseudo3d.md（仅引 Fluent 2 Elevation 的阴影档语义）均无 ±12%/±0.06 的阶梯数值声明；且参数 delta=0.06 的数值未参与任何计算（仅取正负符号，实际缩放 ×1.12/×0.88），注释与实现脱钩。",
+      "suggestion": "注释改为描述实际行为：『按 delta 符号整通道乘 1.12/0.88（暗底亮化/亮底压深）』，删除无出处的『M3 海拔规律 ±0.06』引用；或让 delta 数值真实参与计算。"
+    },
+    {
+      "severity": "P2",
+      "file": "tests/WinQuick.Core.Tests/SkinContrastTests.cs",
+      "line": 78,
+      "dim": "测试",
+      "desc": "var translucent = TokenStore.Skins.All.First(...) 赋值后从未使用（执行书 P3 原样带入的死代码；方法调用赋值不触发 CS0219，故编译 0 警告）。",
+      "suggestion": "删除该行（下句已直接用 \"translucent\" 字面量取 PreviewTokens）。"
+    }
+  ],
+  "summary": {
+    "p0": 0,
+    "p1": 1,
+    "p2": 5,
+    "checked": [
+      "AC1 编译 0 error：通过（复跑 dotnet build -c Release，0 错 0 警）",
+      "AC2 SkinContrast 全绿（原 8+新 10=18）：通过（复跑 18/18；注：system-light 条目在本机暗色模式下实跑暗基线数据，见 P1）",
+      "AC3 全量 339 不回退：通过（复跑 339/339）",
+      "AC4 半透明面板实测：用户侧验收，不在审查范围（translucent 合成底 #303030 暗面板/白描边方向经静态推演正确）",
+      "九态推演独立复核：default(#202020/白字 0.87)、light(#F3F0E9 0.941 vs #3F3A31 0.229)、neon(#090D15 0.051 vs 0.954/0.714)、translucent(#303030 0.188 vs 1.0/1.0，回归锁 <0.3 成立)、material(0.108 vs 0.887/0.773)、contrast(0 vs 1.0/0.928)、retro(0.0706 vs 0.833/0.787) 全过；system-dark=基线重复（无害）；system-light 浅色数据未被执行（P1）",
+      "Accent 原色修正有据核实：translucent 合成版差 0.079/retro 合成版 0.200 临界/default 0.271<0.3，按文档合成或 0.3 阈值均无法过测（P2 文档回写）",
+      "Outline/HoverSurface 顺序缺陷修正确认：translucent 旧逻辑按原料白判 light 出黑描边（错向），新逻辑按合成底 dark 出白描边（正确）",
+      "Mix/Clamp/Round 公式正确性：α-over 线性插值语义正确，Clamp(0,1) 到位，Math.Round banker's 舍入对色值影响 ±1 可忽略",
+      "Color.Surface（非 Solid）全仓 grep 零消费者：半透明→实色的键语义变化无运行时观感影响面（预留键随 SurfaceSolid 同步）",
+      "执行书符合度：P1/P2/P3 逐条比对全部落实，DeadZone/DeadZoneStroke 保持原料，无执行书外私自改动；最终文件无重复定义（上轮 P1 重复写入已清，文件状态干净）",
+      "tier M 合规：改动文件=code-files 声明的 2 文件，无新建文件、无 web/LVGL UI 文件、无接口/依赖/配置变更"
+    ]
+  },
+  "postscript": "fix1 后记：P1（system-light 用例读宿主注册表的非确定性）已修——改固定输入 SystemSkin.Compose(true,\"#0078D4\") 经 LoadWithOverrides 接缝；P2×5 全部闭环——Accent 原色+阈值如实回写变更单、补输入框底↔Text ≥0.15 断言、纯黑底阶梯由乘法改 12% 混色（Mix 参数序笔误一轮修正）、无出处注释删除、死变量清理。终态：编译 0 错、SkinContrast 18/18、全量 339/339、skin-probe 复跑全过。verdict 维持 pass-with-issues（无遗留）。"
+}

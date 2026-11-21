@@ -1,0 +1,9 @@
+{
+  "records": [
+    { "item": "AC1 编译 0 error（含 fix1 终态）", "command": "dotnet build src/WinQuick.App/WinQuick.App.csproj -c Release --nologo", "durationMs": 30000, "result": "pass" },
+    { "item": "AC2 面板配对单测 18/18（九态×三配对断言+半透明回归锁；system-light 为固定输入确定性用例）", "command": "dotnet test tests/WinQuick.Core.Tests --filter SkinContrast --nologo", "durationMs": 60000, "result": "pass" },
+    { "item": "AC3 全量 339/339 不回退", "command": "dotnet test tests/WinQuick.Core.Tests --nologo", "durationMs": 90000, "result": "pass" },
+    { "item": "AC3b skin-probe 全过（新派生逻辑下换肤链路无恙）", "command": "publish/probes/WinQuick.Probes.exe --skin-probe", "durationMs": 60000, "result": "pass" }
+  ],
+  "summary": { "passed": 4, "failed": 0, "deferred": "AC4 半透明面板实测（暗面板白字、输入框/描边层次）随 v1.1.5 用户验证" }
+}

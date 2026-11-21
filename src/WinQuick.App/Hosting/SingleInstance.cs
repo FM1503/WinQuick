@@ -161,5 +161,27 @@ public static class AutoStart
         }
     }
 
+    /// <summary>
+    /// 自启项路径与当前 exe 不一致时改写为当前路径。
+    /// 场景：从旧 publish 目录迁到 Velopack 安装目录 —— 自启只在勾选时写一次，
+    /// Run 项还指着旧位置。按「用户意图已启用」处理，只纠正位置，不改变开关状态。
+    /// </summary>
+    public static void RepairStalePath()
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(RunKeyPath, writable: true);
+            if (key?.GetValue(ValueName) is not string entry) return;
+            var path = Environment.ProcessPath;
+            if (string.IsNullOrEmpty(path)) return;
+            if (string.Equals(entry.Trim('"'), path, StringComparison.OrdinalIgnoreCase)) return;
+            key.SetValue(ValueName, $"\"{path}\"", RegistryValueKind.String);
+        }
+        catch
+        {
+            // 注册表此刻不可写就算了 —— 下次启动还会再试。
+        }
+    }
+
     public static bool SetEnabled(bool enabled) => enabled ? Enable() : Disable();
 }

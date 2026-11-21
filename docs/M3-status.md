@@ -370,7 +370,7 @@ WinQuick.exe --render-preview    离屏渲染成 PNG
 
 结果：**枚举到 339 个条目，其中 28 个是 UWP**。AUMID 形如
 `Microsoft.WindowsCalculator_8wekyb3d8bbwe!App`，传统桌面程序的"AUMID"则是它的完整文件路径
-（例如 `C:\MentorGraphics\...\LMTOOLS.EXE`），两者都能作为启动目标。
+（例如 `C:\Vendor\...\LMTOOLS.EXE`），两者都能作为启动目标。
 
 ### 按 AUMID 而不是显示名定位
 

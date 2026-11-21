@@ -1,0 +1,40 @@
+name: Release
+
+# 正式发布动作明确可控：推 v* tag 才发版（push main 不发）。
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 安装 .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: 取版本号（tag 去 v 前缀）
+        id: ver
+        shell: bash
+        run: echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
+      - name: Publish
+        run: dotnet publish src/WinQuick.App/WinQuick.App.csproj -c Release -r win-x64 --self-contained -o publish
+
+      - name: vpk 打包并上传 GitHub Releases
+        # download 取上一版产物以生成 delta 增量包；upload 自动创建 Release 并上传。
+        # 公开仓库默认 GITHUB_TOKEN 即可（permissions 已声明 contents: write）。
+        run: |
+          dotnet tool install -g vpk
+          vpk download github --repoUrl https://github.com/FM1503/WinQuick
+          vpk pack -u WinQuick -v ${{ steps.ver.outputs.version }} -p publish --channel win-x64 --mainExe WinQuick.exe
+          vpk upload github --repoUrl https://github.com/FM1503/WinQuick --publish --releaseName "WinQuick ${{ steps.ver.outputs.version }}" --tag $env:GITHUB_REF_NAME
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

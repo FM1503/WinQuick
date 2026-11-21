@@ -8,6 +8,10 @@
     <UseWPF>true</UseWPF>
     <RootNamespace>WinQuick.App</RootNamespace>
     <AssemblyName>WinQuick</AssemblyName>
+    <!-- Velopack 要求 semver2 三段版本（不支持 1.0.0.0 四段），assembly 版本随之走。 -->
+    <Version>1.1.0</Version>
+    <!-- 自定义入口（Program.cs）：Velopack 引导必须先于任何 WPF 初始化。 -->
+    <StartupObject>WinQuick.App.Program</StartupObject>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>../../assets/winquick.ico</ApplicationIcon>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
@@ -23,10 +27,18 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
+    <PackageReference Include="Velopack" Version="1.2.161" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\WinQuick.Core\WinQuick.Core.csproj" />
+  </ItemGroup>
+
+  <!-- App.xaml 不再作为 ApplicationDefinition（入口由 Program.cs 接管），
+       改按普通 Page 编译 —— 资源与 x:Class 生成物不变。 -->
+  <ItemGroup>
+    <ApplicationDefinition Remove="App.xaml" />
+    <Page Include="App.xaml" />
   </ItemGroup>
 
   <!-- 探针与单测的可见性来源。

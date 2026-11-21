@@ -53,6 +53,9 @@ public sealed class ResidentHost : IDisposable
     private readonly OverlayController _overlay;
     private readonly SessionWatcher _session;
     private readonly TrayHost _tray;
+
+    /// <summary>更新检查器。「关于与更新」分区与启动静默检查共用一份（含已下载状态）。</summary>
+    private readonly Updates.UpdateChecker _updater = new();
     private readonly DispatcherTimer _hookHealthTimer;
 
     private bool _disposed;
@@ -69,6 +72,12 @@ public sealed class ResidentHost : IDisposable
         _overlay.ApplyDimOpacity(_config.Config.Appearance.DimOpacity);
         _session = new SessionWatcher();
         _tray = new TrayHost(_overlay);
+
+        // 托盘「设置…」的回调在这条装配线上注入：托盘自己不认识设置窗口，
+        // 而漏掉这行时菜单项是静默空操作（OpenSettings?.Invoke() 对 null），
+        // 既不弹窗也不进崩溃日志 —— 用户看到的就是「点了没反应」。
+        // OpenSettings 带可选参数（气泡直达「关于」），方法组不能转 Action —— 用 lambda 显式接线。
+        _tray.OpenSettings = () => OpenSettings();
 
         _hotkeys.Pressed += (_, _) => _overlay.Toggle();
         _overlay.ItemActivated += OnItemActivated;
@@ -96,6 +105,25 @@ public sealed class ResidentHost : IDisposable
 
                 _tray.ShowBalloon("WinQuick 无法保存启动队列", error ?? "未知原因");
                 return false;
+            });
+
+        // 「关于与更新」分区的检查与重启：面板不认识 UpdateChecker（宿主的职责），
+        // 经 OverlayController 转发接缝注入 —— 与 SetHotkeyProbe 同一套模式。
+        // 检查返回给面板的是一句状态文案；重启只在下载就绪后由用户显式点击。
+        _overlay.SetUpdateHooks(
+            async () =>
+            {
+                var info = await _updater.CheckAsync();
+                if (info is null)
+                    return _updater.IsSupported ? "已是最新版本" : "（开发目录运行，不支持在线更新）";
+                var ok = await _updater.DownloadAsync(info);
+                return ok
+                    ? $"新版本 {info.TargetFullRelease.Version} 已就绪，可立即更新"
+                    : $"发现新版本 {info.TargetFullRelease.Version}，下载失败（稍后再试）";
+            },
+            () =>
+            {
+                if (_updater.CachedTarget is { } target) _updater.ApplyAndRestart(target);
             });
 
         ActionExecutor.Completed += OnActionCompleted;
@@ -156,6 +184,9 @@ public sealed class ResidentHost : IDisposable
         // 每次启动都按配置覆盖的话，用户从托盘关掉自启后，下次启动又会被配置打开。
         if (_config.DefaultsWereCreated) AutoStart.SetEnabled(_config.Config.Startup.AutoStart);
 
+        // 自启路径自愈：从旧 publish 目录迁到 Velopack 安装目录后，Run 项仍指旧位置。
+        AutoStart.RepairStalePath();
+
         _menuSignature = _config.SerializeMenu(_menu);
 
         // 右键菜单项与当前菜单对齐。启动时做一次：程序可能被移动过，
@@ -167,6 +198,17 @@ public sealed class ResidentHost : IDisposable
 
         _config.StartWatching();
         _config.Changed += OnConfigChanged;
+
+        // 启动静默检查更新：延迟 15 秒避开开机高负载（与启动队列同一考量）。
+        // 检查/下载全程静默，仅下载完成时气泡提示；重启永远由用户显式触发。
+        if (_config.Config.Updates.AutoCheck)
+        {
+            _ = System.Threading.Tasks.Task.Run(async () =>
+            {
+                await System.Threading.Tasks.Task.Delay(TimeSpan.FromSeconds(15)).ConfigureAwait(false);
+                RunOnUi(() => _ = CheckForUpdatesQuietly());
+            });
+        }
 
         // 首次加载就有问题时也要提示 —— 但注意此时订阅的改动事件已经生效，
         // 后续每次热重载都会独立提示，不会漏报。
@@ -682,14 +724,33 @@ public sealed class ResidentHost : IDisposable
     /// 这样面板与轮盘同时在场：拖遮罩滑块、改高亮色、调悬停延迟，
     /// 都能立刻在旁边的轮盘上看到效果 —— 独立对话框做不到这一点。
     /// </summary>
-    public void OpenSettings()
+    public void OpenSettings(bool jumpToAbout = false)
     {
         _overlay.SetSettingsSource(_config.Config);
 
         // 面板开在覆盖层会话里，所以先把覆盖层唤出来。
         // 从托盘打开时用户可能不在轮盘界面，这一步让他看到完整上下文。
         if (!_overlay.IsVisible) _overlay.Show();
-        _overlay.OpenSettings();
+        _overlay.OpenSettings(jumpToAbout);
+    }
+
+    /// <summary>启动后的静默更新检查。任何失败都无声跳过（spec §3.4：更新是增强不是主功能）。</summary>
+    private async System.Threading.Tasks.Task CheckForUpdatesQuietly()
+    {
+        try
+        {
+            var info = await _updater.CheckAsync();
+            if (info is null) return;
+            var ok = await _updater.DownloadAsync(info);
+            if (ok)
+                _tray.ShowBalloon("WinQuick 更新",
+                    $"新版本 {info.TargetFullRelease.Version} 已就绪，点此打开「关于」重启更新",
+                    onClick: () => OpenSettings(jumpToAbout: true));
+        }
+        catch
+        {
+            // 静默：断网/限流/解析失败都不打扰。
+        }
     }
 
     /// <summary>
@@ -774,16 +835,14 @@ public sealed class ResidentHost : IDisposable
         if (_pendingSettings is not { } config) return;
         _pendingSettings = null;
 
-        var autoStartOk = AutoStart.SetEnabled(config.Startup.AutoStart);
-
+        // 这里刻意**不**写开机自启：注册表是事实来源（托盘菜单与设置面板的开关
+        // 都直写注册表），配置里的 autoStart 只是首启种子。若在这里按配置回写，
+        // 换肤（OnSkinChanged 以旧配置为基底构造快照）会把用户在托盘勾的自启
+        // 静默删掉，而托盘菜单的勾选状态只在构造时读一次，界面上仍显示已勾选。
         if (!_config.SaveConfig(config, out var error))
         {
             _tray.ShowBalloon("WinQuick 无法保存设置", error ?? "未知原因");
-            return;
         }
-
-        if (!autoStartOk)
-            _tray.ShowBalloon("WinQuick", "开机自启写入注册表失败（可能被组策略或安全软件限制）。");
     }
 
     private void CheckHookHealth()

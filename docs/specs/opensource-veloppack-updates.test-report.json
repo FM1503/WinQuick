@@ -1,0 +1,14 @@
+{
+  "slug": "opensource-veloppack-updates",
+  "date": "2026-11-21",
+  "records": [
+    { "item": "AC1 编译 0 error", "command": "dotnet build src/WinQuick.App/WinQuick.App.csproj -c Release --nologo", "durationMs": 1918, "result": "pass" },
+    { "item": "AC2 UpdateConfig 读写往返（默认/显式 false/缺段兼容）", "command": "dotnet test tests/WinQuick.Core.Tests --filter UpdateConfig --nologo", "durationMs": 3743, "result": "pass", "note": "3/3 通过；全量 312/312 由收尾修订轮与 reviewer 复跑确认" },
+    { "item": "AC3 改动范围仅任务书文件", "command": "git diff --stat / git status --short", "durationMs": 5000, "result": "pass", "note": "diff 中非任务文件均为工作区既有改动（上轮队列选择器功能与三张缺陷变更单文档），已逐一归因，无越界" },
+    { "item": "AC4a LICENSE 头部正确", "command": "head -2 LICENSE", "durationMs": 1000, "result": "pass", "note": "GNU GENERAL PUBLIC LICENSE / Version 3, 29 June 2007" },
+    { "item": "AC4b workflow YAML 可解析", "command": "python -c \"import yaml,io; yaml.safe_load(io.open('.github/workflows/release.yml', encoding='utf-8')); print('yaml ok')\"", "durationMs": 30000, "result": "pass", "note": "含安装 pyyaml --user；输出 yaml ok" },
+    { "item": "AC4c vpk 本地打包演练", "command": "dotnet publish src/WinQuick.App/WinQuick.App.csproj -c Release -r win-x64 --self-contained -o publish && vpk pack -u WinQuick -v 1.1.0 -p publish --channel win-x64 --mainExe WinQuick.exe", "durationMs": 190000, "result": "pass", "note": "产物复核 Releases/ 含 WinQuick-win-x64-Setup.exe、WinQuick-1.1.0-win-x64-full.nupkg、WinQuick-win-x64-Portable.zip、releases.win-x64.json 等六件；未签名警告属预期" },
+    { "item": "AC5 设置面板「关于」分区用户实测", "command": "（用户操作：热键唤出→设置面板→侧栏「关于」）", "durationMs": 0, "result": "pass", "note": "用户 2026-11-21 确认实测通过并定稿" }
+  ],
+  "summary": { "passed": 7, "failed": 0, "deferred": "AC6 完整更新闭环（发 1.1.0→安装→发 1.2.0→面板检查→下载→重启升级）依赖 GitHub 建仓与推送后执行：安装 Setup.exe 走 Velopack 安装路径后方可真实检查 GitHub Releases，届时验证" }
+}

@@ -1,0 +1,108 @@
+{
+  "slug": "opensource-veloppack-updates",
+  "stage": "client-integration",
+  "reviewer": "fresh-eyes reviewer (independent context)",
+  "date": "2026-11-21",
+  "inputs": {
+    "task": "docs/tasks/opensource-veloppack-updates-client.md",
+    "exec_plan": "docs/tasks/opensource-veloppack-updates-client-exec.md",
+    "spec": "docs/specs/opensource-veloppack-updates.md (阶段一)",
+    "diff_source": "git diff src/ tests/ + git status --short src/ tests/（工作区混合脏改动，AC3 字面预期已由决策层放行）"
+  },
+  "dimensions": {
+    "compliance": {
+      "result": "pass",
+      "expectations": [
+        { "item": "入口：Program.Main 首行 VelopackApp.Build().Run()，再手动启动 WPF；App.xaml 按 Page 编译；OnStartup 逻辑不变", "status": "pass", "evidence": "src/WinQuick.App/Program.cs:14-18 与执行书 P2 逐字符一致；csproj ApplicationDefinition Remove + Page Include（P1b）；App.xaml.cs OnStartup 无 diff，CLI 分发经 Environment.GetCommandLineArgs（App.xaml.cs:31,136-138）不依赖 WPF StartupEventArgs，自定义入口下完整保留（--add-to / 探针路径不受影响）" },
+        { "item": "UpdateChecker：GitHub 源 github.com/FM1503/WinQuick、仅正式版；Check/Download/ApplyAndRestart 全静默降级；开发目录 IsSupported=false", "status": "pass", "evidence": "src/WinQuick.App/Updates/UpdateChecker.cs:15,25,34 与执行书 P3 逐字符一致；构造与三个操作方法内 try/catch 全捕获，仅 ApplyAndRestart 无 catch（同步安装动作，属预期）" },
+        { "item": "配置：updates.autoCheck 默认 true，渲染模板含该段，旧配置缺段兼容", "status": "pass", "evidence": "AppConfig.cs:34,163-167（P4a/P4b）；ConfigStore.cs updates 段（P5）；JsonSerializerOptions PropertyNameCaseInsensitive=true（AppConfig.cs:47-49）；单测 3/3 绿（复跑验证）" },
+        { "item": "启动静默检查：延迟 15s、可被 updates.autoCheck 关闭、下载完成托盘气泡（点击直达「关于」）；绝不自动重启", "status": "pass", "evidence": "ResidentHost.cs:203-212（P7d，AutoCheck 门控 + Task.Run + 15s 延迟 + RunOnUi 编组）；CheckForUpdatesQuietly（P7e）仅气泡不重启；气泡 onClick → OpenSettings(jumpToAbout:true) → OverlayController.OpenSettings(true) → SelectAboutPage（P8e/P11c）链路完整" },
+        { "item": "设置面板「关于」分区（侧栏末项）：版本号、状态行、检查更新、立即更新并重启（仅就绪后可见）、自动检查开关", "status": "pass", "evidence": "SettingsPanel.xaml:175,528-550（P10a/P10b）；RestartUpdateButton 默认 Collapsed，仅 status.Contains(\"已就绪\") 时 Visible（SettingsPanel.xaml.cs:733-735）；AutoUpdateBox 装载/持久化（P11b/P11f）" },
+        { "item": "自启路径自愈：Run 项路径≠当前 exe 时启动改写", "status": "pass", "evidence": "SingleInstance.cs RepairStalePath（P6 逐字符一致）；ResidentHost.cs:188-189 在自启种子行后调用（P7c）；改写格式与 Enable() 的引号格式一致" },
+        { "item": "AC1 编译 0 error", "status": "pass", "evidence": "审查者复跑 dotnet build src/WinQuick.App/WinQuick.App.csproj -c Release --nologo → 已成功生成，0 警告 0 错误" },
+        { "item": "AC2 UpdateConfig 三用例全绿", "status": "pass", "evidence": "审查者复跑 dotnet test --filter UpdateConfig → 通过 3/失败 0；全量 312/312 亦绿，无连带破坏" },
+        { "item": "AC3 diff 范围仅任务书文件", "status": "waived", "evidence": "已知背景（决策层放行）：工作区既有脏改动（MenuCatalog/队列编辑器、fix-skin-form-persistence、fix-autostart-rollback-tray-settings）与本任务混合；执行书锚点（如 P8c old 即含 forQueue: true、P8a old 即含 _menuSource）证明计划本就针对脏树编写，在任务文件内的既有改动 hunks（ConfigStore skin/form、ResidentHost PersistSettings、OverlayController 队列选择器、SettingsPanel BuildConfig skin/form）均可逐条归属到既有变更单/特性，非本任务 worker 私自发挥" }
+      ]
+    },
+    "defects": {
+      "result": "pass（指定核查点 a–g 全部核销，仅剩 2 项 P3 级轻微项，见 issues）",
+      "checks": [
+        { "id": "a", "topic": "命令行分发在新入口下完整", "status": "pass", "evidence": "Program.Main 不消费 args；VelopackApp.Build().Run() 只处理 Velopack 自身安装钩子参数，未知参数透传无害；App.OnStartup 的 CliOptions.Parse(CommandLineArgs()) 基于 Environment.GetCommandLineArgs，与 Main 无耦合" },
+        { "id": "b", "topic": "ApplicationDefinition Remove 后 WPF 资源仍加载", "status": "pass", "evidence": "Program.cs:17 显式调用 app.InitializeComponent()，Page 编译的 App.xaml 生成物含 LoadComponent，Application.Resources（App.xaml:7-8，当前为空壳）照常装载；令牌资源本就由 Design.TokenResources.Install() 在 OnStartup 程序化安装（App.xaml.cs:29），不依赖 XAML 资源段；编译 0 错佐证" },
+        { "id": "c", "topic": "CheckForUpdatesQuietly 线程安全", "status": "pass", "evidence": "Task.Run 15s 后经 RunOnUi（ResidentHost.cs:612-618，Application.Current.Dispatcher.BeginInvoke）回到 UI 线程再启动 async 方法；方法内 await 捕获 UI SynchronizationContext，_tray.ShowBalloon 及 onClick 闭包均在 UI 线程执行；RunOnUi 对 Application.Current 为 null（进程退出）有守卫" },
+        { "id": "d", "topic": "OnCheckUpdateClick async void 异常逃逸 / TargetFullRelease NRE", "status": "pass", "evidence": "注入闭包内 CheckAsync/DownloadAsync 内部全捕获（UpdateChecker.cs:43-52,57-67）；TargetFullRelease 在 Velopack CheckForUpdatesAsync 返回非 null UpdateInfo 时按构造即为该版本对应 release（非 null），NRE 不成立；残余任意异常亦被 App.DispatcherUnhandledException 兜底落盘（args.Handled=true），不会崩溃，仅按钮经 finally 复位" },
+        { "id": "e", "topic": "NavList 与 pages 数组索引对齐", "status": "pass", "evidence": "SettingsPanel.xaml NavList 7 项（热键/外观/行为/菜单/启动队列/启动/关于）↔ pages 7 元素（…PageStartup,PageAbout）逐一对应；SelectAboutPage 取 Items.Count-1=6 → PageAbout" },
+        { "id": "f", "topic": "ApplyAndPersist→BuildConfig 加 Updates 后不破坏皮肤/自启字段", "status": "pass", "evidence": "BuildConfig 同屏保留 Skin/Form=_original（fix-skin-form-persistence 补丁 2）并新增 Updates（P11f）；RenderConfig 模板同时渲染 skin/form 与 updates（ConfigStore.cs 两 hunk 并存）；显式 false 往返单测 + 全量 312 绿佐证无字段回退；PersistSettings 已不回写注册表（fix-autostart-rollback 补丁 2，既有改动），autoStart 交互无冲突" },
+        { "id": "g", "topic": "RepairStalePath 与手动禁用自启互不干扰", "status": "pass", "evidence": "Run 项不存在时 GetValue 返回 null → `is not string` 早退（SingleInstance.cs RepairStalePath）；仅当项存在且路径不一致才改写，且比较/写入格式与 Enable() 引号格式一致（OrdinalIgnoreCase）" }
+      ]
+    },
+    "security_performance": {
+      "result": "pass",
+      "notes": [
+        "GithubSource 构造第二参 accessToken 传 null（UpdateChecker.cs:25），无 token 硬编码、无敏感信息入码",
+        "仅启动 15s 后一次静默检查 + 用户手动触发，无轮询；检查/下载全程静默降级，失败不弹窗",
+        "依赖为官方 NuGet 包 Velopack 1.2.161（csproj），GithubSource 走 HTTPS，无 shell/注入新攻击面",
+        "15s 延迟避开开机高负载；下载为 Velopack 默认低优先级行为（spec §4，未额外配置，见 P3-2 备注）"
+      ]
+    },
+    "test_quality": {
+      "result": "pass",
+      "notes": [
+        "三用例与三条底线一一对应：缺段=默认 true（UpdateConfigTests.cs:13-17，直接 Parse 最小 JSON）、显式 false 往返（:20-25，RenderConfig→Parse 断言 False）、模板含段+默认渲染往返为 true（:28-32）",
+        "断言均为具体布尔对照（Assert.True/False），非弱断言；无空实现/跳过/凑绿迹象",
+        "审查者复跑：filter UpdateConfig 3/3 通过；全量 312/312 通过，排除断网外的连带破坏",
+        "测试基建成立：WinQuick.Core.Tests 引用 WinQuick.App 工程，xunit 经 global Using 引入，RenderConfig 为 public static 可达"
+      ]
+    },
+    "exec_plan_conformance": {
+      "result": "2 处 P1 偏差（编译被迫、语义无损，但超出任务书许可条款，须主会话追认）",
+      "patch_by_patch": [
+        "P1a/P1b csproj：逐字符一致",
+        "P2 Program.cs：逐字符一致",
+        "P3 UpdateChecker.cs：逐字符一致",
+        "P4a/P4b AppConfig.cs：逐字符一致",
+        "P5 ConfigStore.cs updates 段：逐字符一致（skin/form hunk 归属 fix-skin-form-persistence，放行）",
+        "P6 SingleInstance.cs：逐字符一致",
+        "P7a-P7f ResidentHost.cs：六处补丁本体逐字符一致；例外见 issue 2（_tray.OpenSettings 行的 lambda 化，计划未覆盖）",
+        "P8a-P8e OverlayController.cs：五处补丁本体逐字符一致（_menuSource/queueMode 等 hunk 归属既有队列编辑器改动，计划锚点自证）",
+        "P9 TrayHost.cs：ShowBalloon 主体一致；例外见 issue 1（EventHandler→RoutedEventHandler）",
+        "P10a/P10b SettingsPanel.xaml：逐字符一致",
+        "P11a-P11f SettingsPanel.xaml.cs：六处逐字符一致（BuildConfig skin/form 行归属 fix-skin-form-persistence，放行）",
+        "P12 UpdateConfigTests.cs：逐字符一致"
+      ]
+    }
+  },
+  "issues": [
+    {
+      "severity": "P1",
+      "title": "执行书外改动：TrayHost OnBalloonClicked 字段类型由 EventHandler 改为 RoutedEventHandler（超出任务书机械修正许可）",
+      "detail": "执行书 P9 规定 `private EventHandler? OnBalloonClicked;`，实际为 `private System.Windows.RoutedEventHandler?` 并加一行注释。该修正是编译必需（H.NotifyIcon.Wpf 的 TrayBalloonTipClicked 事件签名是 RoutedEventHandler，计划原文无法编译），语义正确、行为无损（lambda (_,_) => onClick() 对两种委托等价）。但任务书许可条款仅允许补 using 的机械修正，其余编译错误应停止上报而非自行修改——worker 未停报即改，属流程越权，需主会话追认。",
+      "file": "src/WinQuick.App/Tray/TrayHost.cs",
+      "line": 32
+    },
+    {
+      "severity": "P1",
+      "title": "执行书外改动：_tray.OpenSettings 接线改为 lambda（计划未覆盖的跨变更碰撞点）",
+      "detail": "ResidentHost.cs:80 将工作区既有（fix-autostart-rollback 变更单补丁 1 的）`_tray.OpenSettings = OpenSettings;` 改写为 `() => OpenSettings()` 并重写注释。根因：本任务 P7f 给 OpenSettings 加可选参数后，方法组到 Action 的转换不再成立，原行必然编译失败，而执行书未预见此碰撞。改动为编译被迫、行为等价（默认 jumpToAbout=false），但属执行书外改动且触及另一变更单的行，超出许可条款，需主会话追认。",
+      "file": "src/WinQuick.App/Hosting/ResidentHost.cs",
+      "line": 80
+    },
+    {
+      "severity": "P3",
+      "title": "OnSettingsChanged 的文档注释被 P7e 插入挤脱离原方法（纯可读性）",
+      "detail": "P7e 以 `private void OnSettingsChanged(AppConfig config)` 签名行为锚插入，导致描述「设置面板里的改动…去抖写盘」的 summary（ResidentHost.cs:738-741）现在紧贴在 CheckForUpdatesQuietly（:742）之前，与 OnSettingsChanged（:760）脱钩。系执行书锚点选择的固有结果（worker 照锚逐字执行），编译与行为无影响，建议后续把注释块移回原方法上方。",
+      "file": "src/WinQuick.App/Hosting/ResidentHost.cs",
+      "line": 738
+    },
+    {
+      "severity": "P3",
+      "title": "理论性竞态与规格级细节偏差（信息项，不阻塞）",
+      "detail": "（1）CachedTarget（UpdateChecker.cs:37,45）在 ConfigureAwait(false) 的线程池续体上写入，启动静默检查与面板手动检查并发时 last-writer-wins；极端时序下面板显示「已就绪」而 CachedTarget 已被并发检查置 null，重启按钮点击变为空操作。概率极低（两次检查间 Releases 状态变化），无崩溃风险。（2）spec §4「超时 15s 取消」的网络超时未实现（依赖 Velopack/HttpClient 默认超时）；spec §3.5 U4 独立「上次检查时间」行并入状态文案 `（HH:mm）`。两者均超出任务书期望行为清单，任务书未要求，仅作规格层备注。（3）面板 _updateReady 依赖状态文案 Contains(\"已就绪\") 的字符串契约，宿主与面板间属隐式约定，重构时易脆。",
+      "file": "src/WinQuick.App/Updates/UpdateChecker.cs",
+      "line": 37
+    }
+  ],
+  "counts": { "p0": 0, "p1": 2, "p2": 0, "p3": 2 },
+  "verdict": "pass-with-issues",
+  "summary": "任务书 6 组期望行为与 AC1/AC2 全部达成（编译 0 错 0 警、UpdateConfig 3/3、全量 312/312，均为审查者复跑）；AC3 字面预期按决策层既定放行处理，脏 hunks 已逐条归属既有变更单/特性，未发现本任务 worker 的私自发挥行为改动。执行书 12 组补丁逐字符比对：10 组完全一致，2 处偏差（TrayHost.cs:32 RoutedEventHandler、ResidentHost.cs:80 lambda 接线）均为编译被迫、语义无损，但超出任务书「仅许补 using」的机械修正许可（应停报而未停报），记 P1 待主会话追认；另有 2 项 P3（文档注释脱离、理论竞态/规格细节备注）。按固定判定规则（P0=0、P1=2≤2）判 pass-with-issues；注意委派 prompt 所述「P1 存在即 fail」与本审查固定规则不一致，如主会话坚持前者可改判 fail，两处 P1 事实描述已完整供仲裁。"
+}

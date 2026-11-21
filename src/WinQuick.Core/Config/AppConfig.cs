@@ -31,6 +31,8 @@ public sealed record AppConfig
     [JsonPropertyName("behavior")] public BehaviorConfig Behavior { get; init; } = new();
     [JsonPropertyName("startup")] public StartupConfig Startup { get; init; } = new();
 
+    [JsonPropertyName("updates")] public UpdateConfig Updates { get; init; } = new();
+
     /// <summary>
     /// 是否把「WinQuick → 添加 → 目的地」写进文件/文件夹的右键菜单（HKCU，不需要管理员）。
     ///
@@ -156,4 +158,10 @@ public sealed record StartupConfig
 {
     /// <summary>是否开机自启。首次运行会按它写入 HKCU Run。</summary>
     public bool AutoStart { get; init; }
+}
+
+public sealed record UpdateConfig
+{
+    /// <summary>启动后是否静默检查 GitHub Releases 更新（spec §3.7）。默认开。</summary>
+    public bool AutoCheck { get; init; } = true;
 }

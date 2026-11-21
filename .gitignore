@@ -32,3 +32,10 @@ crash.log
 .idea/
 patch-*.py
 point-shot.py
+
+
+# Velopack 本地打包产物（vpk pack 输出）
+Releases/
+
+# 原型目录含真实菜单标签等内部数据，不随仓库公开（本地保留）
+preview/

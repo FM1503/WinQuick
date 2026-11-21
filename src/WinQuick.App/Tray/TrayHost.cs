@@ -27,6 +27,10 @@ public sealed class TrayHost : IDisposable
     private readonly MenuItem _queueMenuItem = new() { Header = "启动队列" };
     private bool _disposed;
 
+    /// <summary>气泡点击回调的当前挂载实例（重挂用，见 ShowBalloon）。
+    /// H.NotifyIcon 的 WPF 版气泡事件是 RoutedEventHandler，不是 EventHandler。</summary>
+    private System.Windows.RoutedEventHandler? OnBalloonClicked;
+
     public TrayHost(OverlayController overlay)
     {
         _overlay = overlay;
@@ -240,10 +244,17 @@ public sealed class TrayHost : IDisposable
     /// 托盘气泡提示。用于「热键被占用」「钩子需要确认」这类必须让用户知道的降级情况 ——
     /// 热键是唯一入口，静默失效会被当成程序坏了。
     /// </summary>
-    public void ShowBalloon(string title, string message)
+    public void ShowBalloon(string title, string message, Action? onClick = null)
     {
         try
         {
+            if (onClick is not null)
+            {
+                // 重挂而不是叠加：上一次气泡的点击回调不该串到这一次。
+                _icon.TrayBalloonTipClicked -= OnBalloonClicked;
+                OnBalloonClicked = (_, _) => onClick();
+                _icon.TrayBalloonTipClicked += OnBalloonClicked;
+            }
             _icon.ShowNotification(title, message);
         }
         catch (Exception ex)

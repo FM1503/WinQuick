@@ -102,8 +102,19 @@ public sealed class OverlayController : IDisposable
 
     private bool _disposed;
 
+    /// <summary>
+    /// 当前菜单的来源快照：队列编辑器的「轮盘菜单」清单从这里展开，
+    /// 热重载/编辑后就跟着新菜单走，不必另存一份。
+    /// </summary>
+    private MenuSpec _menuSource;
+
+    /// <summary>「关于与更新」分区接缝（ResidentHost 注入，面板创建时转交）。</summary>
+    private Func<Task<string>>? _updateCheck;
+    private Action? _updateRestart;
+
     public OverlayController(MenuSpec menu)
     {
+        _menuSource = menu;
         _radial = CreateRadialWindow(menu);
 
         _topmostTimer = new DispatcherTimer(DispatcherPriority.Background)
@@ -214,6 +225,8 @@ public sealed class OverlayController : IDisposable
     {
         if (_disposed) return;
 
+        _menuSource = menu;
+
         // **不传 editMode**：编辑态是独立状态，不能在每次菜单重建时按"面板是否开着"重算 ——
         // 长按进入编辑态时面板并没开，重算会把编辑态算没（而重排后正好会重建一次菜单）。
         _radial.ApplyMenu(menu);
@@ -248,7 +261,12 @@ public sealed class OverlayController : IDisposable
     /// 光有 owner 还不够：选择器是自家窗口，不是「外来对话框」，不会自动进 z 序栈的顶层，
     /// 打开期间要把它登记到 <see cref="_activePickerDialog"/>，否则重申会把它压到遮罩下面。
     /// </summary>
-    public MenuItemSpec? PickMenuItemForAdd()
+    /// <param name="forQueue">
+    /// 队列编辑器用的选择：文件框「所有文件」优先，且把轮盘菜单内容列成来源清单。
+    /// 菜单「＋」不传这个参数 —— 那条是启动器语境，保持程序类过滤；
+    /// 队列是「把要打开的东西列进来」，来者不拒。两条入口刻意不同。
+    /// </param>
+    public MenuItemSpec? PickMenuItemForAdd(bool forQueue = false)
     {
         if (_disposed) return null;
 
@@ -269,7 +287,9 @@ public sealed class OverlayController : IDisposable
                         Action = action,
                     },
                     modalOpening: () => _modalDialogDepth++,
-                    modalClosed: () => _modalDialogDepth--)
+                    modalClosed: () => _modalDialogDepth--,
+                    queueMode: forQueue,
+                    menuEntries: forQueue ? MenuCatalog.FlattenForPicker(_menuSource) : null)
                 {
                     Owner = _radial,
                 };
@@ -952,7 +972,7 @@ public sealed class OverlayController : IDisposable
     /// <summary>
     /// 打开设置面板。面板与轮盘同时在场，所以拖滑块、改高亮色都能立刻在轮盘上看到效果。
     /// </summary>
-    public void OpenSettings()
+    public void OpenSettings(bool jumpToAbout = false)
     {
         if (_disposed || !IsVisible) return;
         if (IsSettingsOpen) return;
@@ -988,6 +1008,9 @@ public sealed class OverlayController : IDisposable
         // 面板需要键盘输入（热键录制、文本框），所以它会夺走轮盘的焦点。
         // 这不影响覆盖层 —— OnRadialFocusLost 会认出"焦点落在自己人身上"。
         ForegroundFocus.AttachTo(_settingsPanel);
+
+        // 气泡引导进来时直达「关于与更新」，省一次侧栏寻找。
+        if (jumpToAbout) _settingsPanel.SelectAboutPage();
     }
 
     /// <summary>关闭设置面板，把焦点还给轮盘（否则 Esc 就不再关闭覆盖层了）。</summary>
@@ -1072,7 +1095,11 @@ public sealed class OverlayController : IDisposable
 
         // 「添加…」走既有的选择界面（系统位置 + 浏览文件 + 浏览文件夹）。
         // 队列项与菜单项同形，所以不需要第二条选择路径 —— 用户在哪见过"选程序"的界面，这里就是同一块。
-        panel.AddQueueItemRequested = () => PickMenuItemForAdd();
+        // 但队列语境多两样：文件框放「所有文件」第一档（能加文档）、列表顶部带上轮盘菜单内容。
+        panel.AddQueueItemRequested = () => PickMenuItemForAdd(forQueue: true);
+
+        // 更新接缝可能先于面板设置：创建时把已有的立刻交过去（模式同上）。
+        if (_updateCheck is not null) panel.SetUpdateHooks(_updateCheck, _updateRestart!);
 
         // 面板可能晚于绑定被创建：建出来时把已经设好的绑定立刻交过去，
         // 否则第一次打开「启动队列」分区会是空的（要切走再切回来才有数据）。
@@ -1115,6 +1142,14 @@ public sealed class OverlayController : IDisposable
     /// <summary>注入热键探测函数。</summary>
     public void SetHotkeyProbe(Func<Core.Hotkey.HotkeySpec, (bool Available, int ErrorCode)> probe) =>
         _settingsPanelProbe = spec => probe(spec);
+
+    /// <summary>注入「关于与更新」分区的检查与重启接缝。</summary>
+    public void SetUpdateHooks(Func<Task<string>> check, Action restart)
+    {
+        _updateCheck = check;
+        _updateRestart = restart;
+        if (_settingsPanel is { } panel) panel.SetUpdateHooks(check, restart);
+    }
 
     /// <summary>
     /// 把面板摆在光标所在屏的**另一侧**，尽量避免压住轮盘

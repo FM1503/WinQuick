@@ -393,7 +393,13 @@ public sealed class ConfigStore : IDisposable
 
                 // 调色盘「最近使用」的颜色（新的在前，最多 6 个）。
                 "recentAccentColors": [{{string.Join(",",
-                    config.Appearance.RecentAccentColors.Select(c => Str(c)))}}]
+                    config.Appearance.RecentAccentColors.Select(c => Str(c)))}}],
+
+                // 皮肤 id 与盘面形态（null = 默认皮肤/饼形）。换肤面板的选择经
+                // OnSkinChanged 落到这里 —— 模板漏了这两个键的话，换肤只活在
+                // 内存里，重启就被读回默认。
+                "skin": {{Str(config.Appearance.Skin)}},
+                "form": {{Str(config.Appearance.Form)}}
               },
 
               "behavior": {
@@ -419,6 +425,11 @@ public sealed class ConfigStore : IDisposable
                 // 是否开机自启。改这里不会立刻写入注册表 ——
                 // 自启开关以托盘菜单和设置界面里的那个为准，避免两处状态不一致。
                 "autoStart": {{Bool(config.Startup.AutoStart)}}
+              },
+
+              "updates": {
+                // 启动后是否静默检查 GitHub Releases 更新（失败静默，绝不自动重启）。
+                "autoCheck": {{Bool(config.Updates.AutoCheck)}}
               },
 
               // 使用哪一份菜单（menus.json 里的 id）。null = 用第一份。

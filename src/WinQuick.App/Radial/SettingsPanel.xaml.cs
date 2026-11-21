@@ -92,6 +92,8 @@ public partial class SettingsPanel : Window
         WireAccentFlyout();
 
         LoadFrom(current, notify: false);
+
+        AboutVersion.Text = $"版本 {Updates.UpdateChecker.CurrentVersion ?? "（开发运行）"}";
     }
 
     /// <summary>侧栏切换分区：右侧只显示当前区，标题同步。</summary>
@@ -99,7 +101,7 @@ public partial class SettingsPanel : Window
     {
         if (PageHeader is null) return;   // InitializeComponent 期间也会触发一次
 
-        var pages = new UIElement[] { PageHotkey, PageLook, PageBehavior, PageMenu, PageQueues, PageStartup };
+        var pages = new UIElement[] { PageHotkey, PageLook, PageBehavior, PageMenu, PageQueues, PageStartup, PageAbout };
         var index = NavList.SelectedIndex;
         for (var i = 0; i < pages.Length; i++)
             pages[i].Visibility = i == index ? Visibility.Visible : Visibility.Collapsed;
@@ -280,6 +282,8 @@ public partial class SettingsPanel : Window
 
         // 自启的事实来源是注册表（托盘菜单也能改），所以读注册表而不是配置。
         AutoStartBox.IsChecked = AutoStart.IsEnabled;
+
+        AutoUpdateBox.IsChecked = config.Updates.AutoCheck;
         ShellMenuBox.IsChecked = config.ShellMenu;
 
         _loading = false;
@@ -710,6 +714,42 @@ public partial class SettingsPanel : Window
         ApplyAndPersist();
     }
 
+    private void OnAutoUpdateChanged(object sender, RoutedEventArgs e)
+    {
+        if (_loading) return;
+        ApplyAndPersist();
+    }
+
+    private async void OnCheckUpdateClick(object sender, RoutedEventArgs e)
+    {
+        if (_updateCheck is null)
+        {
+            UpdateStatus.Text = "（更新组件不可用）";
+            return;
+        }
+
+        CheckUpdateButton.IsEnabled = false;
+        UpdateStatus.Text = "正在检查…";
+        try
+        {
+            var status = await _updateCheck();
+            UpdateStatus.Text = $"{status}（{DateTime.Now:HH:mm}）";
+            _updateReady = status.Contains("已就绪");
+            RestartUpdateButton.Visibility = _updateReady
+                ? Visibility.Visible : Visibility.Collapsed;
+        }
+        finally
+        {
+            CheckUpdateButton.IsEnabled = true;
+        }
+    }
+
+    private void OnRestartUpdateClick(object sender, RoutedEventArgs e)
+    {
+        // 重启由用户显式点击触发（spec §3.4：绝不自动重启）。
+        if (_updateReady) _updateRestart?.Invoke();
+    }
+
     private void OnOpenFolderClick(object sender, RoutedEventArgs e)
     {
         try
@@ -754,6 +794,20 @@ public partial class SettingsPanel : Window
 
     private Func<IReadOnlyList<LaunchQueueSpec>>? _queueLoad;
     private Func<IReadOnlyList<LaunchQueueSpec>, bool>? _queueSave;
+
+    /// <summary>「关于与更新」分区接缝：check 返回状态文案（含「已就绪」时显示重启按钮）。</summary>
+    private Func<Task<string>>? _updateCheck;
+    private Action? _updateRestart;
+    private bool _updateReady;
+
+    internal void SetUpdateHooks(Func<Task<string>>? check, Action? restart)
+    {
+        _updateCheck = check;
+        _updateRestart = restart;
+    }
+
+    /// <summary>气泡引导进入时直达本分区（侧栏最后一项）。</summary>
+    public void SelectAboutPage() => NavList.SelectedIndex = NavList.Items.Count - 1;
 
     /// <summary>工作副本（深拷贝：改本地列表时不能碰 ConfigStore.Queues 里那份）。</summary>
     private List<LaunchQueueSpec> _queues = [];
@@ -1371,6 +1425,10 @@ public partial class SettingsPanel : Window
                 DimOpacity = ReadDimOpacity(),
                 AccentColor = _accent,
                 RecentAccentColors = _recent,
+                // 皮肤/形态不在本面板编辑（换装走皮肤面板），但必须沿用 _original：
+                // 漏掉会被 new 的默认 null 覆盖 —— 打开一次设置并保存，皮肤就被静默重置。
+                Skin = _original.Appearance.Skin,
+                Form = _original.Appearance.Form,
             },
             Behavior = new BehaviorConfig
             {
@@ -1387,6 +1445,7 @@ public partial class SettingsPanel : Window
                 HideOnFocusLoss = HideOnFocusLossBox.IsChecked == true,
             },
             Startup = new StartupConfig { AutoStart = AutoStartBox.IsChecked == true },
+            Updates = new UpdateConfig { AutoCheck = AutoUpdateBox.IsChecked == true },
             ShellMenu = ShellMenuBox.IsChecked == true,
         };
     }

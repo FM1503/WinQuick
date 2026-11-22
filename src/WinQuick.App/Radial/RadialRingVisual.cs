@@ -58,7 +58,10 @@ public sealed partial class RadialRingView
     private RingForm _form = RingForm.Pie;
 
     /// <summary>光晕层（皮肤没配光晕时为 null）。与扇区共用一份几何，逐帧同步。</summary>
+
     private ShapePath[]? _halos;
+    // scrim 垫底层（spec R2）：与 _halos 同款「有则每扇区一层、无则 null」；几何写入点与其同步。
+    private ShapePath[]? _scrims;
 
     /// <summary>刻度盘的指针（旋转到悬停项的角度）。非刻度盘形态为 null。</summary>
     private UIElement? _needle;
@@ -335,7 +338,9 @@ public sealed partial class RadialRingView
         var colors = next.Color;
 
         // 光晕的有无变了 → 多/少一层几何，只能重建。
+
         if ((colors.HaloPx > 0) != (_halos is not null)) return false;
+        if ((colors.SectorScrimAlpha > 0.001) != (_scrims is not null)) return false;
 
         // **环的几何参数变了也要重建**（扇区形状/位置会变）。
         // 少这条守卫的话，就得每次换皮肤都重算 12 个 PathGeometry —— 而那正是
@@ -345,6 +350,11 @@ public sealed partial class RadialRingView
 
         _tokens = next;
 
+
+        // scrim 换肤同步：存在性已由上面的守卫拦下（有↔无必重建），这里只管改色。
+        var scrimUpdate = colors.SectorScrimAlpha > 0.001
+            ? TokenBrushes.Brush(colors.SectorScrim, colors.SectorScrimAlpha)
+            : null;
         var baseFill = TokenBrushes.Brush(colors.SectorFill, colors.SectorFillAlpha);
         var baseStroke = CreateSectorStroke(colors, _tokens.Radius.WindowSize);
         var haloBrush = colors.HaloPx > 0
@@ -361,13 +371,17 @@ public sealed partial class RadialRingView
                 _halos[i].Stroke = haloBrush;
                 _halos[i].StrokeThickness = colors.HaloPx;
             }
+
             _labels[i].SetBaseForeground(TokenBrushes.Brush(colors.Label));
             _childMarkers[i]?.Let(m => m.Stroke = baseStroke);
+            if (_scrims is not null) _scrims[i].Fill = scrimUpdate;
         }
+
 
         if (_deadZone is not null)
         {
-            _deadZone.Fill = TokenBrushes.Brush(colors.DeadZoneFill);
+            // 死区填充与 Build 同一 scrim 分支：有保底盘用保底盘，否则用派生实色。
+            _deadZone.Fill = scrimUpdate ?? TokenBrushes.Brush(colors.DeadZoneFill);
             _deadZone.Stroke = TokenBrushes.Brush(colors.DeadZoneStroke, colors.DeadZoneStrokeAlpha);
         }
         if (_editRing is not null)
@@ -508,7 +522,15 @@ public sealed partial class RadialRingView
 
         var colors = tokens.Color;
         var fill = TokenBrushes.Brush(colors.SectorFill, colors.SectorFillAlpha);
+
         var stroke = CreateSectorStroke(colors, radius.WindowSize);
+        // scrim 保底层（spec R2，Acrylic 配方）：玻璃皮肤在每个扇区 fill 之下垫一层半透黑 ——
+        // 它就是「亮壁纸上的文字保底」那一层。纯几何多一层 Path，无 Effect、无位图（M0 约束）；
+        // 数组非 null ⟺ scrimAlpha>0 —— 与 halo 同款存在性守卫（有无变化时 TryApplySkinInPlace 强制重建）。
+        var scrimBrush = colors.SectorScrimAlpha > 0.001
+            ? TokenBrushes.Brush(colors.SectorScrim, colors.SectorScrimAlpha)
+            : null;
+        var scrims = scrimBrush is not null ? new ShapePath[count] : null;
 
         // 光晕：垫在扇区下面的一圈更粗描边（0 = 不画，绝大多数皮肤是 0）。
         // 用几何而不是 WPF Effect —— Effect 让元素每帧走位图渲染，代价与面积相关。
@@ -526,6 +548,19 @@ public sealed partial class RadialRingView
                 span.StartDeg + metrics.GapDegrees,
                 span.EndDeg - metrics.GapDegrees,
                 metrics.CornerRadius);
+
+
+            if (scrims is not null)
+            {
+                var scrim = new ShapePath
+                {
+                    Data = geometry,
+                    Fill = scrimBrush,
+                    IsHitTestVisible = false,
+                };
+                scrims[i] = scrim;
+                root.Children.Add(scrim);   // 垫底层先入树，光晕与扇区盖在上面
+            }
 
             if (halos is not null)
             {
@@ -622,8 +657,12 @@ public sealed partial class RadialRingView
         //
         // 底下那个内凹的圆照旧画着：它既是"这里不是可选项"的视觉暗示，
         // 也是皮肤就地切换时要改画刷的那个元素（_deadZone）。
+
+        // scrim 皮肤：死区画半透保底盘（与扇区垫底层同色同透明度）——
+        // 修复用户截图里「半透扇区中央一个不透明大白点」；非 scrim 皮肤用派生同族实色。
+        var deadFillBrush = scrimBrush ?? TokenBrushes.Brush(colors.DeadZoneFill);
         var deadZone = AddEllipse(root, center, radius.DeadZone - 4,
-            TokenBrushes.Brush(colors.DeadZoneFill),
+            deadFillBrush,
             TokenBrushes.Brush(colors.DeadZoneStroke, colors.DeadZoneStrokeAlpha), 1);
 
         var centerParts = AddCenterParts(root, center, radius, tokens, level.Depth, editMode);
@@ -642,7 +681,9 @@ public sealed partial class RadialRingView
             _deadZone = deadZone,
             _editRing = editRing,
             _form = form,
+
             _halos = halos,
+            _scrims = scrims,
             _needle = needle,
         };
 
@@ -680,7 +721,9 @@ public sealed partial class RadialRingView
         if (bulgePx < 0.05)
         {
             _sectors[index].Data = _baseGeometry[index];
+
             if (_halos is not null) _halos[index].Data = _baseGeometry[index];
+            if (_scrims is not null) _scrims[index].Data = _baseGeometry[index];
             return;
         }
 
@@ -702,7 +745,9 @@ public sealed partial class RadialRingView
         _sectors[index].Data = geometry;
         // 光晕是紧贴扇区的一圈更粗的描边，几何必须与扇区**同步**外扩，
         // 否则悬停时扇区动、光晕不动，看起来像有两层没对齐的边。
+
         if (_halos is not null) _halos[index].Data = geometry;
+        if (_scrims is not null) _scrims[index].Data = geometry;
     }
 
     /// <summary>

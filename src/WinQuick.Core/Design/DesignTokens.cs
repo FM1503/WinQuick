@@ -80,8 +80,13 @@ public sealed record DesignTokens
             problems.Add($"color.haloAlpha={Color.HaloAlpha} 应在 0~0.6");
         if (!IsHexColor(Color.HaloColor))
             problems.Add($"color.haloColor=“{Color.HaloColor}” 不是 #RRGGBB 格式");
+
         if (Color.HoverFillAlpha is < 0 or > 1)
             problems.Add($"color.hoverFillAlpha={Color.HoverFillAlpha} 应在 0~1");
+        if (Color.SectorScrimAlpha is < 0 or > 0.9)
+            problems.Add($"color.sectorScrimAlpha={Color.SectorScrimAlpha} 应在 0~0.9（0 = 不画保底层；超过 0.9 就不是玻璃，是黑板）");
+        if (!IsHexColor(Color.SectorScrim))
+            problems.Add($"color.sectorScrim=“{Color.SectorScrim}” 不是 #RRGGBB 格式");
         if (!IsHexColor(Color.HoverLabel))
             problems.Add($"color.hoverLabel=“{Color.HoverLabel}” 不是 #RRGGBB 格式");
 
@@ -297,7 +302,16 @@ public sealed record ColorTokens
     public double HoverStrokeAlpha { get; init; } = 0.78;
 
     /// <summary>悬停时的文字色。纯色块（黄/红）当底时必须换成深色字，否则读不出来。</summary>
+
     public string HoverLabel { get; init; } = "#FFFFFF";
+
+    /// <summary>
+    /// scrim 保底层（spec skin-color-redesign R2，Acrylic 配方）：玻璃皮肤垫在扇区 fill 之下的半透实底，
+    /// 负责「亮壁纸上的字有保底」。默认 0 = 不画，既有皮肤零行为变化。
+    /// 为什么不用「调高 fill 不透明度」替代：那会把「材质透明感」与「文字保底」耦进一个参数，调低任何一侧都伤另一侧。
+    /// </summary>
+    public string SectorScrim { get; init; } = "#000000";
+    public double SectorScrimAlpha { get; init; } = 0.0;
 
     public string DeadZoneFill { get; init; } = "#121212";
     public string DeadZoneStroke { get; init; } = "#FFFFFF";

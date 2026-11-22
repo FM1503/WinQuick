@@ -27,7 +27,8 @@
         </Style>
 
         <Style x:Key="Section" TargetType="TextBlock">
-            <Setter Property="Foreground" Value="{DynamicResource Wq.Color.Accent}" />
+
+            <Setter Property="Foreground" Value="{DynamicResource Wq.Color.Text}" />
             <Setter Property="FontFamily" Value="{DynamicResource Wq.Font.Family}" />
             <Setter Property="FontSize" Value="{DynamicResource Wq.Font.BodySize}" />
             <Setter Property="FontWeight" Value="SemiBold" />

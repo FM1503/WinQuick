@@ -1,0 +1,70 @@
+{
+  "verdict": "pass-with-issues",
+  "verdictNote": "第 2 轮增量快审（polish + polish2，2026-11-23）。原 P1（R5 标题 B 档未落地）已修复：fix-confirmed。原 P2-1（scrim 域 0..0.9）/P2-2①（column-0 缩进，10/11 处）/P2-3（selfCheck 口径）已按勘误/定向清理处理；P2-4（preview/ 被 gitignore）按项目既有约定（与 skin-revamp 先例一致）维持。新发现 1 项 P2：column-0 未全局清零——TokenResources.cs:26/:49 在原 P2-2 清单内但不在 polish 变更表中，仍残留。无 P0、无未决 P1，最终 verdict=pass-with-issues（仅 P2 残留）。",
+  "issues": [
+    {
+      "severity": "P1",
+      "status": "fix-confirmed",
+      "file": "src/WinQuick.App/Radial/SkinPanel.xaml",
+      "line": 31,
+      "dim": "符合度",
+      "desc": "【第 1 轮原判】R5 标题 B 档未落地，Section 样式用 Accent 当文字。【第 2 轮复核：已修复】polish 第 1 条落地——SkinPanel.xaml:31 Section Foreground=Wq.Color.Text，:34 FontWeight=SemiBold 保持；Style 块首行留一空行（:30，<NL> 产物，polish2 记录经决策放弃，本次按委派允许）。SettingsPanel.xaml 全文件仅 :133-134 一处 Accent，且为选中项 BorderBrush 指示线（BorderThickness 0,0,2,0），:135 文字=Text+:136 SemiBold——合规保留，无 Accent 当文字残留。SkinPanel.xaml.cs 未被 polish 触碰（rollback snapshot 集=9 文件不含该文件；工作树与 snapshot 零差异）：:115/:197 Accent 当行底、:150-151/:212/:221 AccentText 随行字、:290/:323 换肤刷新路径 onAccent 接线原样在位，R1 未被 polish 破坏。spec R5 已补定稿记录（§3.x 行 67：B 档，2026-11-23 用户原型确认），A 档的 4.5 矩阵兜底问题随 B 档定稿失去适用前提（§3.5 行 133-134 保留为两档选项的历史描述，与定稿不矛盾）。",
+      "suggestion": "无需再改。"
+    },
+    {
+      "severity": "P2",
+      "status": "resolved-erratum",
+      "file": "src/WinQuick.Core/Design/DesignTokens.cs",
+      "line": 85,
+      "dim": "符合度",
+      "desc": "【第 1 轮原判】sectorScrimAlpha Validate 域 0..0.9 与 spec 文本 0..1 偏差。【第 2 轮：已勘误闭环】spec:116 已回填『0..0.9 —— 实现时把上限从 1 收紧到 0.9…reviewer P2 勘误』（polish 第 14 条，现场核实仅落一次，无半应用重复）。",
+      "suggestion": "无。"
+    },
+    {
+      "severity": "P2",
+      "status": "resolved-partial",
+      "file": "src/WinQuick.App/Design/TokenResources.cs",
+      "line": 26,
+      "dim": "缺陷",
+      "desc": "【第 1 轮原判】compile-change 首行 trim 造成的 column-0 残留（原清单 11 处：ColorMath:102、SkinCatalog:91/111、DesignTokens:83/304、TokenResources:26/49/120、SystemSkin:53、SkinCatalogTests:133、skins.json:16）+ 约 20+ 处多余空行。【第 2 轮复核】polish 第 2-11 条共 10 处已真落位（逐处现场核实缩进正确：TokenResources:121、SystemSkin:55、skins.json:18/:134、ColorMath:103、SkinCatalog:92/:113、DesignTokens:84/:305、SkinCatalogTests:134），column-0 未全局清零——新残留（本轮唯一新问题）：TokenResources.cs:26 `/// <summary>面板派生键的结果…` 在类内 column-0（HEAD 基线该行是 4 空格缩进，属本批 trim 事故且不在 polish 变更表内，polish 标题『9 处』口径亦未覆盖）；TokenResources.cs:49 `// 强调色兜底…` 在方法体内 column-0。其余批量文件经 HEAD→工作树 column-0 差分扫描无新增异常（SecondaryColors.cs 的 column-0 为 file-scoped namespace 下正常风格）。原 P2-2② 空行残留依旧未清（polish 每处修复按 <NL> 约定又各引入一个前置空行，skins.json:129-134 有连续空行；RadialRingVisual.cs/SkinPanel.xaml.cs:146-147,155 等旧空行原样），属同类格式债，编译 0 error、360 测全绿、JSON 解析合法，无行为影响。",
+      "suggestion": "补一张 2 行 S 级变更单把 TokenResources.cs:26/:49 缩进归位（4/8 空格），并顺手清 polish 各修复点的 <NL> 空行与 skins.json 连续空行；同时向 dev-sop 反馈 compile-change.mjs 首行 trim 缺陷（第 1 轮建议仍有效）。"
+    },
+    {
+      "severity": "P2",
+      "status": "resolved-erratum",
+      "file": "preview/skin-color-preview.html",
+      "line": 124,
+      "dim": "测试",
+      "desc": "【第 1 轮原判】原型 selfCheck W4/W5 口径比单测乐观，与『逐式同源』宣称不符。【第 2 轮：已勘误闭环】spec:145（polish2 第 1 条，polish 原第 15 条因行号漂移未落后由 polish2 补落）补注记『原型 selfCheck 的 W4/W5 按面板合成底口径，比单测口径乐观…终判以单测与实机为准，两者当时皆过』——与实测方向一致（C# 更严：W5 原型 16.48 vs C# 7.00，皆过），口径宣称已修正；原型本体未改（preview 文件不在 polish 清单，委派口径按注记勘误结清）。",
+      "suggestion": "无（如后续改版原型，可顺手把 matrix() 的 W4/W5 换成单测同源分支）。"
+    },
+    {
+      "severity": "P2",
+      "status": "maintained-by-convention",
+      "file": "preview/skin-color-preview.html",
+      "line": 1,
+      "dim": "符合度",
+      "desc": "【第 1 轮原判】原型定稿文件被 .gitignore preview/ 规则忽略，fresh clone 上 AC4 不可复现。【第 2 轮】按项目既有约定维持（与 skin-revamp 等历史原型同样不入库的先例）；且本轮定稿依据已落进 spec（R2/R5 定稿记录 + selfCheck 口径注记均入 docs/specs/skin-color-redesign.md，该文件在版本控制待提交清单内），丢失风险已实质缓解。",
+      "suggestion": "维持现状即可；若未来要求 AC4 干净检出可复现，再 git add -f。"
+    }
+  ],
+  "summary": {
+    "p0": 0,
+    "p1": 0,
+    "p2": 1,
+    "openP2": [
+      "TokenResources.cs:26/:49 column-0 残留（原 P2-2 清单漏网，新记 P2）+ <NL> 空行格式债同类未清"
+    ],
+    "checked": [
+      "第 1 轮 AC1-AC7 勾选结论维持；本轮复验：AC1/AC6 —— dotnet build WinQuick.App -c Release → 0 警告 0 错误；dotnet test WinQuick.Core.Tests -c Release → 360/360 通过、0 跳过、0 失败（审查侧独立重跑，非采信回报）—— 通过",
+      "R5 标题 B 档：SkinPanel.xaml:31 Text + :34 SemiBold 落地；SettingsPanel.xaml Accent 仅剩 :134 BorderBrush 指示线（合规）；全库无 Accent 当标题文字残留 —— 通过（fix-confirmed）",
+      "R1 AccentText 接线回归检查：SkinPanel.xaml.cs 未被 polish 触碰，115/150-151/197/212/221/290/323 选中两路径接线与第 1 轮一致 —— 通过",
+      "polish 第 2-11 条缩进：10 处逐点现场核实归位；HEAD→工作树 column-0 差分扫描确认无其它批内新增异常，唯 TokenResources.cs:26/:49 未入变更表仍残留 —— 部分通过（新 P2）",
+      "执行书符合度（polish+polish2 隔离核对）：rollback 快照 vs 工作树逐文件 diff——8 个代码/xaml/json 文件零差异（改动严格落在声明范围），唯一后续差异=polish2 的 spec 注记 2 行，无 worker 私自发挥/越界改动；spec 四处定稿/勘误各仅落一次，无半应用重复；expect_after 子串（用户原型挑定 / B 档 —— Section 标题用 Text 色 / 终判以单测与实机为准）全部命中 —— 通过",
+      "JSON 完整性：design/skins.json、design/tokens.json 解析合法 —— 通过",
+      "review-lint（polish/polish2）：violations 全部为 fileset 类，且全部由『整批未提交、diff 基线=HEAD』产生（第 1 轮已核过 14 文件与九单 changed-files 并集一致），无 linecap/placeholder/verify 违规、warnings 空 —— 机器项清零",
+      "修复引入新问题排查：Section 样式空行（允许项）外未发现语义/行为回归；build+test 独立重跑全绿佐证 —— 通过"
+    ],
+    "note": "polish 变更表『9 处』计数与实表（10 处）及原清单（11 处）不一致，已按现场实况复核为准；p2=1 仅统计本轮仍未关闭项，3 条 resolved + 1 条 maintained 均留档于 issues。"
+  }
+}

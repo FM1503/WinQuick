@@ -50,27 +50,21 @@ public static class SystemSkin
                 ["hoverStroke"] = "#FFFFFF",
                 ["hoverStrokeAlpha"] = 0.9,
                 ["hoverLabel"] = AccentLabelText(accent),
-                ["deadZoneFill"] = "#ECECEC",
-                ["deadZoneStrokeAlpha"] = 0.16,
+
                 ["label"] = "#1B1B1B",
                 ["hint"] = "#1B1B1B",
                 ["hintAlpha"] = 0.6,
-                ["badgeFill"] = "#FFFFFF",
-                ["badgeFillAlpha"] = 0.45,
             },
         };
     }
 
     /// <summary>
-    /// 悬停字色按强调色亮度自动取黑/白 —— Win11 官方机制（强调色「自动为明暗两模式
-    /// 优化对比度」）。单一强调色在明暗切换时可能配错固定字色（暗态+#0078D4+深字差仅
-    /// 0.29 被校验拦下，skin-probe 实测），自动取色对任意强调色恒达标。
+
+    /// 悬停字色按强调色自动取黑/白 —— Win11 官方机制（强调色「自动为明暗两模式优化对比度」）。
+    /// 规则升级（spec skin-color-redesign R1）：旧的「线性亮度 > 0.5」硬阈值换成 ColorMath.BestTextOn
+    /// —— 取 WCAG 对比度更大的一侧。常见强调色两规则同结果，中间调（#7C4DFF 类）新规则站到可读的一侧；
+    /// 「暗态 + #0078D4 + 深字差 0.29 被校验拦下」那一类配错从此被恒达标取代。
     /// </summary>
-    private static string AccentLabelText(string accentHex)
-    {
-        var r = Convert.ToInt32(accentHex.Substring(1, 2), 16) / 255.0;
-        var g = Convert.ToInt32(accentHex.Substring(3, 2), 16) / 255.0;
-        var b = Convert.ToInt32(accentHex.Substring(5, 2), 16) / 255.0;
-        return (0.2126 * r + 0.7152 * g + 0.0722 * b) > 0.5 ? "#1B1B1B" : "#FFFFFF";
-    }
+    private static string AccentLabelText(string accentHex) =>
+        WinQuick.Core.Design.ColorMath.BestTextOn(accentHex);
 }

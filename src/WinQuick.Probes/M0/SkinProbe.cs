@@ -74,6 +74,17 @@ public static class SkinProbe
                 problemSys is null && TokenStore.CurrentSkinId == SystemSkin.Id,
                 $"problem={problemSys ?? "null"}，CurrentSkinId={TokenStore.CurrentSkinId}"));
 
+
+            var glassTok = TokenStore.PreviewTokens("translucent");
+            results.Add(("玻璃皮肤：scrim 保底层已装载（spec R2 D 档）",
+                glassTok.Color.SectorScrimAlpha > 0.6 && glassTok.Color.SectorScrim == "#000000",
+                $"scrim={glassTok.Color.SectorScrim}@{glassTok.Color.SectorScrimAlpha}"));
+            results.Add(("玻璃皮肤：死区回填值不再纯白（缺陷回归锁）",
+                glassTok.Color.DeadZoneFill != "#FFFFFF",
+                $"deadZoneFill={glassTok.Color.DeadZoneFill}"));
+            results.Add(("AccentText 资源键存在（选中行 on-accent 配对）",
+                Res("Wq.Color.AccentText") != "<null>",
+                Res("Wq.Color.AccentText")));
             ProbeOutput.Section("对照：default→default 资源不变");
             TokenStore.ApplySkin(null);
             var backDark = Res("Wq.Color.SurfaceSolid");

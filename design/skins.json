@@ -11,6 +11,10 @@
     "  · radius.windowSize **总是被忽略**（见 SkinCatalog 的守卫）：改窗口尺寸会重建整块表面，",
     "    那正是用户报过三次闪烁的那类操作。皮肤不许动窗口大小。",
     "",
+
+    "次要表面（deadZone* / badge*）是**派生键**（spec skin-color-redesign R3）：",
+    "皮肤不写就按 sectorFill 合成底自动派生；确需身份特例才显式覆盖（如高对比那圈实心白描边）。",
+
     "新令牌（strokeWidth / halo* / hoverFillAlpha / hoverLabel / childStaggerMs）",
     "都是这批皮肤逼出来的 —— 皮肤要改的不止色相：描边粗细、一圈光晕、悬停填充的透明程度、",
     "悬停时的文字色、子项错开的相位差，都属于「材质与观感」。",
@@ -34,6 +38,7 @@
       "cost": "低（只是配色反转，但要复核对比度）",
       "src": "出处：Fluent 颜色规范 —— 深色描边 rgba(255,255,255,.07)、浅色 rgba(0,0,0,.06)，浅色强调色 #0078D4。明暗主题只换材质，不换动效，这一条刻意保持。",
       "overrides": {
+
         "color": {
           "dimAlpha": 0.28,
           "sectorFill": "#FAF6EF",
@@ -45,13 +50,9 @@
           "hoverStroke": "#FFFFFF",
           "hoverStrokeAlpha": 0.9,
           "hoverLabel": "#FFFFFF",
-          "deadZoneFill": "#E7E0D2",
-          "deadZoneStrokeAlpha": 0.16,
           "label": "#3F3A31",
           "hint": "#3F3A31",
-          "hintAlpha": 0.6,
-          "badgeFill": "#EFE8DA",
-          "badgeFillAlpha": 0.45
+          "hintAlpha": 0.6
         }
       }
     },
@@ -62,6 +63,7 @@
       "cost": "中（光晕＝多一层描边几何；悬停是半透明填充）",
       "src": "出处：Kando 的内置主题 Neon Lights（同类轮盘工具）；Radify 的材质皮肤说明霓虹/金属是这类工具的常见一档。光晕用额外描边而不是 WPF Effect —— Effect 让元素每帧走位图渲染。",
       "overrides": {
+
         "color": {
           "dimAlpha": 0.55,
           "sectorFill": "#060A14",
@@ -77,12 +79,8 @@
           "hoverStroke": "#00E5FF",
           "hoverStrokeAlpha": 1.0,
           "hoverLabel": "#E0F8FF",
-          "deadZoneFill": "#04070E",
-          "deadZoneStrokeAlpha": 0.5,
           "label": "#E0F8FF",
-          "hintAlpha": 0.75,
-          "badgeFill": "#00E5FF",
-          "badgeFillAlpha": 0.5
+          "hintAlpha": 0.75
         },
         "motion": {
           "hoverBulgePx": 16,
@@ -107,27 +105,33 @@
     {
       "id": "translucent",
       "name": "半透明",
-      "tagline": "几乎只剩一圈描边，慢而柔",
-      "cost": "低（纯配色）；亮桌面上文字可读性会下降",
-      "src": "出处：Fluent 的 Acrylic 用于弹出类界面（轮盘就是弹出类）。注意真模糊不可用 —— 分层窗口拿不到系统 Acrylic，所以这只是「半透明」而不是「毛玻璃」。",
+
+      "tagline": "玻璃拟态：白 tint + 黑 scrim 保底，慢而柔",
+      "cost": "低-中（scrim 多一层纯几何垫底）",
+      "src": "出处：Fluent Acrylic 官方配方（Microsoft Learn《Acrylic material》）—— 半透明 tint 之下必须有保底层，官方并明文「不要在 acrylic 面上放强调色文字」。分层窗口拿不到系统模糊，以纯几何黑 α0.65 垫底近似（spec R2 用户原型挑定 D 档）：白字在最坏纯白壁纸 5.8:1、悬停压暗 7.7:1。真模糊不可用，这仍是「半透明 + 保底」而不是「毛玻璃」。",
       "overrides": {
+
         "color": {
           "dimAlpha": 0.2,
           "sectorFill": "#FFFFFF",
           "sectorFillAlpha": 0.07,
+          "sectorScrim": "#000000",
+          "sectorScrimAlpha": 0.65,
           "sectorStroke": "#FFFFFF",
           "sectorStrokeAlpha": 0.5,
           "strokeWidth": 1.4,
           "strokeGradient": true,
-          "hoverFill": "#FFFFFF",
-          "hoverFillAlpha": 0.16,
+          "hoverFill": "#000000",
+          "hoverFillAlpha": 0.18,
           "hoverStroke": "#FFFFFF",
           "hoverStrokeAlpha": 0.85,
           "hoverLabel": "#FFFFFF",
-          "deadZoneFill": "#FFFFFF",
-          "deadZoneStrokeAlpha": 0.3,
           "label": "#FFFFFF",
-          "hintAlpha": 0.7
+
+          "hintAlpha": 0.7,
+
+
+          "deadZoneStrokeAlpha": 0.55
         },
         "motion": {
           "hoverBulgePx": 8,
@@ -151,6 +155,7 @@
       "cost": "低-中（色板与弹簧都是参数）",
       "src": "出处：Material 3 Expressive 的 motion scheme —— spatial 弹簧可见过冲（damping 0.8/0.6、stiffness 380/800），effect 通道恒为临界阻尼；规范明确「弹性属于位移，不属于颜色与透明度」。",
       "overrides": {
+
         "color": {
           "dimAlpha": 0.32,
           "sectorFill": "#1C1B1F",
@@ -162,12 +167,8 @@
           "hoverStroke": "#49454F",
           "hoverStrokeAlpha": 1.0,
           "hoverLabel": "#1C1B1F",
-          "deadZoneFill": "#141317",
-          "deadZoneStrokeAlpha": 0.9,
           "label": "#E6E1E5",
-          "hintAlpha": 0.7,
-          "badgeFill": "#D0BCFF",
-          "badgeFillAlpha": 0.4
+          "hintAlpha": 0.7
         },
         "motion": {
           "hoverBulgePx": 16,
@@ -197,6 +198,7 @@
       "cost": "低",
       "src": "出处：Windows 高对比主题 + Material 的无障碍建议「尊重减少动画：退回标准档或纯淡入」，以及「不要把弹性给颜色与透明度」。这一档同时也是「动效克制」方向的示范。",
       "overrides": {
+
         "color": {
           "dimAlpha": 0.72,
           "sectorFill": "#000000",
@@ -209,12 +211,9 @@
           "hoverStroke": "#FFFFFF",
           "hoverStrokeAlpha": 1.0,
           "hoverLabel": "#000000",
-          "deadZoneFill": "#000000",
           "deadZoneStrokeAlpha": 1.0,
           "label": "#FFFFFF",
-          "hintAlpha": 0.9,
-          "badgeFill": "#000000",
-          "badgeFillAlpha": 0.7
+          "hintAlpha": 0.9
         },
         "motion": {
           "hoverBulgePx": 0,
@@ -242,6 +241,7 @@
         "typography": {
           "labelFontFamily": "Cascadia Mono, Consolas, Courier New, monospace"
         },
+
         "color": {
           "dimAlpha": 0.5,
           "sectorFill": "#0D140D",
@@ -254,12 +254,8 @@
           "hoverStroke": "#33FF66",
           "hoverStrokeAlpha": 1.0,
           "hoverLabel": "#33FF66",
-          "deadZoneFill": "#050805",
-          "deadZoneStrokeAlpha": 0.55,
           "label": "#5CFF8E",
-          "hintAlpha": 0.8,
-          "badgeFill": "#33FF66",
-          "badgeFillAlpha": 0.6
+          "hintAlpha": 0.8
         },
         "motion": {
           "hoverBulgePx": 0,

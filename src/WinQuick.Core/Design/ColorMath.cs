@@ -99,5 +99,55 @@ public static class ColorMath
         "#FFB900", "#FFF100", "#BCD917", "#6CCB5F", "#107C10", "#00B294", "#0099BC", "#0078D4",
         "#C7E0F4", "#69797E", "#4A5459", "#2D72BC", "#8764B8", "#744DA9", "#B146C2", "#E43CC7",
         "#0E1420", "#202020", "#3B3B3B", "#5D5D5D", "#8A8A8A", "#B3B3B3", "#D6D6D6", "#FFFFFF",
+
     ];
+
+    // ==== 皮肤配对法（spec skin-color-redesign 2026-11-23）====
+    // preview/skin-color-preview.html 页内 JS 与这几条逐式同源；产品派生、面板与单测共用。
+
+    /// <summary>hex 以 alpha 叠到 baseHex 上：结果 = hex·α + baseHex·(1−α)。参数序在 v1.1.5 踩反过一次，以本注释为唯一语义。</summary>
+    public static string Over(string hex, double alpha, string baseHex)
+    {
+        var a = Math.Clamp(alpha, 0, 1);
+        if (!TryParseHex(hex, out var r1, out var g1, out var b1)) return baseHex;
+        if (!TryParseHex(baseHex, out var r2, out var g2, out var b2)) return hex;
+        return ToHex((int)Math.Round(r1 * a + r2 * (1 - a)),
+                     (int)Math.Round(g1 * a + g2 * (1 - a)),
+                     (int)Math.Round(b1 * a + b2 * (1 - a)));
+    }
+
+    /// <summary>线性 Rec.709 亮度（0..1）。只用于明暗方向判定 —— 与既有面板派生的翻转阈值同源，不换判据。</summary>
+    public static double Luminance(string hex)
+    {
+        TryParseHex(hex, out var r, out var g, out var b);
+        return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255.0;
+    }
+
+    /// <summary>WCAG 2.2 相对亮度（piecewise sRGB 解码）。配对阈值判据用它，不用线性版。</summary>
+    public static double RelativeLuminance(string hex)
+    {
+        TryParseHex(hex, out var r, out var g, out var b);
+        static double F(int v)
+        {
+            var c = v / 255.0;
+            return c <= 0.04045 ? c / 12.92 : Math.Pow((c + 0.055) / 1.055, 2.4);
+        }
+        return 0.2126 * F(r) + 0.7152 * F(g) + 0.0722 * F(b);
+    }
+
+    /// <summary>WCAG 对比度比值（1..21）。判定不四舍五入 —— SC 1.4.11：2.999 即不合格。</summary>
+    public static double Contrast(string a, string b)
+    {
+        var l1 = RelativeLuminance(a);
+        var l2 = RelativeLuminance(b);
+        return (Math.Max(l1, l2) + 0.05) / (Math.Min(l1, l2) + 0.05);
+    }
+
+    /// <summary>
+    /// on-color（Material 角色配对思想，spec S5）：画在 background 上的文字，
+    /// 在 #1B1B1B / #FFFFFF 里取 WCAG 对比度更大的一侧。取代旧的「线性亮度 > 0.5」硬阈值 ——
+    /// 常见强调色两规则同结果，中间调（如 #7C4DFF）新规则站到可读的一侧。
+    /// </summary>
+    public static string BestTextOn(string background) =>
+        Contrast(background, "#1B1B1B") >= Contrast(background, "#FFFFFF") ? "#1B1B1B" : "#FFFFFF";
 }

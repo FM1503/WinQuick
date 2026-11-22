@@ -35,7 +35,10 @@ public sealed partial class RadialRingView
     /// 必须单独登记 —— 它们由 AddPlaceholder 直接加进画布，不在上面几个列表里，
     /// 漏登记的话收起后不会移除，每展开一次就残留一份。
     /// </summary>
+
     private readonly List<UIElement> _childExtraVisuals = [];
+    // 子扇区的 scrim 垫底（与 _childSectors 同生同灭；索引一一对应 —— 要么全建要么不建）。
+    private readonly List<ShapePath> _childScrims = [];
 
     private SectorSpan[] _childSpans = [];
 
@@ -112,7 +115,11 @@ public sealed partial class RadialRingView
 
         var colors = tokens.Color;
         var fill = TokenBrushes.Brush(colors.SectorFill, colors.SectorFillAlpha);
+
         var stroke = CreateSectorStroke(colors, tokens.Radius.WindowSize);
+        // 子弧同款 scrim 垫底（spec R2）：与一级环同规则 —— 存在性由一级环守卫保证同批出现。
+        var scrimBrush = colors.SectorScrimAlpha > 0.001
+            ? TokenBrushes.Brush(colors.SectorScrim, colors.SectorScrimAlpha) : null;
 
         // 编辑态标识：子环也有自己的一圈虚线，与第一层那圈同形。
         // 用户反馈"从子环进入编辑也要像一级环一样有虚线描边" ——
@@ -143,6 +150,18 @@ public sealed partial class RadialRingView
                 Stroke = stroke,
                 StrokeThickness = 1,
             };
+
+            if (scrimBrush is not null)
+            {
+                var scrim = new ShapePath
+                {
+                    Data = sector.Data,
+                    Fill = scrimBrush,
+                    IsHitTestVisible = false,
+                };
+                Root.Children.Add(scrim);   // 垫底层先入树，扇区盖在上面
+                _childScrims.Add(scrim);
+            }
             _childSectors.Add(sector);
             Root.Children.Add(sector);
 
@@ -426,10 +445,12 @@ public sealed partial class RadialRingView
         // 弧级进度 × 该子项自己的长出进度：整条弧在张开的同时，各项按顺序一格格长满。
         var outer = band.Inner + band.Width * _childArcProgress + bulgePx;
 
+
         _childSectors[index].Data = SectorGeometry.RingSector(
             _center, band.Inner, outer,
             span.StartDeg + radius.SectorGapDegrees,
             span.EndDeg - radius.SectorGapDegrees);
+        if (index < _childScrims.Count) _childScrims[index].Data = _childSectors[index].Data;
     }
 
     /// <summary>
@@ -502,7 +523,9 @@ public sealed partial class RadialRingView
         //（收起动画可能在拖拽进行中才播完 —— 它是在按下之前就被排上的）。
         if (_dragIsChild) ClearDragState();
 
+
         foreach (var visual in _childSectors.Cast<UIElement>()
+                     .Concat(_childScrims)
                      .Concat(_childIcons)
                      .Concat(_childChildMarkers.Where(m => m is not null).Cast<UIElement>())
                      .Concat(_childExtraVisuals))
@@ -515,7 +538,9 @@ public sealed partial class RadialRingView
         foreach (var label in _childLabels)
             label.Detach();
 
+
         _childSectors.Clear();
+        _childScrims.Clear();
         _childIcons.Clear();
         _childLabels.Clear();
         _childChildMarkers.Clear();

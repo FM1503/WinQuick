@@ -144,11 +144,16 @@ public partial class SkinPanel : Window
         Grid.SetColumn(swatch, 0);
         grid.Children.Add(swatch);
 
+
         var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        // 选中行底是 Accent → 行内文字换成 on-accent 配对色（spec R1；缺陷：半透明白底白字整行消失）。
+        var nameBrush = isCurrent ? TokenResources.Brush("Color.AccentText") : TokenResources.Brush("Color.Text");
+        var noteBrush = isCurrent ? TokenResources.Brush("Color.AccentText") : TokenResources.Brush("Color.TextMuted");
         text.Children.Add(new TextBlock
         {
             Text = skin.Name,
-            Foreground = TokenResources.Brush("Color.Text"),
+
+            Foreground = nameBrush,
             FontFamily = TokenResources.Get<FontFamily>("Font.Family"),
             FontSize = TokenResources.Get<double>("Font.BodySize"),
             FontWeight = FontWeights.SemiBold,
@@ -156,7 +161,8 @@ public partial class SkinPanel : Window
         text.Children.Add(new TextBlock
         {
             Text = skin.Tagline,
-            Foreground = TokenResources.Brush("Color.TextMuted"),
+
+            Foreground = noteBrush,
             FontFamily = TokenResources.Get<FontFamily>("Font.Family"),
             FontSize = TokenResources.Get<double>("Font.SmallSize"),
             TextWrapping = TextWrapping.Wrap,
@@ -164,7 +170,8 @@ public partial class SkinPanel : Window
         text.Children.Add(new TextBlock
         {
             Text = "动效：" + MotionSummary(skin),
-            Foreground = TokenResources.Brush("Color.TextMuted"),
+
+            Foreground = noteBrush,
             FontFamily = TokenResources.Get<FontFamily>("Font.Family"),
             FontSize = TokenResources.Get<double>("Font.SmallSize"),
             TextWrapping = TextWrapping.Wrap,
@@ -201,7 +208,8 @@ public partial class SkinPanel : Window
                     new TextBlock
                     {
                         Text = RingForms.NameOf(form),
-                        Foreground = TokenResources.Brush("Color.Text"),
+
+                        Foreground = isCurrent ? TokenResources.Brush("Color.AccentText") : TokenResources.Brush("Color.Text"),
                         FontFamily = TokenResources.Get<FontFamily>("Font.Family"),
                         FontSize = TokenResources.Get<double>("Font.BodySize"),
                         FontWeight = FontWeights.SemiBold,
@@ -209,7 +217,8 @@ public partial class SkinPanel : Window
                     new TextBlock
                     {
                         Text = RingForms.TaglineOf(form),
-                        Foreground = TokenResources.Brush("Color.TextMuted"),
+
+                        Foreground = isCurrent ? TokenResources.Brush("Color.AccentText") : TokenResources.Brush("Color.TextMuted"),
                         FontFamily = TokenResources.Get<FontFamily>("Font.Family"),
                         FontSize = TokenResources.Get<double>("Font.SmallSize"),
                         TextWrapping = TextWrapping.Wrap,
@@ -306,24 +315,33 @@ public partial class SkinPanel : Window
     }
 
     /// <summary>把面板里程序化创建的文字颜色重刷成当前规格（DynamicResource 管不到代码建的控件）。</summary>
+
     private void RefreshTextColors()
     {
         var text = TokenResources.Brush("Color.Text");
         var muted = TokenResources.Brush("Color.TextMuted");
+        var onAccent = TokenResources.Brush("Color.AccentText");
         var family = TokenResources.Get<FontFamily>("Font.Family");
         var body = TokenResources.Get<double>("Font.BodySize");
         var small = TokenResources.Get<double>("Font.SmallSize");
 
-        foreach (var root in new[] { SkinList, FormList })
+        // 选中行底是 Accent → 文字必须换配对色 AccentText（spec R1）。
+        // 旧实现按字重统一刷 Text/TextMuted，半透明皮肤就白底白字 —— 用户截图里那行「整块纯白无文字」。
+        void RefreshRow(Border row, bool isCurrent)
         {
-            foreach (var block in root.Children.OfType<Border>()
-                         .SelectMany(b => Descendants(b).OfType<TextBlock>()))
+            foreach (var block in Descendants(row).OfType<TextBlock>())
             {
                 block.FontFamily = family;
-                block.FontSize = block.FontWeight == FontWeights.SemiBold ? body : small;
-                block.Foreground = block.FontWeight == FontWeights.SemiBold ? text : muted;
+                var isBody = block.FontWeight == FontWeights.SemiBold;
+                block.FontSize = isBody ? body : small;
+                block.Foreground = isCurrent ? onAccent : (isBody ? text : muted);
             }
         }
+
+        foreach (var (id, row, _) in _skinRows)
+            RefreshRow(row, string.Equals(id, _currentSkin, StringComparison.OrdinalIgnoreCase));
+        foreach (var (form, row) in _formRows)
+            RefreshRow(row, form == _currentForm);
     }
 
     private static IEnumerable<DependencyObject> Descendants(DependencyObject root)

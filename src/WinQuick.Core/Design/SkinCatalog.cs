@@ -88,10 +88,19 @@ public sealed class SkinCatalog
     /// <summary>
     /// 把某套皮肤合并到基线令牌上，返回合并后的 JSON（空/未知皮肤返回基线原文）。
     /// </summary>
+
     public string Merge(string baseTokensJson, string? skinId)
     {
         var spec = Find(skinId);
-        if (spec?.Overrides is null) return baseTokensJson;
+        if (spec?.Overrides is null)
+        {
+            // 「没有皮肤」与「default 皮肤（空覆盖）」必须是同一套值 —— 基线路径同样回填次要面派生键，
+            // 否则这两者之间一切换，死区颜色就差一步（回填语义见 SecondaryColors）。
+            var baseRoot = JsonNode.Parse(baseTokensJson) as JsonObject
+                ?? throw new InvalidOperationException("tokens.json 解析结果不是 JSON 对象");
+            SecondaryColors.FillMissing(baseRoot["color"] as JsonObject, new HashSet<string>());
+            return baseRoot.ToJsonString();
+        }
 
         return MergeWithOverrides(baseTokensJson, spec.Overrides);
     }
@@ -100,12 +109,21 @@ public sealed class SkinCatalog
     /// 把指定 overrides 合并到基线 JSON —— Merge 的后半段（接受 JsonObject），
     /// 供 App 侧运行时合成的皮肤（「跟随系统」，spec §5）复用，与静态皮肤同一条路径。
     /// </summary>
+
     public string MergeWithOverrides(string baseTokensJson, JsonObject overrides)
     {
         var root = JsonNode.Parse(baseTokensJson) as JsonObject
             ?? throw new InvalidOperationException("tokens.json 解析结果不是 JSON 对象");
 
         ApplyOverrides(root, overrides);
+
+        // 次要面统一派生（spec skin-color-redesign R3）：皮肤没显式覆盖的死区/角标键回填派生值。
+        // 放在这里而不是渲染层：静态皮肤 Merge 与「跟随系统」Compose 都汇到这条路径，回填一次覆盖所有皮肤。
+        var covered = overrides["color"] is JsonObject colorKeys
+            ? (IReadOnlySet<string>)colorKeys.Select(kv => kv.Key.ToLowerInvariant()).ToHashSet()
+            : new HashSet<string>();
+        SecondaryColors.FillMissing(root["color"] as JsonObject, covered);
+
         return root.ToJsonString();
     }
 

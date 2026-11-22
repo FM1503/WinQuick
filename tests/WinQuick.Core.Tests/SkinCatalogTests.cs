@@ -130,12 +130,22 @@ public class SkinCatalogTests
         Assert.Equal(baseline.Interaction, merged.Interaction);
     }
 
+
     [Fact]
-    public void Merge_UnknownOrEmptySkin_ReturnsBaseline()
+    public void Merge_UnknownOrEmptySkin_保持基线并回填派生()
     {
-        Assert.Equal(BaseJson, Catalog.Merge(BaseJson, null));
-        Assert.Equal(BaseJson, Catalog.Merge(BaseJson, ""));
-        Assert.Equal(BaseJson, Catalog.Merge(BaseJson, "does-not-exist"));
+        // 回填语义（spec R3）：合并结果不再与 tokens.json 逐字节相同（死区/角标变成派生值），
+        // 这里锁「未覆盖节保持基线 + 次要面回填为确定派生值」—— 判据从字节相等升级为语义相等，不是放宽。
+        var baseline = DesignTokens.Parse(BaseJson);
+        foreach (var id in new[] { null, "", "does-not-exist" })
+        {
+            var merged = DesignTokens.Parse(Catalog.Merge(BaseJson, id));
+            Assert.Equal(baseline.Radius, merged.Radius);
+            Assert.Equal(baseline.Interaction, merged.Interaction);
+            Assert.Equal(baseline.Color.Label, merged.Color.Label);
+            Assert.Equal("#151515", merged.Color.DeadZoneFill);
+            Assert.Equal("#0E0E0E", merged.Color.BadgeFill);
+        }
         Assert.False(Catalog.Contains("does-not-exist"));
     }
 

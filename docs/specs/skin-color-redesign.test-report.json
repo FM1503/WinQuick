@@ -1,0 +1,12 @@
+{
+  "records": [
+    { "item": "AC1 编译 0 错误（engine/data/panel/wire/tests/polish 各批均验证）", "command": "dotnet build src/WinQuick.App/WinQuick.App.csproj -c Release --nologo", "durationMs": 3300, "result": "pass" },
+    { "item": "AC2 皮肤配对单测 39/39（18 条旧锁 + 全配对矩阵 9 状态×7 行 + BestTextOn 8 例 + 派生/兜底/scrim 范围 5 条定点）", "command": "dotnet test tests/WinQuick.Core.Tests --filter \"FullyQualifiedName~SkinContrast\" --nologo", "durationMs": 4000, "result": "pass" },
+    { "item": "AC3 令牌校验单测 29/29（含 scrim 0..0.9 域与对照）", "command": "dotnet test tests/WinQuick.Core.Tests --filter \"FullyQualifiedName~DesignTokens\" --nologo", "durationMs": 3000, "result": "pass" },
+    { "item": "AC4 原型逻辑自检：全矩阵 9 组×7 行通过、无脚本错误；用户据此定稿 scrim D 档 + 标题 B 档", "command": "node preview/_verify.mjs \"file:///D:/Work/WinQuick/preview/skin-color-preview.html\"", "durationMs": 5000, "result": "pass" },
+    { "item": "AC5 装机 skin-probe 11/11 全 PASS（新增：scrim=#000@0.65 装载、玻璃死区回填 #1F1F1F 不再纯白、AccentText 资源键；对照项成立；crash.log 无新增条目）", "command": "publish/probes/WinQuick.Probes.exe --skin-probe", "durationMs": 15000, "result": "pass" },
+    { "item": "AC6 交付前全量单测 360/360 失败 0（含 SkinCatalogTests 回填语义修正）", "command": "dotnet test tests/WinQuick.Core.Tests -c Release --nologo", "durationMs": 5000, "result": "pass" }
+  ],
+  "summary": { "passed": 6, "failed": 0, "deferred": "AC7 用户实机观感：逐套切 8 皮肤看选中行/标题/输入框/角标/spinner/死区，纯白壁纸验半透明 scrim 保底 —— 已 publish，待用户验收" },
+  "notes": "过程实证（如实记录）：reviewer pass-with-issues（P0×0/P1×1/P2×4）。P1= R5 标题 B 档漏批，已以 polish 单落地并勘误；P2-1 spec 0..1→0..0.9 已勘误；P2-2 compile-change 首行 trim 造成 9 处 column-0 —— polish 单已清（xaml 一处保护空行判定无害保留）；P2-3 原型 W4/W5 口径注记已补；P2-4 preview/ 目录不入 git 为项目既有约定。另：多批执行期间 worker 三次误报（「0 条已应用」实为半应用、「整体已回滚」实为完好）——每步以主会话 git/grep/sed 现场核为准。"
+}

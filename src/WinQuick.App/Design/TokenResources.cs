@@ -23,10 +23,12 @@ public static class TokenResources
 
     private static bool _installed;
 
+
     /// <summary>面板派生键的结果（纯数据，供 Install 与单测共用）。</summary>
     public sealed record PanelPalette(
         string SurfaceSolid, string Surface, string FieldBackground,
-        string Outline, string HoverSurface, string Accent, string Danger, string Success);
+        string Outline, string HoverSurface, string Accent, string Danger, string Success,
+        string AccentText);
 
     /// <summary>
     /// 面板配色的全部派生逻辑（skin-panel-readability，2026-11-21 审计后重建）。
@@ -45,6 +47,11 @@ public static class TokenResources
         // 输入框一档阶梯：混色而非乘法 —— 乘法在纯黑底（contrast）恒为 0，层次消失（reviewer P2）。
         // Mix(a,b,t)=a·t+b·(1-t)：目标色（深灰/亮灰）占 12%、底占 88% —— 参数序反了会变成近纯白（实测教训）。
         var field = light ? Mix("#3A3A3A", surface, 0.12) : Mix("#F0F0F0", surface, 0.12);
+
+        // 强调色兜底（spec R1 连带修正）：D 档玻璃的 HoverFill 是压暗黑（悬停语义），
+        // 与面板底不足 3:1 时它不再适合当「强调文字/指示线」，翻到可读一侧 —— 选中行成白底黑字，与原型挑定一致。
+        var accent = ColorMath.Contrast(c.HoverFill, surface) >= 3.0
+            ? c.HoverFill : ColorMath.BestTextOn(surface);
         return new PanelPalette(
             SurfaceSolid: surface,
             Surface: surface,
@@ -53,7 +60,10 @@ public static class TokenResources
             HoverSurface: light ? "#000000" : "#FFFFFF",
             // 强调色取原色不透明：HoverFill 的 α 是「轮盘悬停高亮的半透明感」参数，
             // 面板强调是实色语义 —— 按 α 合成会把 #33FF66/0.22 压成与底趋同的暗绿（SkinContrast 抓到）。
-            Accent: c.HoverFill,
+            Accent: accent,
+            // on-accent 配对字色（spec R1）：选中行以 Accent 为底时文字用它 ——
+            // 半透明皮肤 HoverFill 与 Label 同为 #FFFFFF，复用 Color.Text 就是白底白字整行消失（用户截图实锤）。
+            AccentText: ColorMath.BestTextOn(accent),
             Danger: light ? "#C42B1C" : "#F08A8A",
             Success: light ? "#1B7F3A" : "#8CC88C");
     }
@@ -109,7 +119,10 @@ public static class TokenResources
         Set("Color.Surface", TokenBrushes.Brush(panel.Surface));
         Set("Color.SurfaceSolid", TokenBrushes.Brush(panel.SurfaceSolid));
         Set("Color.Stroke", TokenBrushes.Brush(color.SectorStroke, color.SectorStrokeAlpha));
+
         Set("Color.Accent", TokenBrushes.Brush(panel.Accent));
+        // 选中行/高亮态的 on-accent 配对字色（spec R1；Material on-X）。
+        Set("Color.AccentText", TokenBrushes.Brush(panel.AccentText));
         Set("Color.AccentStroke", TokenBrushes.Brush(color.HoverStroke, color.HoverStrokeAlpha));
         Set("Color.Text", TokenBrushes.Brush(color.Label));
         Set("Color.TextMuted", TokenBrushes.Brush(color.Hint, 0.72));

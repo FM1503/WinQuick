@@ -1,0 +1,120 @@
+# 执行书：skin-color-redesign-tests（compile-change 编译产物）
+
+> 由 scripts/compile-change.mjs 编译 docs 变更单生成；勿手改，改变更单后重新编译。
+
+## 变更表
+
+| 序号 | 文件 | 行号 | 锚点 | 旧行数 | 新内容 |
+| --- | --- | --- | --- | --- | --- |
+| 1 | design/skins.json | 131 | deadZoneStrokeAlpha | 1 | "deadZoneStrokeAlpha": 0.55 |
+| 2 | src/WinQuick.Probes/M0/SkinProbe.cs | 77 | ProbeOutput.Section("对照：default→default 资源不变"); | 1 | <NL>            var glassTok = TokenStore.PreviewTokens("translucent");<NL>            results.Add(("玻璃皮肤：scrim 保底层已装载（spec R2 D 档）",<NL>                glassTok.Color.SectorScrimAlpha > 0.6 && glassTok.Color.SectorScrim == "#000000",<NL>                $"scrim={glassTok.Color.SectorScrim}@{glassTok.Color.SectorScrimAlpha}"));<NL>            results.Add(("玻璃皮肤：死区回填值不再纯白（缺陷回归锁）",<NL>                glassTok.Color.DeadZoneFill != "#FFFFFF",<NL>                $"deadZoneFill={glassTok.Color.DeadZoneFill}"));<NL>            results.Add(("AccentText 资源键存在（选中行 on-accent 配对）",<NL>                Res("Wq.Color.AccentText") != "<null>",<NL>                Res("Wq.Color.AccentText")));<NL>            ProbeOutput.Section("对照：default→default 资源不变"); |
+| 3 | tests/WinQuick.Core.Tests/SkinCatalogTests.cs | 134 | public void Merge_UnknownOrEmptySkin_ReturnsBaseline() | 7 | <NL>    public void Merge_UnknownOrEmptySkin_保持基线并回填派生()<NL>    {<NL>        // 回填语义（spec R3）：合并结果不再与 tokens.json 逐字节相同（死区/角标变成派生值），<NL>        // 这里锁「未覆盖节保持基线 + 次要面回填为确定派生值」—— 判据从字节相等升级为语义相等，不是放宽。<NL>        var baseline = DesignTokens.Parse(BaseJson);<NL>        foreach (var id in new[] { null, "", "does-not-exist" })<NL>        {<NL>            var merged = DesignTokens.Parse(Catalog.Merge(BaseJson, id));<NL>            Assert.Equal(baseline.Radius, merged.Radius);<NL>            Assert.Equal(baseline.Interaction, merged.Interaction);<NL>            Assert.Equal(baseline.Color.Label, merged.Color.Label);<NL>            Assert.Equal("#151515", merged.Color.DeadZoneFill);<NL>            Assert.Equal("#0E0E0E", merged.Color.BadgeFill);<NL>        }<NL>        Assert.False(Catalog.Contains("does-not-exist"));<NL>    } |
+| 4 | tests/WinQuick.Core.Tests/SkinContrastTests.cs | 86 | } | 1 | <NL>    // ==== skin-color-redesign（2026-11-23）：WCAG 严格比值全配对矩阵 ====<NL>    // 上面的线性 Lum 差锁的是「方向翻转」；本节锁「达到可读阈值」——<NL>    // 公式真源在 ColorMath，与 preview/skin-color-preview.html 页内 selfCheck 逐式同源。<NL><NL>    [Theory]<NL>    [MemberData(nameof(PanelStates))]<NL>    public void 全配对行_每套皮肤正文与大字都达WCAG阈值(string stateId)<NL>    {<NL>        var c = stateId switch<NL>        {<NL>            "system-light" => TokenStore.LoadWithOverrides(SystemSkin.Compose(true, "#0078D4")).Color,<NL>            _ => TokenStore.PreviewTokens(stateId).Color,<NL>        };<NL>        var panel = TokenResources.DerivePanelColors(c);<NL><NL>        // 面板（实色表面）：正文 4.5、次级 3.0（大字级）、选中行文字-on-Accent 4.5（spec R1）。<NL>        Assert.True(ColorMath.Contrast(c.Label, panel.SurfaceSolid) >= 4.5,<NL>            $"{stateId} P1 正文↔面板底：{ColorMath.Contrast(c.Label, panel.SurfaceSolid):F2}");<NL>        var muted = ColorMath.Over(c.Hint, 0.72, panel.SurfaceSolid);<NL>        Assert.True(ColorMath.Contrast(muted, panel.SurfaceSolid) >= 3.0,<NL>            $"{stateId} P2 TextMuted↔面板底：{ColorMath.Contrast(muted, panel.SurfaceSolid):F2}");<NL>        Assert.True(ColorMath.Contrast(panel.AccentText, panel.Accent) >= 4.5,<NL>            $"{stateId} P3 AccentText↔Accent（选中行）：{ColorMath.Contrast(panel.AccentText, panel.Accent):F2}");<NL><NL>        // 轮盘：按最坏情形 = 纯白壁纸判定（scrim 皮肤经保底层 —— spec R2 的「任意壁纸」语义）。<NL>        var wall = ColorMath.Over(c.SectorScrim, c.SectorScrimAlpha, "#FFFFFF");<NL>        var sector = ColorMath.Over(c.SectorFill, c.SectorFillAlpha, wall);<NL>        Assert.True(ColorMath.Contrast(c.Label, sector) >= 4.5,<NL>            $"{stateId} W1 标签↔扇区(白壁纸)：{ColorMath.Contrast(c.Label, sector):F2}");<NL>        var hintOn = ColorMath.Over(c.Hint, c.HintAlpha, sector);<NL>        Assert.True(ColorMath.Contrast(hintOn, sector) >= 3.0,<NL>            $"{stateId} W2 提示↔扇区：{ColorMath.Contrast(hintOn, sector):F2}");<NL>        var hoverOn = ColorMath.Over(c.HoverFill, c.HoverFillAlpha, sector);<NL>        Assert.True(ColorMath.Contrast(c.HoverLabel, hoverOn) >= 4.5,<NL>            $"{stateId} W3 悬停字↔悬停合成底：{ColorMath.Contrast(c.HoverLabel, hoverOn):F2}");<NL><NL>        // 角标（子项首字占位/spinner）与死区：scrim 皮肤的轮盘死区实际渲染是半透保底盘<NL>        //（RadialRingVisual 的分支），不是回填的派生实色 —— 判据跟着实际渲染走。<NL>        var badge = ColorMath.Over(c.BadgeFill, c.BadgeFillAlpha, sector);<NL>        Assert.True(ColorMath.Contrast(c.Label, badge) >= 4.5,<NL>            $"{stateId} W4 占位字↔角标底：{ColorMath.Contrast(c.Label, badge):F2}");<NL>        var dead = c.SectorScrimAlpha > 0.001<NL>            ? ColorMath.Over(c.SectorScrim, c.SectorScrimAlpha, "#FFFFFF")<NL>            : c.DeadZoneFill;<NL>        Assert.True(ColorMath.Contrast(c.Label, dead) >= 4.5,<NL>            $"{stateId} W5 标签↔死区：{ColorMath.Contrast(c.Label, dead):F2}");<NL><NL>        // 非文本边界（SC 1.4.11）：死区描边至少与一侧相邻可辨（描边跨两侧，判两侧较大者 ≥3.0）。<NL>        var edgeOnDead = ColorMath.Over(c.DeadZoneStroke, c.DeadZoneStrokeAlpha, dead);<NL>        var edgeOnSector = ColorMath.Over(c.DeadZoneStroke, c.DeadZoneStrokeAlpha, sector);<NL>        Assert.True(Math.Max(ColorMath.Contrast(edgeOnDead, sector),<NL>                             ColorMath.Contrast(edgeOnSector, dead)) >= 3.0,<NL>            $"{stateId} 死区描边与两侧相邻都不足 3:1");<NL>    }<NL><NL>    [Theory]<NL>    [InlineData("#FFFF00", "#1B1B1B")]<NL>    [InlineData("#0078D4", "#FFFFFF")]<NL>    [InlineData("#00E5FF", "#1B1B1B")]<NL>    [InlineData("#33FF66", "#1B1B1B")]<NL>    [InlineData("#D0BCFF", "#1B1B1B")]<NL>    [InlineData("#B45309", "#FFFFFF")]<NL>    [InlineData("#FFFFFF", "#1B1B1B")]<NL>    [InlineData("#000000", "#FFFFFF")]<NL>    public void on_accent择一_取对比度更大侧(string background, string expected) =><NL>        Assert.Equal(expected, ColorMath.BestTextOn(background));<NL><NL>    [Fact]<NL>    public void 次要面派生_默认皮肤以确定值回填同族暗色死区与角标()<NL>    {<NL>        var c = TokenStore.PreviewTokens("default").Color;<NL>        Assert.Equal("#151515", c.DeadZoneFill);<NL>        Assert.Equal("#0E0E0E", c.BadgeFill);<NL>        Assert.Equal(1.0, c.BadgeFillAlpha);<NL>        Assert.Equal("#FFFFFF", c.DeadZoneStroke);<NL>        Assert.Equal(0.35, c.DeadZoneStrokeAlpha);<NL>    }<NL><NL>    [Fact]<NL>    public void 次要面派生_玻璃死区不再纯白_缺陷回归锁()<NL>    {<NL>        // 修复前：手拍 deadZoneFill #FFFFFF → 半透扇区中央的焊死大白盘（用户截图）。<NL>        var c = TokenStore.PreviewTokens("translucent").Color;<NL>        Assert.NotEqual("#FFFFFF", c.DeadZoneFill);<NL>        Assert.True(c.SectorScrimAlpha >= 0.6, "玻璃皮肤必须带 scrim 保底层（spec R2 D 档）");<NL>        Assert.Equal("#000000", c.HoverFill);<NL>    }<NL><NL>    [Fact]<NL>    public void 玻璃面板强调色兜底翻到可读一侧()<NL>    {<NL>        // D 档 HoverFill 是压暗黑 —— 面板 Accent 照抄就暗底暗字；兜底翻白后选中行白底黑字（与原型一致）。<NL>        var c = TokenStore.PreviewTokens("translucent").Color;<NL>        var panel = TokenResources.DerivePanelColors(c);<NL>        Assert.Equal("#FFFFFF", panel.Accent);<NL>        Assert.Equal("#1B1B1B", panel.AccentText);<NL>        Assert.True(ColorMath.Contrast(panel.Accent, panel.SurfaceSolid) >= 3.0);<NL>    }<NL><NL>    [Fact]<NL>    public void 校验拦住scrim范围外值()<NL>    {<NL>        var tokens = TokenStore.PreviewTokens("default");<NL>        var bad = tokens with { Color = tokens.Color with { SectorScrimAlpha = 1.2 } };<NL>        Assert.Contains(bad.Validate(), p => p.Contains("sectorScrimAlpha"));<NL>    }<NL>} |
+
+## 补丁脚本
+
+```python
+import sys, os, json, base64, re
+DATA = json.loads(base64.b64decode("eyJzbHVnIjoic2tpbi1jb2xvci1yZWRlc2lnbi10ZXN0cyIsInBhdGNoZXMiOlt7ImZpbGUiOiJkZXNpZ24vc2tpbnMuanNvbiIsIm5ld2ZpbGUiOmZhbHNlLCJsaW5lbm8iOjEzMSwiYW5jaG9yIjoiZGVhZFpvbmVTdHJva2VBbHBoYSIsIm9sZF9jb3VudCI6MSwibmV3IjoiXCJkZWFkWm9uZVN0cm9rZUFscGhhXCI6IDAuNTUifSx7ImZpbGUiOiJzcmMvV2luUXVpY2suUHJvYmVzL00wL1NraW5Qcm9iZS5jcyIsIm5ld2ZpbGUiOmZhbHNlLCJsaW5lbm8iOjc3LCJhbmNob3IiOiJQcm9iZU91dHB1dC5TZWN0aW9uKFwi5a+554Wn77yaZGVmYXVsdOKGkmRlZmF1bHQg6LWE5rqQ5LiN5Y+YXCIpOyIsIm9sZF9jb3VudCI6MSwibmV3IjoiXG4gICAgICAgICAgICB2YXIgZ2xhc3NUb2sgPSBUb2tlblN0b3JlLlByZXZpZXdUb2tlbnMoXCJ0cmFuc2x1Y2VudFwiKTtcbiAgICAgICAgICAgIHJlc3VsdHMuQWRkKChcIueOu+eSg+earuiCpO+8mnNjcmltIOS/neW6leWxguW3suijhei9ve+8iHNwZWMgUjIgRCDmoaPvvIlcIixcbiAgICAgICAgICAgICAgICBnbGFzc1Rvay5Db2xvci5TZWN0b3JTY3JpbUFscGhhID4gMC42ICYmIGdsYXNzVG9rLkNvbG9yLlNlY3RvclNjcmltID09IFwiIzAwMDAwMFwiLFxuICAgICAgICAgICAgICAgICRcInNjcmltPXtnbGFzc1Rvay5Db2xvci5TZWN0b3JTY3JpbX1Ae2dsYXNzVG9rLkNvbG9yLlNlY3RvclNjcmltQWxwaGF9XCIpKTtcbiAgICAgICAgICAgIHJlc3VsdHMuQWRkKChcIueOu+eSg+earuiCpO+8muatu+WMuuWbnuWhq+WAvOS4jeWGjee6r+eZve+8iOe8uumZt+WbnuW9kumUge+8iVwiLFxuICAgICAgICAgICAgICAgIGdsYXNzVG9rLkNvbG9yLkRlYWRab25lRmlsbCAhPSBcIiNGRkZGRkZcIixcbiAgICAgICAgICAgICAgICAkXCJkZWFkWm9uZUZpbGw9e2dsYXNzVG9rLkNvbG9yLkRlYWRab25lRmlsbH1cIikpO1xuICAgICAgICAgICAgcmVzdWx0cy5BZGQoKFwiQWNjZW50VGV4dCDotYTmupDplK7lrZjlnKjvvIjpgInkuK3ooYwgb24tYWNjZW50IOmFjeWvue+8iVwiLFxuICAgICAgICAgICAgICAgIFJlcyhcIldxLkNvbG9yLkFjY2VudFRleHRcIikgIT0gXCI8bnVsbD5cIixcbiAgICAgICAgICAgICAgICBSZXMoXCJXcS5Db2xvci5BY2NlbnRUZXh0XCIpKSk7XG4gICAgICAgICAgICBQcm9iZU91dHB1dC5TZWN0aW9uKFwi5a+554Wn77yaZGVmYXVsdOKGkmRlZmF1bHQg6LWE5rqQ5LiN5Y+YXCIpOyJ9LHsiZmlsZSI6InRlc3RzL1dpblF1aWNrLkNvcmUuVGVzdHMvU2tpbkNhdGFsb2dUZXN0cy5jcyIsIm5ld2ZpbGUiOmZhbHNlLCJsaW5lbm8iOjEzNCwiYW5jaG9yIjoicHVibGljIHZvaWQgTWVyZ2VfVW5rbm93bk9yRW1wdHlTa2luX1JldHVybnNCYXNlbGluZSgpIiwib2xkX2NvdW50Ijo3LCJuZXciOiJcbiAgICBwdWJsaWMgdm9pZCBNZXJnZV9Vbmtub3duT3JFbXB0eVNraW5f5L+d5oyB5Z+657q/5bm25Zue5aGr5rS+55SfKClcbiAgICB7XG4gICAgICAgIC8vIOWbnuWhq+ivreS5ie+8iHNwZWMgUjPvvInvvJrlkIjlubbnu5PmnpzkuI3lho3kuI4gdG9rZW5zLmpzb24g6YCQ5a2X6IqC55u45ZCM77yI5q275Yy6L+inkuagh+WPmOaIkOa0vueUn+WAvO+8ie+8jFxuICAgICAgICAvLyDov5nph4zplIHjgIzmnKropobnm5boioLkv53mjIHln7rnur8gKyDmrKHopoHpnaLlm57loavkuLrnoa7lrprmtL7nlJ/lgLzjgI3igJTigJQg5Yik5o2u5LuO5a2X6IqC55u4562J5Y2H57qn5Li66K+t5LmJ55u4562J77yM5LiN5piv5pS+5a6944CCXG4gICAgICAgIHZhciBiYXNlbGluZSA9IERlc2lnblRva2Vucy5QYXJzZShCYXNlSnNvbik7XG4gICAgICAgIGZvcmVhY2ggKHZhciBpZCBpbiBuZXdbXSB7IG51bGwsIFwiXCIsIFwiZG9lcy1ub3QtZXhpc3RcIiB9KVxuICAgICAgICB7XG4gICAgICAgICAgICB2YXIgbWVyZ2VkID0gRGVzaWduVG9rZW5zLlBhcnNlKENhdGFsb2cuTWVyZ2UoQmFzZUpzb24sIGlkKSk7XG4gICAgICAgICAgICBBc3NlcnQuRXF1YWwoYmFzZWxpbmUuUmFkaXVzLCBtZXJnZWQuUmFkaXVzKTtcbiAgICAgICAgICAgIEFzc2VydC5FcXVhbChiYXNlbGluZS5JbnRlcmFjdGlvbiwgbWVyZ2VkLkludGVyYWN0aW9uKTtcbiAgICAgICAgICAgIEFzc2VydC5FcXVhbChiYXNlbGluZS5Db2xvci5MYWJlbCwgbWVyZ2VkLkNvbG9yLkxhYmVsKTtcbiAgICAgICAgICAgIEFzc2VydC5FcXVhbChcIiMxNTE1MTVcIiwgbWVyZ2VkLkNvbG9yLkRlYWRab25lRmlsbCk7XG4gICAgICAgICAgICBBc3NlcnQuRXF1YWwoXCIjMEUwRTBFXCIsIG1lcmdlZC5Db2xvci5CYWRnZUZpbGwpO1xuICAgICAgICB9XG4gICAgICAgIEFzc2VydC5GYWxzZShDYXRhbG9nLkNvbnRhaW5zKFwiZG9lcy1ub3QtZXhpc3RcIikpO1xuICAgIH0ifSx7ImZpbGUiOiJ0ZXN0cy9XaW5RdWljay5Db3JlLlRlc3RzL1NraW5Db250cmFzdFRlc3RzLmNzIiwibmV3ZmlsZSI6ZmFsc2UsImxpbmVubyI6ODYsImFuY2hvciI6In0iLCJvbGRfY291bnQiOjEsIm5ldyI6IlxuICAgIC8vID09PT0gc2tpbi1jb2xvci1yZWRlc2lnbu+8iDIwMjYtMTEtMjPvvInvvJpXQ0FHIOS4peagvOavlOWAvOWFqOmFjeWvueefqemYtSA9PT09XG4gICAgLy8g5LiK6Z2i55qE57q/5oCnIEx1bSDlt67plIHnmoTmmK/jgIzmlrnlkJHnv7vovazjgI3vvJvmnKzoioLplIHjgIzovr7liLDlj6/or7vpmIjlgLzjgI3igJTigJRcbiAgICAvLyDlhazlvI/nnJ/mupDlnKggQ29sb3JNYXRo77yM5LiOIHByZXZpZXcvc2tpbi1jb2xvci1wcmV2aWV3Lmh0bWwg6aG15YaFIHNlbGZDaGVjayDpgJDlvI/lkIzmupDjgIJcblxuICAgIFtUaGVvcnldXG4gICAgW01lbWJlckRhdGEobmFtZW9mKFBhbmVsU3RhdGVzKSldXG4gICAgcHVibGljIHZvaWQg5YWo6YWN5a+56KGMX+avj+Wll+earuiCpOato+aWh+S4juWkp+Wtl+mDvei+vldDQUfpmIjlgLwoc3RyaW5nIHN0YXRlSWQpXG4gICAge1xuICAgICAgICB2YXIgYyA9IHN0YXRlSWQgc3dpdGNoXG4gICAgICAgIHtcbiAgICAgICAgICAgIFwic3lzdGVtLWxpZ2h0XCIgPT4gVG9rZW5TdG9yZS5Mb2FkV2l0aE92ZXJyaWRlcyhTeXN0ZW1Ta2luLkNvbXBvc2UodHJ1ZSwgXCIjMDA3OEQ0XCIpKS5Db2xvcixcbiAgICAgICAgICAgIF8gPT4gVG9rZW5TdG9yZS5QcmV2aWV3VG9rZW5zKHN0YXRlSWQpLkNvbG9yLFxuICAgICAgICB9O1xuICAgICAgICB2YXIgcGFuZWwgPSBUb2tlblJlc291cmNlcy5EZXJpdmVQYW5lbENvbG9ycyhjKTtcblxuICAgICAgICAvLyDpnaLmnb/vvIjlrp7oibLooajpnaLvvInvvJrmraPmlocgNC4144CB5qyh57qnIDMuMO+8iOWkp+Wtl+e6p++8ieOAgemAieS4reihjOaWh+Wtly1vbi1BY2NlbnQgNC4177yIc3BlYyBSMe+8ieOAglxuICAgICAgICBBc3NlcnQuVHJ1ZShDb2xvck1hdGguQ29udHJhc3QoYy5MYWJlbCwgcGFuZWwuU3VyZmFjZVNvbGlkKSA+PSA0LjUsXG4gICAgICAgICAgICAkXCJ7c3RhdGVJZH0gUDEg5q2j5paH4oaU6Z2i5p2/5bqV77yae0NvbG9yTWF0aC5Db250cmFzdChjLkxhYmVsLCBwYW5lbC5TdXJmYWNlU29saWQpOkYyfVwiKTtcbiAgICAgICAgdmFyIG11dGVkID0gQ29sb3JNYXRoLk92ZXIoYy5IaW50LCAwLjcyLCBwYW5lbC5TdXJmYWNlU29saWQpO1xuICAgICAgICBBc3NlcnQuVHJ1ZShDb2xvck1hdGguQ29udHJhc3QobXV0ZWQsIHBhbmVsLlN1cmZhY2VTb2xpZCkgPj0gMy4wLFxuICAgICAgICAgICAgJFwie3N0YXRlSWR9IFAyIFRleHRNdXRlZOKGlOmdouadv+W6le+8mntDb2xvck1hdGguQ29udHJhc3QobXV0ZWQsIHBhbmVsLlN1cmZhY2VTb2xpZCk6RjJ9XCIpO1xuICAgICAgICBBc3NlcnQuVHJ1ZShDb2xvck1hdGguQ29udHJhc3QocGFuZWwuQWNjZW50VGV4dCwgcGFuZWwuQWNjZW50KSA+PSA0LjUsXG4gICAgICAgICAgICAkXCJ7c3RhdGVJZH0gUDMgQWNjZW50VGV4dOKGlEFjY2VudO+8iOmAieS4reihjO+8ie+8mntDb2xvck1hdGguQ29udHJhc3QocGFuZWwuQWNjZW50VGV4dCwgcGFuZWwuQWNjZW50KTpGMn1cIik7XG5cbiAgICAgICAgLy8g6L2u55uY77ya5oyJ5pyA5Z2P5oOF5b2iID0g57qv55m95aOB57q45Yik5a6a77yIc2NyaW0g55qu6IKk57uP5L+d5bqV5bGCIOKAlOKAlCBzcGVjIFIyIOeahOOAjOS7u+aEj+Wjgee6uOOAjeivreS5ie+8ieOAglxuICAgICAgICB2YXIgd2FsbCA9IENvbG9yTWF0aC5PdmVyKGMuU2VjdG9yU2NyaW0sIGMuU2VjdG9yU2NyaW1BbHBoYSwgXCIjRkZGRkZGXCIpO1xuICAgICAgICB2YXIgc2VjdG9yID0gQ29sb3JNYXRoLk92ZXIoYy5TZWN0b3JGaWxsLCBjLlNlY3RvckZpbGxBbHBoYSwgd2FsbCk7XG4gICAgICAgIEFzc2VydC5UcnVlKENvbG9yTWF0aC5Db250cmFzdChjLkxhYmVsLCBzZWN0b3IpID49IDQuNSxcbiAgICAgICAgICAgICRcIntzdGF0ZUlkfSBXMSDmoIfnrb7ihpTmiYfljLoo55m95aOB57q4Ke+8mntDb2xvck1hdGguQ29udHJhc3QoYy5MYWJlbCwgc2VjdG9yKTpGMn1cIik7XG4gICAgICAgIHZhciBoaW50T24gPSBDb2xvck1hdGguT3ZlcihjLkhpbnQsIGMuSGludEFscGhhLCBzZWN0b3IpO1xuICAgICAgICBBc3NlcnQuVHJ1ZShDb2xvck1hdGguQ29udHJhc3QoaGludE9uLCBzZWN0b3IpID49IDMuMCxcbiAgICAgICAgICAgICRcIntzdGF0ZUlkfSBXMiDmj5DnpLrihpTmiYfljLrvvJp7Q29sb3JNYXRoLkNvbnRyYXN0KGhpbnRPbiwgc2VjdG9yKTpGMn1cIik7XG4gICAgICAgIHZhciBob3Zlck9uID0gQ29sb3JNYXRoLk92ZXIoYy5Ib3ZlckZpbGwsIGMuSG92ZXJGaWxsQWxwaGEsIHNlY3Rvcik7XG4gICAgICAgIEFzc2VydC5UcnVlKENvbG9yTWF0aC5Db250cmFzdChjLkhvdmVyTGFiZWwsIGhvdmVyT24pID49IDQuNSxcbiAgICAgICAgICAgICRcIntzdGF0ZUlkfSBXMyDmgqzlgZzlrZfihpTmgqzlgZzlkIjmiJDlupXvvJp7Q29sb3JNYXRoLkNvbnRyYXN0KGMuSG92ZXJMYWJlbCwgaG92ZXJPbik6RjJ9XCIpO1xuXG4gICAgICAgIC8vIOinkuagh++8iOWtkOmhuemmluWtl+WNoOS9jS9zcGlubmVy77yJ5LiO5q275Yy677yac2NyaW0g55qu6IKk55qE6L2u55uY5q275Yy65a6e6ZmF5riy5p+T5piv5Y2K6YCP5L+d5bqV55uYXG4gICAgICAgIC8v77yIUmFkaWFsUmluZ1Zpc3VhbCDnmoTliIbmlK/vvInvvIzkuI3mmK/lm57loavnmoTmtL7nlJ/lrp7oibIg4oCU4oCUIOWIpOaNrui3n+edgOWunumZhea4suafk+i1sOOAglxuICAgICAgICB2YXIgYmFkZ2UgPSBDb2xvck1hdGguT3ZlcihjLkJhZGdlRmlsbCwgYy5CYWRnZUZpbGxBbHBoYSwgc2VjdG9yKTtcbiAgICAgICAgQXNzZXJ0LlRydWUoQ29sb3JNYXRoLkNvbnRyYXN0KGMuTGFiZWwsIGJhZGdlKSA+PSA0LjUsXG4gICAgICAgICAgICAkXCJ7c3RhdGVJZH0gVzQg5Y2g5L2N5a2X4oaU6KeS5qCH5bqV77yae0NvbG9yTWF0aC5Db250cmFzdChjLkxhYmVsLCBiYWRnZSk6RjJ9XCIpO1xuICAgICAgICB2YXIgZGVhZCA9IGMuU2VjdG9yU2NyaW1BbHBoYSA+IDAuMDAxXG4gICAgICAgICAgICA/IENvbG9yTWF0aC5PdmVyKGMuU2VjdG9yU2NyaW0sIGMuU2VjdG9yU2NyaW1BbHBoYSwgXCIjRkZGRkZGXCIpXG4gICAgICAgICAgICA6IGMuRGVhZFpvbmVGaWxsO1xuICAgICAgICBBc3NlcnQuVHJ1ZShDb2xvck1hdGguQ29udHJhc3QoYy5MYWJlbCwgZGVhZCkgPj0gNC41LFxuICAgICAgICAgICAgJFwie3N0YXRlSWR9IFc1IOagh+etvuKGlOatu+WMuu+8mntDb2xvck1hdGguQ29udHJhc3QoYy5MYWJlbCwgZGVhZCk6RjJ9XCIpO1xuXG4gICAgICAgIC8vIOmdnuaWh+acrOi+ueeVjO+8iFNDIDEuNC4xMe+8ie+8muatu+WMuuaPj+i+ueiHs+WwkeS4juS4gOS+p+ebuOmCu+WPr+i+qO+8iOaPj+i+uei3qOS4pOS+p++8jOWIpOS4pOS+p+i+g+Wkp+iAhSDiiaUzLjDvvInjgIJcbiAgICAgICAgdmFyIGVkZ2VPbkRlYWQgPSBDb2xvck1hdGguT3ZlcihjLkRlYWRab25lU3Ryb2tlLCBjLkRlYWRab25lU3Ryb2tlQWxwaGEsIGRlYWQpO1xuICAgICAgICB2YXIgZWRnZU9uU2VjdG9yID0gQ29sb3JNYXRoLk92ZXIoYy5EZWFkWm9uZVN0cm9rZSwgYy5EZWFkWm9uZVN0cm9rZUFscGhhLCBzZWN0b3IpO1xuICAgICAgICBBc3NlcnQuVHJ1ZShNYXRoLk1heChDb2xvck1hdGguQ29udHJhc3QoZWRnZU9uRGVhZCwgc2VjdG9yKSxcbiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgQ29sb3JNYXRoLkNvbnRyYXN0KGVkZ2VPblNlY3RvciwgZGVhZCkpID49IDMuMCxcbiAgICAgICAgICAgICRcIntzdGF0ZUlkfSDmrbvljLrmj4/ovrnkuI7kuKTkvqfnm7jpgrvpg73kuI3otrMgMzoxXCIpO1xuICAgIH1cblxuICAgIFtUaGVvcnldXG4gICAgW0lubGluZURhdGEoXCIjRkZGRjAwXCIsIFwiIzFCMUIxQlwiKV1cbiAgICBbSW5saW5lRGF0YShcIiMwMDc4RDRcIiwgXCIjRkZGRkZGXCIpXVxuICAgIFtJbmxpbmVEYXRhKFwiIzAwRTVGRlwiLCBcIiMxQjFCMUJcIildXG4gICAgW0lubGluZURhdGEoXCIjMzNGRjY2XCIsIFwiIzFCMUIxQlwiKV1cbiAgICBbSW5saW5lRGF0YShcIiNEMEJDRkZcIiwgXCIjMUIxQjFCXCIpXVxuICAgIFtJbmxpbmVEYXRhKFwiI0I0NTMwOVwiLCBcIiNGRkZGRkZcIildXG4gICAgW0lubGluZURhdGEoXCIjRkZGRkZGXCIsIFwiIzFCMUIxQlwiKV1cbiAgICBbSW5saW5lRGF0YShcIiMwMDAwMDBcIiwgXCIjRkZGRkZGXCIpXVxuICAgIHB1YmxpYyB2b2lkIG9uX2FjY2VudOaLqeS4gF/lj5blr7nmr5Tluqbmm7TlpKfkvqcoc3RyaW5nIGJhY2tncm91bmQsIHN0cmluZyBleHBlY3RlZCkgPT5cbiAgICAgICAgQXNzZXJ0LkVxdWFsKGV4cGVjdGVkLCBDb2xvck1hdGguQmVzdFRleHRPbihiYWNrZ3JvdW5kKSk7XG5cbiAgICBbRmFjdF1cbiAgICBwdWJsaWMgdm9pZCDmrKHopoHpnaLmtL7nlJ9f6buY6K6k55qu6IKk5Lul56Gu5a6a5YC85Zue5aGr5ZCM5peP5pqX6Imy5q275Yy65LiO6KeS5qCHKClcbiAgICB7XG4gICAgICAgIHZhciBjID0gVG9rZW5TdG9yZS5QcmV2aWV3VG9rZW5zKFwiZGVmYXVsdFwiKS5Db2xvcjtcbiAgICAgICAgQXNzZXJ0LkVxdWFsKFwiIzE1MTUxNVwiLCBjLkRlYWRab25lRmlsbCk7XG4gICAgICAgIEFzc2VydC5FcXVhbChcIiMwRTBFMEVcIiwgYy5CYWRnZUZpbGwpO1xuICAgICAgICBBc3NlcnQuRXF1YWwoMS4wLCBjLkJhZGdlRmlsbEFscGhhKTtcbiAgICAgICAgQXNzZXJ0LkVxdWFsKFwiI0ZGRkZGRlwiLCBjLkRlYWRab25lU3Ryb2tlKTtcbiAgICAgICAgQXNzZXJ0LkVxdWFsKDAuMzUsIGMuRGVhZFpvbmVTdHJva2VBbHBoYSk7XG4gICAgfVxuXG4gICAgW0ZhY3RdXG4gICAgcHVibGljIHZvaWQg5qyh6KaB6Z2i5rS+55SfX+eOu+eSg+atu+WMuuS4jeWGjee6r+eZvV/nvLrpmbflm57lvZLplIEoKVxuICAgIHtcbiAgICAgICAgLy8g5L+u5aSN5YmN77ya5omL5ouNIGRlYWRab25lRmlsbCAjRkZGRkZGIOKGkiDljYrpgI/miYfljLrkuK3lpK7nmoTnhIrmrbvlpKfnmb3nm5jvvIjnlKjmiLfmiKrlm77vvInjgIJcbiAgICAgICAgdmFyIGMgPSBUb2tlblN0b3JlLlByZXZpZXdUb2tlbnMoXCJ0cmFuc2x1Y2VudFwiKS5Db2xvcjtcbiAgICAgICAgQXNzZXJ0Lk5vdEVxdWFsKFwiI0ZGRkZGRlwiLCBjLkRlYWRab25lRmlsbCk7XG4gICAgICAgIEFzc2VydC5UcnVlKGMuU2VjdG9yU2NyaW1BbHBoYSA+PSAwLjYsIFwi546755KD55qu6IKk5b+F6aG75bimIHNjcmltIOS/neW6leWxgu+8iHNwZWMgUjIgRCDmoaPvvIlcIik7XG4gICAgICAgIEFzc2VydC5FcXVhbChcIiMwMDAwMDBcIiwgYy5Ib3ZlckZpbGwpO1xuICAgIH1cblxuICAgIFtGYWN0XVxuICAgIHB1YmxpYyB2b2lkIOeOu+eSg+mdouadv+W8uuiwg+iJsuWFnOW6lee/u+WIsOWPr+ivu+S4gOS+pygpXG4gICAge1xuICAgICAgICAvLyBEIOahoyBIb3ZlckZpbGwg5piv5Y6L5pqX6buRIOKAlOKAlCDpnaLmnb8gQWNjZW50IOeFp+aKhOWwseaal+W6leaal+Wtl++8m+WFnOW6lee/u+eZveWQjumAieS4reihjOeZveW6lem7keWtl++8iOS4juWOn+Wei+S4gOiHtO+8ieOAglxuICAgICAgICB2YXIgYyA9IFRva2VuU3RvcmUuUHJldmlld1Rva2VucyhcInRyYW5zbHVjZW50XCIpLkNvbG9yO1xuICAgICAgICB2YXIgcGFuZWwgPSBUb2tlblJlc291cmNlcy5EZXJpdmVQYW5lbENvbG9ycyhjKTtcbiAgICAgICAgQXNzZXJ0LkVxdWFsKFwiI0ZGRkZGRlwiLCBwYW5lbC5BY2NlbnQpO1xuICAgICAgICBBc3NlcnQuRXF1YWwoXCIjMUIxQjFCXCIsIHBhbmVsLkFjY2VudFRleHQpO1xuICAgICAgICBBc3NlcnQuVHJ1ZShDb2xvck1hdGguQ29udHJhc3QocGFuZWwuQWNjZW50LCBwYW5lbC5TdXJmYWNlU29saWQpID49IDMuMCk7XG4gICAgfVxuXG4gICAgW0ZhY3RdXG4gICAgcHVibGljIHZvaWQg5qCh6aqM5oum5L2Pc2NyaW3ojIPlm7TlpJblgLwoKVxuICAgIHtcbiAgICAgICAgdmFyIHRva2VucyA9IFRva2VuU3RvcmUuUHJldmlld1Rva2VucyhcImRlZmF1bHRcIik7XG4gICAgICAgIHZhciBiYWQgPSB0b2tlbnMgd2l0aCB7IENvbG9yID0gdG9rZW5zLkNvbG9yIHdpdGggeyBTZWN0b3JTY3JpbUFscGhhID0gMS4yIH0gfTtcbiAgICAgICAgQXNzZXJ0LkNvbnRhaW5zKGJhZC5WYWxpZGF0ZSgpLCBwID0+IHAuQ29udGFpbnMoXCJzZWN0b3JTY3JpbUFscGhhXCIpKTtcbiAgICB9XG59In1dLCJleHBlY3QiOlt7ImZpbGUiOiJkZXNpZ24vc2tpbnMuanNvbiIsImNvbnRhaW5zIjoiXCJkZWFkWm9uZVN0cm9rZUFscGhhXCI6IDAuNTU8Tkw+ICAgICAgICB9LCJ9LHsiZmlsZSI6InRlc3RzL1dpblF1aWNrLkNvcmUuVGVzdHMvU2tpbkNvbnRyYXN0VGVzdHMuY3MiLCJjb250YWlucyI6IuWFqOmFjeWvueihjF/mr4/lpZfnmq7ogqTmraPmlofkuI7lpKflrZfpg73ovr5XQ0FH6ZiI5YC8In0seyJmaWxlIjoidGVzdHMvV2luUXVpY2suQ29yZS5UZXN0cy9Ta2luQ2F0YWxvZ1Rlc3RzLmNzIiwiY29udGFpbnMiOiJNZXJnZV9Vbmtub3duT3JFbXB0eVNraW5f5L+d5oyB5Z+657q/5bm25Zue5aGr5rS+55SfIn0seyJmaWxlIjoic3JjL1dpblF1aWNrLlByb2Jlcy9NMC9Ta2luUHJvYmUuY3MiLCJjb250YWlucyI6IldxLkNvbG9yLkFjY2VudFRleHQifV19").decode("utf-8"))
+SLUG = DATA["slug"]; PATCHES = DATA["patches"]; EXPECT = DATA["expect"]
+RB = os.path.join("docs", "changes", SLUG + ".rollback.json")
+
+def fail(file, msg, lines, hit):
+    ctx = "\n".join("%4d %s" % (i + 1, l) for i, l in enumerate(lines) if abs(i - hit) <= 3)
+    sys.stderr.buffer.write(("[compile-change] FAIL %s: %s\n%s\n" % (file, msg, ctx)).encode("utf-8"))
+    sys.exit(1)
+
+# 执行前快照：编辑文件存原始字节，新文件存"已存在"或"created"标记
+snap = {}; created = []
+for p in PATCHES:
+    f = p["file"]
+    if p["newfile"]:
+        if os.path.exists(f): snap[f] = base64.b64encode(open(f, "rb").read()).decode()
+        else: created.append(f)
+        continue
+    if not os.path.exists(f): fail(f, "文件不存在", [], 0)
+    if f not in snap: snap[f] = base64.b64encode(open(f, "rb").read()).decode()
+os.makedirs(os.path.dirname(RB), exist_ok=True)
+json.dump({"snapshot": snap, "created": created}, open(RB, "w"))
+
+# 逐条应用
+for p in PATCHES:
+    f = p["file"]
+    if p["newfile"]:
+        d = os.path.dirname(f)
+        if d: os.makedirs(d, exist_ok=True)
+        open(f, "wb").write(p["new"].encode("utf-8"))
+        continue
+    raw = open(f, "rb").read(); text = raw.decode("utf-8")
+    # 终修 P2-2：弃用 splitlines(True)（其把 \f \v \x1c-\x1e \x85 \u2028 \u2029 也当行界，
+    # 致行号漂移）；改用 re.split 捕获 (\r\n|\r|\n) 重组，仅按这三种分隔符分行且保留原行尾。
+    _segs = re.split("(\\r\\n|\\r|\\n)", text)
+    ke = []
+    for _j in range(0, len(_segs) - 1, 2): ke.append(_segs[_j] + _segs[_j + 1])
+    if len(_segs) % 2 == 1 and _segs[-1] != "": ke.append(_segs[-1])  # 末行无行尾（P2-3）
+    def _strip(l):
+        if l.endswith("\r\n"): return l[:-2]
+        if l.endswith("\n") or l.endswith("\r"): return l[:-1]
+        return l
+    lines = [_strip(l) for l in ke]
+    idx = p["lineno"] - 1; oc = p["old_count"]; anchor = p["anchor"]
+    if idx < 0 or idx >= len(ke): fail(f, "行号越界 %d" % p["lineno"], lines, max(idx, 0))
+    if anchor and anchor not in lines[idx]: fail(f, "锚点不匹配: 期望该行含 %r" % anchor, lines, idx)
+    end = idx + oc
+    if oc > 0 and end > len(ke): fail(f, "旧行数越界: 行 %d 起 %d 行超出文件" % (p["lineno"], oc), lines, idx)
+    _f = ke[idx]
+    eol = "\r\n" if _f.endswith("\r\n") else ("\n" if _f.endswith("\n") else ("\r" if _f.endswith("\r") else "\n"))
+    if p["new"] == "":
+        repl = []  # P1-2：空新内容=删除区间（del lines[idx:end]）
+    else:
+        repl = [c + eol for c in p["new"].replace("\r\n", "\n").replace("\r", "\n").split("\n")]
+        # 终修 P2-3：替换区间含文件末行且原末行无 EOL → 新内容末行同样不补尾 EOL（保持无尾换行）
+        if repl and end == len(ke) and not (ke[-1].endswith("\n") or ke[-1].endswith("\r")):
+            repl[-1] = _strip(repl[-1])
+    ke[idx:end] = repl  # 未触碰行保持原始字节行尾
+    open(f, "wb").write("".join(ke).encode("utf-8"))
+
+# expect_after 后置断言
+for e in EXPECT:
+    f = e["file"]
+    if not os.path.exists(f): fail(f, "expect_after 文件不存在", [], 0)
+    d = open(f, "rb").read().decode("utf-8")
+    if e["contains"] not in d:
+        fail(f, "expect_after 缺少子串 %r" % e["contains"], d.replace("\r\n", "\n").split("\n"), 0)
+
+print("[compile-change] OK: %d patches applied" % len(PATCHES))
+```
+
+## 执行命令
+
+```bash
+node scripts/compile-change.mjs docs/changes/skin-color-redesign-tests.md | python - && ```bash
+node "C:/Users/22572/.zcode/cli/plugins/cache/dev-sop/dev-sop/1.9.0/scripts/compile-change.mjs" docs/changes/skin-color-redesign-tests.md | python - && timeout 115 dotnet build src/WinQuick.App/WinQuick.App.csproj -c Release --nologo && timeout 115 dotnet test tests/WinQuick.Core.Tests --filter "FullyQualifiedName~SkinContrast" --nologo && timeout 115 dotnet test tests/WinQuick.Core.Tests -c Release --nologo
+```
+```
+
+## 回滚说明
+
+执行正向补丁时已快照 docs/changes/skin-color-redesign-tests.rollback.json。回滚（还原编辑、删除新建文件）：
+
+```bash
+node scripts/compile-change.mjs docs/changes/skin-color-redesign-tests.md --rollback | python -
+```
+
+回滚脚本：
+
+```python
+import sys, os, json, base64
+SLUG = "skin-color-redesign-tests"
+RB = os.path.join("docs", "changes", SLUG + ".rollback.json")
+if not os.path.exists(RB):
+    sys.stderr.buffer.write(("[compile-change] 回滚失败：缺少 %s\n" % RB).encode("utf-8")); sys.exit(1)
+data = json.load(open(RB))
+for f, b64 in data.get("snapshot", {}).items():
+    d = os.path.dirname(f)
+    if d: os.makedirs(d, exist_ok=True)
+    open(f, "wb").write(base64.b64decode(b64))
+for f in data.get("created", []):
+    if os.path.exists(f): os.remove(f)
+print("[compile-change] rollback ok: %d restored, %d removed" % (len(data.get("snapshot", {})), len(data.get("created", []))))
+```

@@ -1,0 +1,35 @@
+{
+  "verdict": "pass-with-issues",
+  "issues": [
+    {
+      "severity": "P2",
+      "file": "docs/changes/skin-color-redesign-version.md",
+      "line": 10,
+      "dim": "符合度",
+      "desc": "变更单标题与改动清单表标注 `<Version>` 在 L12（且自称\"行号现场核实\"），实际位于 csproj L13（L12 为空行）；行号偏差 1 行，内容锚点 1.1.5→1.2.0 正确，不影响执行结果。",
+      "suggestion": "将变更单中标注的行号改为 L13，或改以锚点文本（<Version>1.1.5</Version>）为准不再标行号。"
+    },
+    {
+      "severity": "P2",
+      "file": "scripts/review-lint.mjs",
+      "line": 0,
+      "dim": "测试质量",
+      "desc": "S 级快审第 0 步机器预检脚本 scripts/review-lint.mjs 在本工作区不存在（MODULE_NOT_FOUND），机械项未由工具清零；已以人工方式等效覆盖：fileset（清单仅 csproj，git show HEAD 中该文件 diff 仅 Version 一行，工作树 clean）、linecap（净变更 1 行 < 30）、placeholder（无占位符）、verify（验证命令可跑通）。",
+      "suggestion": "补齐或修正 review-lint 脚本路径，使后续 S 级快审可恢复机器预检；本轮结论不受影响。"
+    }
+  ],
+  "summary": {
+    "p0": 0,
+    "p1": 0,
+    "p2": 2,
+    "checked": [
+      "核对1 csproj 现值：src/WinQuick.App/WinQuick.App.csproj L13 为 <Version>1.2.0</Version>，与变更表一致（通过；注：变更单标 L12，实际 L13，另记 P2）",
+      "核对1b 改动仅此一处：git show HEAD(cbc4894) -- WinQuick.App.csproj diff 仅一处 hunk（-1.1.5/+1.2.0 单行）；rollback.json snapshot 旧内容含 <Version>1.1.5</Version>、created=[]，与 diff 互补一致；git status 该文件干净（通过）",
+      "核对2a semver：1.2.0 三段数字、大于上一版 1.1.5（tag v1.1.5 存在），满足 csproj 注释所声明的 Velopack semver2 要求（通过）",
+      "核对2b CI 版本注入：.github/workflows/release.yml 以 tag 去 v 前缀生成版本（${GITHUB_REF_NAME#v}）传 vpk pack -v；tag v1.2.0 存在且指向 HEAD(cbc4894)，注入版本 1.2.0 与 csproj <Version>1.2.0</Version> 一致，不打架（通过）",
+      "核对3 编译：dotnet build src/WinQuick.App/WinQuick.App.csproj -c Release --nologo 成功，0 警告 0 错误，耗时 3.82s（通过）",
+      "核对3b 测试：本单为常量单行变更，无专属新增测试；全量 360/360 由 docs/specs/skin-color-redesign.test-report.json AC6（\"交付前全量 360/360 0\"）覆盖，本快审不重跑（采信主批，通过）",
+      "分级合规：tier S 判据满足——changed-files 仅 1 个、无新建文件、非 UI/LVGL 文件、净变更 1 行 < 30、无接口/依赖/配置变更（通过）"
+    ]
+  }
+}
